@@ -1,0 +1,35 @@
+:root {
+  --bg-primary: #0B0E17;
+  --bg-secondary: rgba(255, 255, 255, 0.05);
+  --bg-glass: rgba(255, 255, 255, 0.08);
+  --bg-glass-hover: rgba(255, 255, 255, 0.12);
+
+  --gradient-primary: linear-gradient(135deg, #7C3AED, #2563EB);
+  --gradient-secondary: linear-gradient(135deg, #2563EB, #14B8A6);
+  --gradient-accent: linear-gradient(135deg, #7C3AED, #2563EB, #14B8A6);
+
+  --glow-purple: rgba(124, 58, 237, 0.4);
+  --glow-blue: rgba(37, 99, 235, 0.3);
+  --glow-teal: rgba(20, 184, 166, 0.3);
+
+  --text-primary: #E2E8F0;
+  --text-secondary: #94A3B8;
+  --text-dim: #64748B;
+  --text-error: #F87171;
+
+  --purple: #7C3AED;
+  --blue: #2563EB;
+  --teal: #14B8A6;
+
+  --radius-bubble: 20px;
+  --radius-card: 16px;
+  --radius-button: 12px;
+  --radius-input: 24px;
+
+  --safe-bottom: env(safe-area-inset-bottom, 0px);
+
+  --ease-bubble: cubic-bezier(0.34, 1.56, 0.64, 1);
+  --ease-smooth: cubic-bezier(0.4, 0, 0.2, 1);
+  --duration-fast: 150ms;
+  --duration-normal: 300ms;
+}

@@ -1,0 +1,22 @@
+.backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: -1;
+  overflow: hidden;
+  pointer-events: none;
+}
+
+.orb {
+  position: absolute;
+  border-radius: 50%;
+  opacity: 0.15;
+  filter: blur(40px);
+  animation: float var(--dur) var(--ease-smooth) infinite;
+}
+
+.orb:nth-child(1) { --dur: 12s; width: 200px; height: 200px; top: 10%; left: -5%; background: var(--purple); }
+.orb:nth-child(2) { --dur: 16s; width: 160px; height: 160px; top: 30%; right: -8%; background: var(--blue); animation-delay: -3s; }
+.orb:nth-child(3) { --dur: 14s; width: 120px; height: 120px; bottom: 20%; left: 15%; background: var(--teal); animation-delay: -6s; }
+.orb:nth-child(4) { --dur: 18s; width: 180px; height: 180px; top: 60%; right: 10%; background: var(--purple); animation-delay: -9s; opacity: 0.1; }
+.orb:nth-child(5) { --dur: 15s; width: 100px; height: 100px; top: 5%; right: 30%; background: var(--teal); animation-delay: -4s; }
+.orb:nth-child(6) { --dur: 20s; width: 140px; height: 140px; bottom: 5%; right: -5%; background: var(--blue); animation-delay: -7s; opacity: 0.1; }

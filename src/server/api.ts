@@ -17,7 +17,12 @@ export async function startServer(brain: Brain, memory: MemoryManager, port = 30
   await app.register(fastifyWebsocket)
 
   // Serve frontend static files if built
-  const webDist = resolve(__dirname, '../../web/dist')
+  // Try multiple paths: dev mode (src/server/) vs prod mode (dist/)
+  const webDist = [
+    resolve(__dirname, '../../web/dist'),
+    resolve(__dirname, '../web/dist'),
+    resolve(process.cwd(), 'web/dist'),
+  ].find(p => existsSync(p)) ?? resolve(process.cwd(), 'web/dist')
   if (existsSync(webDist)) {
     await app.register(fastifyStatic, { root: webDist, prefix: '/' })
     logger.info(`Serving frontend from ${webDist}`)

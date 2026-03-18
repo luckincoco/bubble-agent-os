@@ -41,5 +41,9 @@ export function getConfig(): AppConfig {
     storage: {
       dataDir: env.DATA_DIR || resolve(homedir(), '.bubble-agent', 'data'),
     },
+    auth: {
+      jwtSecret: env.JWT_SECRET || 'bubble-agent-default-secret-change-me',
+      defaultPassword: env.DEFAULT_PASSWORD || 'bubble123',
+    },
   }
 }

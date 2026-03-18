@@ -1,4 +1,5 @@
 import type { WSMessage, ConnectionStatus } from '../types'
+import { useAuthStore } from '../stores/authStore'
 
 type MessageHandler = (msg: WSMessage) => void
 type StatusHandler = (status: ConnectionStatus) => void
@@ -70,7 +71,8 @@ export class WSManager {
 }
 
 export function getWSUrl(): string {
-  if (import.meta.env.DEV) return 'ws://localhost:3000/ws'
+  const token = useAuthStore.getState().token || ''
+  if (import.meta.env.DEV) return `ws://localhost:3000/ws?token=${token}`
   const proto = location.protocol === 'https:' ? 'wss:' : 'ws:'
-  return `${proto}//${location.host}/ws`
+  return `${proto}//${location.host}/ws?token=${token}`
 }

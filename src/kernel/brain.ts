@@ -1,4 +1,4 @@
-import type { LLMProvider, LLMMessage } from '../shared/types.js'
+import type { LLMProvider, LLMMessage, UserContext } from '../shared/types.js'
 import type { MemoryManager } from '../memory/manager.js'
 import type { ToolRegistry } from '../connector/registry.js'
 import { logger } from '../shared/logger.js'
@@ -17,7 +17,7 @@ const TOOL_CALL_REGEX = /\[TOOL_CALL:\s*(\w+)\]\s*(\{[^}]*\})/
 
 export class Brain {
   private llm: LLMProvider
-  private history: LLMMessage[] = []
+  private historyMap: Map<string, LLMMessage[]> = new Map()
   private memory: MemoryManager | null = null
   private tools: ToolRegistry | null = null
 
@@ -35,25 +35,38 @@ export class Brain {
     logger.info('Brain: tool system connected')
   }
 
-  async think(userInput: string, onChunk?: (text: string) => void): Promise<string> {
-    this.history.push({ role: 'user', content: userInput })
+  private getHistory(userId: string): LLMMessage[] {
+    let h = this.historyMap.get(userId)
+    if (!h) {
+      h = []
+      this.historyMap.set(userId, h)
+    }
+    return h
+  }
 
-    if (this.history.length > 40) {
-      this.history = this.history.slice(-40)
+  async think(userInput: string, ctx?: UserContext, onChunk?: (text: string) => void): Promise<string> {
+    const userId = ctx?.userId ?? '_default'
+    const history = this.getHistory(userId)
+
+    history.push({ role: 'user', content: userInput })
+    if (history.length > 40) {
+      const trimmed = history.slice(-40)
+      this.historyMap.set(userId, trimmed)
     }
 
     // Build system prompt
     let systemContent = BASE_SYSTEM_PROMPT
     if (this.memory) {
-      const ctx = await this.memory.getContextForQuery(userInput)
-      if (ctx) systemContent += ctx
+      const memCtx = await this.memory.getContextForQuery(userInput, ctx?.spaceIds)
+      if (memCtx) systemContent += memCtx
     }
     if (this.tools) {
       systemContent += this.tools.getToolDescriptions()
     }
 
     const systemMessage: LLMMessage = { role: 'system', content: systemContent }
-    const messages: LLMMessage[] = [systemMessage, ...this.history]
+    const currentHistory = this.getHistory(userId)
+    const messages: LLMMessage[] = [systemMessage, ...currentHistory]
 
     try {
       let response: string
@@ -74,11 +87,10 @@ export class Brain {
         const args = JSON.parse(argsStr)
         const toolResult = await this.tools.execute(toolName, args)
 
-        // Feed tool result back to LLM
-        this.history.push({ role: 'assistant', content: response })
-        this.history.push({ role: 'user', content: `[TOOL_RESULT: ${toolName}] ${toolResult}` })
+        currentHistory.push({ role: 'assistant', content: response })
+        currentHistory.push({ role: 'user', content: `[TOOL_RESULT: ${toolName}] ${toolResult}` })
 
-        const followUp: LLMMessage[] = [systemMessage, ...this.history]
+        const followUp: LLMMessage[] = [systemMessage, ...currentHistory]
         const finalResult = onChunk
           ? await this.llm.chatStream(followUp, onChunk)
           : await this.llm.chat(followUp)
@@ -86,10 +98,10 @@ export class Brain {
         response = finalResult.content
       }
 
-      this.history.push({ role: 'assistant', content: response })
+      currentHistory.push({ role: 'assistant', content: response })
 
       if (this.memory) {
-        this.memory.extractAndStore(userInput, response).catch((err) => {
+        this.memory.extractAndStore(userInput, response, ctx?.activeSpaceId).catch((err) => {
           logger.debug('Memory extraction error:', err instanceof Error ? err.message : String(err))
         })
       }

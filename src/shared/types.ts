@@ -25,6 +25,29 @@ export interface Bubble {
   confidence: number
   decayRate: number
   pinned: boolean
+  spaceId?: string
+}
+
+// Auth types
+export interface AuthUser {
+  id: string
+  username: string
+  displayName: string
+  role: 'admin' | 'user'
+  spaceIds: string[]
+  spaces: Space[]
+}
+
+export interface Space {
+  id: string
+  name: string
+  description: string
+}
+
+export interface UserContext {
+  userId: string
+  spaceIds: string[]
+  activeSpaceId: string
 }
 
 // LLM types
@@ -59,5 +82,9 @@ export interface AppConfig {
   }
   storage: {
     dataDir: string
+  }
+  auth: {
+    jwtSecret: string
+    defaultPassword: string
   }
 }

@@ -26,3 +26,23 @@ export interface BubbleMemory {
   createdAt: number
   updatedAt: number
 }
+
+export interface AuthUserInfo {
+  id: string
+  username: string
+  displayName: string
+  role: 'admin' | 'user'
+  spaceIds: string[]
+  spaces: SpaceInfo[]
+}
+
+export interface SpaceInfo {
+  id: string
+  name: string
+  description: string
+}
+
+export interface LoginResponse {
+  token: string
+  user: AuthUserInfo
+}

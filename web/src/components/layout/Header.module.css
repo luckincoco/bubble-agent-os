@@ -43,3 +43,130 @@
 .dot[data-status="connecting"] { background: #FBBF24; animation: pulse 1.5s infinite; }
 .dot[data-status="disconnected"] { background: #64748B; }
 .dot[data-status="error"] { background: #F87171; }
+
+.spaceSelect {
+  padding: 4px 8px;
+  border-radius: 6px;
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  background: rgba(255, 255, 255, 0.05);
+  color: var(--text-primary);
+  font-size: 13px;
+  outline: none;
+  cursor: pointer;
+}
+
+.spaceName {
+  font-size: 13px;
+  color: var(--text-dim);
+  padding: 4px 8px;
+  border-radius: 6px;
+  background: rgba(255, 255, 255, 0.05);
+}
+
+.logoutBtn {
+  padding: 4px 10px;
+  border-radius: 6px;
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  background: transparent;
+  color: var(--text-dim);
+  font-size: 12px;
+  cursor: pointer;
+  transition: color 0.2s, border-color 0.2s;
+}
+
+.logoutBtn:hover {
+  color: #F87171;
+  border-color: rgba(248, 113, 113, 0.3);
+}
+
+.userMenu {
+  position: relative;
+}
+
+.userBtn {
+  padding: 4px 10px;
+  border-radius: 6px;
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  background: transparent;
+  color: var(--text-dim);
+  font-size: 12px;
+  cursor: pointer;
+  transition: color 0.2s, border-color 0.2s;
+}
+
+.userBtn:hover {
+  color: var(--text-primary);
+  border-color: rgba(255, 255, 255, 0.2);
+}
+
+.pwdPanel {
+  position: absolute;
+  right: 0;
+  top: calc(100% + 8px);
+  background: rgba(20, 20, 30, 0.95);
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  border-radius: 10px;
+  padding: 12px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  min-width: 200px;
+  z-index: 100;
+  backdrop-filter: blur(16px);
+  box-shadow: 0 8px 32px rgba(0, 0, 0, 0.5);
+}
+
+.pwdInput {
+  padding: 6px 10px;
+  border-radius: 6px;
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  background: rgba(255, 255, 255, 0.05);
+  color: var(--text-primary);
+  font-size: 13px;
+  outline: none;
+  width: 100%;
+  box-sizing: border-box;
+}
+
+.pwdInput:focus {
+  border-color: rgba(139, 92, 246, 0.4);
+}
+
+.pwdActions {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+}
+
+.pwdBtn {
+  flex: 1;
+  padding: 6px 0;
+  border-radius: 6px;
+  border: none;
+  background: var(--gradient-primary);
+  color: white;
+  font-size: 12px;
+  cursor: pointer;
+  transition: opacity 0.2s;
+}
+
+.pwdBtn:hover { opacity: 0.85; }
+.pwdBtn:disabled { opacity: 0.5; cursor: not-allowed; }
+
+.logoutLink {
+  padding: 6px 8px;
+  border: none;
+  background: transparent;
+  color: #F87171;
+  font-size: 12px;
+  cursor: pointer;
+  white-space: nowrap;
+}
+
+.logoutLink:hover { text-decoration: underline; }
+
+.pwdMsg {
+  font-size: 12px;
+  color: var(--text-dim);
+  text-align: center;
+}

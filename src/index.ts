@@ -13,7 +13,7 @@ import { logger } from './shared/logger.js'
 
 async function main() {
   const config = getConfig()
-  initDatabase(config.storage.dataDir)
+  initDatabase(config.storage.dataDir, config.auth.defaultPassword)
 
   const llm = createLLM(config.llm)
   const memory = new MemoryManager(llm)
@@ -46,7 +46,7 @@ async function main() {
 
   if (process.argv.includes('--serve')) {
     const port = parseInt(process.env.PORT || '3000')
-    await startServer(brain, memory, port)
+    await startServer(brain, memory, port, config.auth.jwtSecret)
     // Keep process alive in serve-only mode (no REPL needed)
     if (!process.stdin.isTTY) return
   }

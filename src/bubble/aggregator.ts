@@ -1,5 +1,5 @@
 import type { Bubble, EmbeddingProvider } from '../shared/types.js'
-import { getDatabase } from '../storage/database.js'
+import { getDatabase, buildInClause } from '../storage/database.js'
 import { cosineSimilarity } from '../ai/embeddings.js'
 import { getNeighborIds } from './links.js'
 import { searchBubbles, getAllMemoryBubbles } from './model.js'
@@ -10,12 +10,33 @@ interface AggregateResult {
   score: number
 }
 
-// Weights for three-path fusion
-const WEIGHTS = {
-  keyword: 0.3,   // alpha
-  vector: 0.4,    // beta
-  graph: 0.2,     // gamma
-  recency: 0.1,   // delta
+// --- Dynamic weight profiles based on query intent ---
+type QueryIntent = 'precise' | 'fuzzy' | 'temporal' | 'aggregate'
+
+interface WeightProfile {
+  keyword: number
+  vector: number
+  graph: number
+  recency: number
+}
+
+const WEIGHT_PROFILES: Record<QueryIntent, WeightProfile> = {
+  precise:   { keyword: 0.55, vector: 0.25, graph: 0.10, recency: 0.10 },
+  fuzzy:     { keyword: 0.15, vector: 0.45, graph: 0.30, recency: 0.10 },
+  temporal:  { keyword: 0.20, vector: 0.20, graph: 0.10, recency: 0.50 },
+  aggregate: { keyword: 0.35, vector: 0.30, graph: 0.15, recency: 0.20 },
+}
+
+// Heuristic patterns for query intent classification
+const TEMPORAL_PATTERNS = /今天|昨天|最近|上周|上个月|本月|这周|刚才|今年|去年|本周|近期|最新/
+const AGGREGATE_PATTERNS = /一共|总共|多少|合计|汇总|统计|总计|共计|平均|总额|总量|几[个条笔份]|有哪些|所有|列出/
+const PRECISE_PATTERNS = /电话|手机|地址|邮箱|编号|名字叫|是谁|哪个|哪位/
+
+function classifyIntent(query: string): QueryIntent {
+  if (TEMPORAL_PATTERNS.test(query)) return 'temporal'
+  if (AGGREGATE_PATTERNS.test(query)) return 'aggregate'
+  if (PRECISE_PATTERNS.test(query)) return 'precise'
+  return 'fuzzy'
 }
 
 export class BubbleAggregator {
@@ -25,30 +46,43 @@ export class BubbleAggregator {
     this.embeddings = provider
   }
 
-  async aggregate(query: string, limit = 10): Promise<Bubble[]> {
+  async aggregate(query: string, limit = 10, spaceIds?: string[]): Promise<Bubble[]> {
+    const intent = classifyIntent(query)
+    const W = WEIGHT_PROFILES[intent]
+
     const scores = new Map<string, { bubble: Bubble; keyword: number; vector: number; graph: number; recency: number }>()
 
-    // Path 1: Keyword search
-    const keywordResults = searchBubbles(query, limit * 2)
+    // Path 1: Keyword search (always fast — SQLite)
+    const keywordResults = searchBubbles(query, limit * 2, spaceIds)
     for (let i = 0; i < keywordResults.length; i++) {
       const b = keywordResults[i]
+      const pinBoost = b.pinned ? 0.3 : 0
       scores.set(b.id, {
         bubble: b,
-        keyword: 1 - i / keywordResults.length, // rank-based score
+        keyword: 1 - i / keywordResults.length + pinBoost,
         vector: 0,
         graph: 0,
         recency: recencyScore(b.accessedAt),
       })
     }
 
-    // Path 2: Vector similarity (if embedding provider available)
-    if (this.embeddings) {
+    // Path 2: Vector similarity — SKIP if keyword results are strong enough
+    // This is the expensive path (embedding API call + full scan)
+    const needVector = this.embeddings && keywordResults.length < limit * 0.6
+    if (needVector) {
       try {
-        const queryEmbedding = await this.embeddings.embed(query)
-        const allBubbles = getAllBubblesWithEmbeddings()
+        // Timeout: abort embedding if takes > 3 seconds
+        const controller = new AbortController()
+        const timer = setTimeout(() => controller.abort(), 3000)
+        const queryEmbedding = await this.embeddings!.embed(query)
+        clearTimeout(timer)
 
-        for (const b of allBubbles) {
+        // Only scan recent bubbles (limit 200) to avoid full table scan
+        const candidates = getAllBubblesWithEmbeddings(spaceIds, 200)
+
+        for (const b of candidates) {
           const sim = cosineSimilarity(queryEmbedding, b.embedding!)
+          if (sim < 0.3) continue  // Skip low-similarity early
           const entry = scores.get(b.id)
           if (entry) {
             entry.vector = sim
@@ -63,6 +97,7 @@ export class BubbleAggregator {
           }
         }
       } catch (err) {
+        // Embedding timeout or failure — gracefully skip
         logger.debug('Vector search skipped:', err instanceof Error ? err.message : String(err))
       }
     }
@@ -79,14 +114,14 @@ export class BubbleAggregator {
       }
     }
 
-    // Weighted fusion
+    // Dynamic weighted fusion
     const results: AggregateResult[] = []
     for (const [, entry] of scores) {
       const score =
-        WEIGHTS.keyword * entry.keyword +
-        WEIGHTS.vector * entry.vector +
-        WEIGHTS.graph * entry.graph +
-        WEIGHTS.recency * entry.recency
+        W.keyword * entry.keyword +
+        W.vector * entry.vector +
+        W.graph * entry.graph +
+        W.recency * entry.recency
 
       if (score > 0.01) {
         results.push({ bubble: entry.bubble, score })
@@ -103,11 +138,21 @@ function recencyScore(accessedAt: number): number {
   return Math.exp(-hoursSince / 168) // decay over ~1 week
 }
 
-function getAllBubblesWithEmbeddings(): Bubble[] {
+function getAllBubblesWithEmbeddings(spaceIds?: string[], maxRows = 200): Bubble[] {
   const db = getDatabase()
-  const rows = db.prepare(`
-    SELECT * FROM bubbles WHERE embedding IS NOT NULL
-  `).all() as any[]
+  let sql = 'SELECT * FROM bubbles WHERE embedding IS NOT NULL'
+  const params: unknown[] = []
+
+  if (spaceIds?.length) {
+    const { placeholders, params: sp } = buildInClause(spaceIds)
+    sql += ` AND space_id IN (${placeholders})`
+    params.push(...sp)
+  }
+
+  sql += ' ORDER BY accessed_at DESC LIMIT ?'
+  params.push(maxRows)
+
+  const rows = db.prepare(sql).all(...params) as any[]
 
   return rows.map((row) => ({
     id: row.id,
@@ -125,5 +170,6 @@ function getAllBubblesWithEmbeddings(): Bubble[] {
     createdAt: row.created_at,
     updatedAt: row.updated_at,
     accessedAt: row.accessed_at,
+    spaceId: row.space_id ?? undefined,
   }))
 }

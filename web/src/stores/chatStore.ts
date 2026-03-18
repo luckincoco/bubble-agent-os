@@ -1,6 +1,7 @@
 import { create } from 'zustand'
 import type { ChatMessage, ConnectionStatus, WSMessage } from '../types'
 import { WSManager, getWSUrl } from '../services/websocket'
+import { useAuthStore } from './authStore'
 
 interface ChatState {
   messages: ChatMessage[]
@@ -86,6 +87,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
   sendMessage: (text: string) => {
     const { wsManager, isStreaming } = get()
     if (!wsManager || isStreaming) return
+    const spaceId = useAuthStore.getState().currentSpaceId
     const userMsg: ChatMessage = {
       id: genId(),
       role: 'user',
@@ -93,6 +95,6 @@ export const useChatStore = create<ChatState>((set, get) => ({
       timestamp: Date.now(),
     }
     set((s) => ({ messages: [...s.messages, userMsg] }))
-    wsManager.send({ message: text })
+    wsManager.send({ message: text, spaceId })
   },
 }))

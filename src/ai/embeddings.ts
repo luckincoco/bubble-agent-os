@@ -17,27 +17,35 @@ export function createEmbeddingProvider(config: EmbeddingConfig): EmbeddingProvi
 
   async function embedBatch(texts: string[]): Promise<number[][]> {
     const url = `${baseUrl}/v1/embeddings`
-    const res = await fetch(url, {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        'Authorization': `Bearer ${apiKey}`,
-      },
-      body: JSON.stringify({ model, input: texts }),
-    })
+    const controller = new AbortController()
+    const timer = setTimeout(() => controller.abort(), 5000) // 5s timeout
 
-    if (!res.ok) {
-      const text = await res.text()
-      throw new Error(`Embedding API error ${res.status}: ${text}`)
+    try {
+      const res = await fetch(url, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${apiKey}`,
+        },
+        body: JSON.stringify({ model, input: texts }),
+        signal: controller.signal,
+      })
+
+      if (!res.ok) {
+        const text = await res.text()
+        throw new Error(`Embedding API error ${res.status}: ${text}`)
+      }
+
+      const data = await res.json() as {
+        data: { embedding: number[]; index: number }[]
+      }
+
+      return data.data
+        .sort((a, b) => a.index - b.index)
+        .map((d) => d.embedding)
+    } finally {
+      clearTimeout(timer)
     }
-
-    const data = await res.json() as {
-      data: { embedding: number[]; index: number }[]
-    }
-
-    return data.data
-      .sort((a, b) => a.index - b.index)
-      .map((d) => d.embedding)
   }
 
   return { embed, embedBatch }

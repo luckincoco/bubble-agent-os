@@ -30,7 +30,12 @@ export function MemoryPanel() {
   }
 
   if (loading) {
-    return <div className={s.loading}>Loading memories...</div>
+    return (
+      <div className={s.loading}>
+        <div className={s.spinner} />
+        <span>Loading memories...</span>
+      </div>
+    )
   }
 
   if (error) {

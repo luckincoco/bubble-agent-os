@@ -29,3 +29,7 @@ Thumbs.db
 
 # TypeScript build info
 *.tsbuildinfo
+
+# Test fixtures (recorded LLM responses - may contain sensitive data)
+# Keep tracked intentionally for reproducible tests, but review before committing
+# tests/fixtures/

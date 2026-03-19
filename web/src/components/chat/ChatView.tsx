@@ -15,6 +15,7 @@ export function ChatView() {
         <div className={s.empty}>
           <div className={s.emptyIcon}>&#x1FAE7;</div>
           <div className={s.emptyText}>Say hi to Bubble Agent</div>
+          <div className={s.emptyHint}>Enter &#x2318; to send a message</div>
         </div>
       )}
       {messages.map((msg) => (

@@ -25,6 +25,10 @@
   color: var(--text-primary);
 }
 
+.tab[data-active="true"] .icon {
+  filter: drop-shadow(0 0 6px var(--glow-purple));
+}
+
 .tab[data-active="true"]::after {
   content: '';
   position: absolute;

@@ -3,25 +3,31 @@
   overflow-y: auto;
   padding: 16px;
   -webkit-overflow-scrolling: touch;
+  animation: fadeIn var(--duration-normal) var(--ease-smooth);
 }
 
 .toolbar {
   display: flex;
   align-items: center;
   gap: 12px;
-  margin-bottom: 12px;
+  margin-bottom: 16px;
 }
 
 .uploadBtn {
   padding: 8px 16px;
-  border-radius: var(--radius-button, 8px);
+  border-radius: var(--radius-button);
   border: 1px solid rgba(139, 92, 246, 0.4);
   background: rgba(139, 92, 246, 0.15);
-  color: var(--text-primary, #e2e8f0);
+  color: var(--text-primary);
   font-size: 14px;
   cursor: pointer;
   white-space: nowrap;
-  transition: background 0.2s;
+  transition: background 0.2s, border-color 0.2s;
+}
+
+.uploadBtn:hover {
+  background: rgba(139, 92, 246, 0.25);
+  border-color: rgba(139, 92, 246, 0.6);
 }
 
 .uploadBtn:active {
@@ -35,7 +41,8 @@
 
 .uploadMsg {
   font-size: 13px;
-  color: var(--text-dim, #94a3b8);
+  color: var(--text-dim);
+  animation: fadeIn var(--duration-fast) var(--ease-smooth);
 }
 
 .grid {
@@ -55,17 +62,29 @@
   justify-content: center;
   padding: 60px 20px;
   color: var(--text-dim);
-  gap: 8px;
+  gap: 12px;
+  animation: fadeSlideUp 0.5s var(--ease-smooth);
 }
 
-.emptyIcon { font-size: 40px; opacity: 0.3; }
+.emptyIcon { font-size: 44px; opacity: 0.25; }
 
 .loading {
   display: flex;
+  flex-direction: column;
   align-items: center;
   justify-content: center;
   padding: 60px;
   color: var(--text-dim);
+  gap: 12px;
+}
+
+.spinner {
+  width: 32px;
+  height: 32px;
+  border-radius: 50%;
+  border: 3px solid rgba(255, 255, 255, 0.08);
+  border-top-color: var(--purple);
+  animation: spinGlow 0.8s linear infinite;
 }
 
 .error {
@@ -73,6 +92,7 @@
   padding: 40px 20px;
   color: var(--text-error);
   font-size: 14px;
+  animation: fadeIn var(--duration-normal) var(--ease-smooth);
 }
 
 .retry {
@@ -84,4 +104,10 @@
   color: var(--text-error);
   cursor: pointer;
   font-size: 13px;
+  transition: background 0.2s, border-color 0.2s;
+}
+
+.retry:hover {
+  background: rgba(248, 113, 113, 0.1);
+  border-color: rgba(248, 113, 113, 0.5);
 }

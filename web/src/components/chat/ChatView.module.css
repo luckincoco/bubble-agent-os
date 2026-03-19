@@ -6,6 +6,7 @@
   flex-direction: column;
   gap: 12px;
   -webkit-overflow-scrolling: touch;
+  animation: fadeIn var(--duration-normal) var(--ease-smooth);
 }
 
 .empty {
@@ -14,15 +15,29 @@
   flex-direction: column;
   align-items: center;
   justify-content: center;
-  gap: 12px;
+  gap: 16px;
   color: var(--text-dim);
+  animation: fadeSlideUp 0.5s var(--ease-smooth);
 }
 
 .emptyIcon {
-  font-size: 48px;
-  opacity: 0.3;
+  font-size: 56px;
+  opacity: 0.25;
+  filter: grayscale(0.5);
 }
 
 .emptyText {
-  font-size: 14px;
+  font-size: 15px;
+  font-weight: 500;
+  background: var(--gradient-accent);
+  background-clip: text;
+  -webkit-background-clip: text;
+  -webkit-text-fill-color: transparent;
+  opacity: 0.6;
+}
+
+.emptyHint {
+  font-size: 12px;
+  color: var(--text-dim);
+  opacity: 0.5;
 }

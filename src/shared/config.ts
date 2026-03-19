@@ -43,7 +43,7 @@ export function getConfig(): AppConfig {
     },
     auth: {
       jwtSecret: env.JWT_SECRET || 'bubble-agent-default-secret-change-me',
-      defaultPassword: env.DEFAULT_PASSWORD || 'bubble123',
+      defaultPassword: env.DEFAULT_PASSWORD || 'changeme',
       serviceApiKey: env.SERVICE_API_KEY || undefined,
     },
     ...(env.FEISHU_APP_ID && env.FEISHU_APP_SECRET ? {

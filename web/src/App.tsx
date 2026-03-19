@@ -13,8 +13,14 @@ export function App() {
     return (
       <>
         <BubbleBackground />
-        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', height: '100dvh', color: 'var(--text-dim)' }}>
-          Loading...
+        <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', height: '100dvh', gap: '16px' }}>
+          <div style={{
+            width: '40px', height: '40px', borderRadius: '50%',
+            border: '3px solid rgba(255,255,255,0.08)',
+            borderTopColor: '#7C3AED',
+            animation: 'spinGlow 0.8s linear infinite',
+          }} />
+          <span style={{ color: 'var(--text-dim)', fontSize: '13px', letterSpacing: '0.5px' }}>Bubble Agent</span>
         </div>
       </>
     )

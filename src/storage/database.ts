@@ -75,9 +75,42 @@ function runMigrations(database: Database.Database) {
     logger.info('Migration: added space_id column to bubbles')
   }
   database.exec('CREATE INDEX IF NOT EXISTS idx_bubbles_space ON bubbles(space_id)')
+
+  // Create bobi (波比) bot user if not exists
+  const bobi = database.prepare('SELECT id FROM users WHERE username = ?').get('bobi') as { id: string } | undefined
+  if (!bobi) {
+    const bobiId = ulid()
+    const hash = bcrypt.hashSync('Bobi@Bubble2026', 10)
+    database.prepare(
+      'INSERT INTO users (id, username, password_hash, display_name, role, created_at) VALUES (?, ?, ?, ?, ?, ?)'
+    ).run(bobiId, 'bobi', hash, '波比', 'admin', Date.now())
+
+    // Give bobi access to all existing spaces
+    const spaces = database.prepare('SELECT id FROM spaces').all() as Array<{ id: string }>
+    for (const space of spaces) {
+      database.prepare('INSERT OR IGNORE INTO user_spaces (user_id, space_id) VALUES (?, ?)').run(bobiId, space.id)
+    }
+    logger.info(`Migration: created bobi user (admin) with access to ${spaces.length} spaces`)
+  }
+
+  // Create scheduled_tasks table if not exists
+  database.exec(`
+    CREATE TABLE IF NOT EXISTS scheduled_tasks (
+      id TEXT PRIMARY KEY,
+      name TEXT NOT NULL,
+      type TEXT NOT NULL,
+      cron TEXT NOT NULL,
+      params TEXT NOT NULL DEFAULT '{}',
+      enabled INTEGER NOT NULL DEFAULT 1,
+      last_run INTEGER,
+      next_run INTEGER,
+      created_at INTEGER NOT NULL,
+      updated_at INTEGER NOT NULL
+    )
+  `)
 }
 
-function seedData(database: Database, defaultPassword: string) {
+function seedData(database: Database.Database, defaultPassword: string) {
   const userCount = (database.prepare('SELECT COUNT(*) as cnt FROM users').get() as { cnt: number }).cnt
   if (userCount > 0) return
 

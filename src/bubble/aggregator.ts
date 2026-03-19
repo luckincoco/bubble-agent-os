@@ -46,7 +46,7 @@ export class BubbleAggregator {
     this.embeddings = provider
   }
 
-  async aggregate(query: string, limit = 10, spaceIds?: string[]): Promise<Bubble[]> {
+  async aggregate(query: string, limit = 10, spaceIds?: string[], focusBoostFn?: (content: string) => number): Promise<Bubble[]> {
     const intent = classifyIntent(query)
     const W = WEIGHT_PROFILES[intent]
 
@@ -117,11 +117,17 @@ export class BubbleAggregator {
     // Dynamic weighted fusion
     const results: AggregateResult[] = []
     for (const [, entry] of scores) {
-      const score =
+      let score =
         W.keyword * entry.keyword +
         W.vector * entry.vector +
         W.graph * entry.graph +
         W.recency * entry.recency
+
+      // Apply focus boost from conversation tracking
+      score += focusBoostFn?.(entry.bubble.content) ?? 0
+
+      // Apply tier-based memory level multiplier
+      score *= tierMultiplier(entry.bubble.accessedAt, entry.bubble.pinned)
 
       if (score > 0.01) {
         results.push({ bubble: entry.bubble, score })
@@ -136,6 +142,16 @@ export class BubbleAggregator {
 function recencyScore(accessedAt: number): number {
   const hoursSince = (Date.now() - accessedAt) / (1000 * 60 * 60)
   return Math.exp(-hoursSince / 168) // decay over ~1 week
+}
+
+/** Memory tier multiplier: recent bubbles rank higher, old ones are deprioritized. */
+export function tierMultiplier(accessedAt: number, pinned: boolean): number {
+  if (pinned) return 1.0
+  const hours = (Date.now() - accessedAt) / (1000 * 60 * 60)
+  if (hours <= 1) return 1.0        // Tier 0: working memory
+  if (hours <= 168) return 0.8      // Tier 1: active (7 days)
+  if (hours <= 2160) return 0.5     // Tier 2: long-term (90 days)
+  return 0.2                        // Tier 3: archive
 }
 
 function getAllBubblesWithEmbeddings(spaceIds?: string[], maxRows = 200): Bubble[] {

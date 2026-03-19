@@ -3,21 +3,15 @@ import { MemoryExtractor } from './extractor.js'
 import { BubbleAggregator } from '../bubble/aggregator.js'
 import { createBubble, getAllMemoryBubbles, searchBubbles, updateBubble } from '../bubble/model.js'
 import { addLink } from '../bubble/links.js'
+import { FocusTracker, tokenize } from './focus-tracker.js'
+import { estimateTokens, truncateToTokenBudget, TOKEN_LIMITS } from '../shared/tokens.js'
 import { logger } from '../shared/logger.js'
 
-// --- Surprise-driven memory helpers ---
-
-/** Extract meaningful tokens from text for overlap comparison */
-function tokenize(text: string): Set<string> {
-  return new Set(
-    text.toLowerCase()
-      .split(/[\s,，。？！、；：""''（）()\[\]{}·\-—\n]+/)
-      .filter(t => t.length >= 2)
-  )
-}
+// Re-export for other modules
+export { tokenize }
 
 /** Calculate surprise score: 0 = fully expected, 1 = completely novel */
-function calcSurprise(newContent: string, existingBubbles: Bubble[]): { score: number; contradicts: boolean; nearDuplicate: Bubble | null } {
+export function calcSurprise(newContent: string, existingBubbles: Bubble[]): { score: number; contradicts: boolean; nearDuplicate: Bubble | null } {
   if (existingBubbles.length === 0) return { score: 0.8, contradicts: false, nearDuplicate: null }
 
   const newTokens = tokenize(newContent)
@@ -75,10 +69,21 @@ export class MemoryManager {
   private extractor: MemoryExtractor
   private aggregator: BubbleAggregator
   private embeddings: EmbeddingProvider | null = null
+  private focusTracker: FocusTracker
+  private focusEnabled: boolean
 
-  constructor(llm: LLMProvider) {
+  constructor(llm: LLMProvider, enableFocus = true) {
     this.extractor = new MemoryExtractor(llm)
     this.aggregator = new BubbleAggregator()
+    this.focusTracker = new FocusTracker()
+    this.focusEnabled = enableFocus
+  }
+
+  /** Record user message for focus tracking */
+  recordFocus(userId: string, message: string): void {
+    if (this.focusEnabled) {
+      this.focusTracker.record(userId, message)
+    }
   }
 
   setEmbeddingProvider(provider: EmbeddingProvider) {
@@ -87,8 +92,12 @@ export class MemoryManager {
     logger.info('Memory: embedding provider connected')
   }
 
-  async getContextForQuery(userInput: string, spaceIds?: string[]): Promise<string> {
-    const bubbles = await this.aggregator.aggregate(userInput, 20, spaceIds)
+  async getContextForQuery(userInput: string, spaceIds?: string[], userId?: string, tokenBudget?: number): Promise<string> {
+    const budget = tokenBudget ?? TOKEN_LIMITS.MEMORY_BUDGET
+    const focusBoostFn = this.focusEnabled && userId
+      ? (content: string) => this.focusTracker.computeFocusBoost(userId, content)
+      : undefined
+    const bubbles = await this.aggregator.aggregate(userInput, 20, spaceIds, focusBoostFn)
     if (bubbles.length === 0) return ''
 
     // Separate structured data (excel summaries) from regular memories
@@ -96,16 +105,43 @@ export class MemoryManager {
     const regular = bubbles.filter(b => !b.tags?.includes('excel-summary'))
 
     const parts: string[] = []
+    let usedTokens = 0
+    // Reserve tokens for framing text around the data
+    const framingOverhead = 200
 
+    // Add excel summaries first (higher value for data queries), with per-bubble cap
     if (summaries.length > 0) {
-      const tableLines = summaries.map(m => m.content).join('\n\n')
-      parts.push(`以下是结构化数据（来自Excel导入），包含完整的数据表和统计信息，可以直接用于计算和分析：\n${tableLines}`)
+      const included: string[] = []
+      for (const m of summaries) {
+        const capped = truncateToTokenBudget(m.content, TOKEN_LIMITS.SINGLE_BUBBLE_MAX)
+        const cost = estimateTokens(capped)
+        if (usedTokens + cost + framingOverhead > budget) break
+        included.push(capped)
+        usedTokens += cost
+      }
+      if (included.length > 0) {
+        parts.push(`以下是结构化数据（来自Excel导入），包含完整的数据表和统计信息，可以直接用于计算和分析：\n${included.join('\n\n')}`)
+      }
     }
 
+    // Add regular memories within remaining budget
     if (regular.length > 0) {
-      const lines = regular.map((m) => `- [${m.type}] ${m.content}`).join('\n')
-      parts.push(`以下是记忆库中的相关信息：\n${lines}`)
+      const lines: string[] = []
+      for (const m of regular) {
+        const line = `- [${m.type}] ${m.content}`
+        const cost = estimateTokens(line)
+        if (usedTokens + cost + framingOverhead > budget) break
+        lines.push(line)
+        usedTokens += cost
+      }
+      if (lines.length > 0) {
+        parts.push(`以下是记忆库中的相关信息：\n${lines.join('\n')}`)
+      }
     }
+
+    if (parts.length === 0) return ''
+
+    logger.debug(`Memory context: ~${usedTokens} tokens (budget ${budget}), ${bubbles.length} candidates, ${parts.length} sections`)
 
     return `\n${parts.join('\n\n')}\n\n请基于以上信息回答用户的问题。如果涉及数值计算（金额汇总、吨位统计等），请基于完整数据表列出相关数据并计算，确保不遗漏任何行。`
   }
@@ -191,7 +227,10 @@ export class MemoryManager {
     return getAllMemoryBubbles(spaceIds)
   }
 
-  async search(query: string, limit = 15, spaceIds?: string[]) {
-    return this.aggregator.aggregate(query, limit, spaceIds)
+  async search(query: string, limit = 15, spaceIds?: string[], userId?: string) {
+    const focusBoostFn = this.focusEnabled && userId
+      ? (content: string) => this.focusTracker.computeFocusBoost(userId, content)
+      : undefined
+    return this.aggregator.aggregate(query, limit, spaceIds, focusBoostFn)
   }
 }

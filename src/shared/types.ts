@@ -86,5 +86,15 @@ export interface AppConfig {
   auth: {
     jwtSecret: string
     defaultPassword: string
+    serviceApiKey?: string
+  }
+  feishu?: {
+    appId: string
+    appSecret: string
+  }
+  features: {
+    focusTracking: boolean
+    semanticBridge: boolean
+    surpriseDetection: boolean
   }
 }

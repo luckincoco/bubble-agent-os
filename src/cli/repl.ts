@@ -90,7 +90,7 @@ export async function startREPL(brain: Brain, memory?: MemoryManager) {
     // Stream LLM response
     process.stdout.write(`${COLORS.cyan}`)
     try {
-      await brain.think(input, (chunk) => {
+      await brain.think(input, undefined, (chunk: string) => {
         process.stdout.write(chunk)
       })
       process.stdout.write(`${COLORS.reset}\n\n`)

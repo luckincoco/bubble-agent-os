@@ -1,4 +1,4 @@
-import type { LLMProvider, LLMMessage, UserContext } from '../shared/types.js'
+import type { LLMProvider, LLMMessage, UserContext, ThinkResult, CustomAgent, SourceRef } from '../shared/types.js'
 import type { MemoryManager } from '../memory/manager.js'
 import type { ToolRegistry } from '../connector/registry.js'
 import { estimateTokens, TOKEN_LIMITS } from '../shared/tokens.js'
@@ -47,6 +47,7 @@ export class Brain {
   private historyMap: Map<string, LLMMessage[]> = new Map()
   private memory: MemoryManager | null = null
   private tools: ToolRegistry | null = null
+  private agentConfigs: Map<string, CustomAgent> = new Map()
 
   constructor(llm: LLMProvider) {
     this.llm = llm
@@ -62,6 +63,17 @@ export class Brain {
     logger.info('Brain: tool system connected')
   }
 
+  /** Set or clear the active agent for a user */
+  setActiveAgent(userId: string, agent: CustomAgent | null) {
+    if (agent) {
+      this.agentConfigs.set(userId, agent)
+      logger.info(`Brain: agent "${agent.name}" activated for user ${userId}`)
+    } else {
+      this.agentConfigs.delete(userId)
+      logger.info(`Brain: agent deactivated for user ${userId}`)
+    }
+  }
+
   private getHistory(userId: string): LLMMessage[] {
     let h = this.historyMap.get(userId)
     if (!h) {
@@ -71,7 +83,7 @@ export class Brain {
     return h
   }
 
-  async think(userInput: string, ctx?: UserContext, onChunk?: (text: string) => void): Promise<string> {
+  async think(userInput: string, ctx?: UserContext, onChunk?: (text: string) => void): Promise<ThinkResult> {
     const userId = ctx?.userId ?? '_default'
     const history = this.getHistory(userId)
 
@@ -85,15 +97,21 @@ export class Brain {
     // Track conversation focus for dynamic search weights
     this.memory?.recordFocus(userId, userInput)
 
+    // --- Resolve active agent ---
+    const activeAgent = this.agentConfigs.get(userId)
+    const toolFilter = activeAgent?.tools?.length ? activeAgent.tools : undefined
+
     // --- Token budget management ---
     const maxPrompt = TOKEN_LIMITS.MAX_PROMPT_TOKENS
-    let systemContent = BASE_SYSTEM_PROMPT
+    let systemContent = activeAgent?.systemPrompt
+      ? `${activeAgent.systemPrompt}\n\n你已经具备记忆能力和工具调用能力。`
+      : BASE_SYSTEM_PROMPT
     let fixedTokens = estimateTokens(systemContent)
 
     // Tool descriptions (fixed cost, add first)
     let toolDesc = ''
     if (this.tools) {
-      toolDesc = this.tools.getToolDescriptions()
+      toolDesc = this.tools.getToolDescriptions(toolFilter)
       fixedTokens += estimateTokens(toolDesc)
     }
 
@@ -103,10 +121,23 @@ export class Brain {
       maxPrompt - fixedTokens - TOKEN_LIMITS.COMPLETION_RESERVE - 4000, // 4000 = minimum history room
     )
 
+    // If agent has spaceIds, narrow the search scope
+    const searchSpaceIds = activeAgent?.spaceIds?.length ? activeAgent.spaceIds : ctx?.spaceIds
+
+    let sources: SourceRef[] = []
     if (this.memory && memoryBudget > 1000) {
-      const memCtx = await this.memory.getContextForQuery(userInput, ctx?.spaceIds, userId, memoryBudget)
-      if (memCtx) systemContent += memCtx
+      const memResult = await this.memory.getContextForQuery(userInput, searchSpaceIds, userId, memoryBudget)
+      if (memResult.context) {
+        systemContent += memResult.context
+        sources = memResult.sources
+      }
     }
+
+    // Append citation instruction when sources exist
+    if (sources.length > 0) {
+      systemContent += '\n\n当你在回答中使用了上述参考信息时，请在相关段落末尾使用 [ref:N] 标注来源编号。不要强制引用，只在确实使用了某条信息时标注。'
+    }
+
     if (toolDesc) systemContent += toolDesc
 
     const systemMessage: LLMMessage = { role: 'system', content: systemContent }
@@ -169,7 +200,7 @@ export class Brain {
         })
       }
 
-      return response
+      return { response, sources }
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err)
       logger.error('Brain think error:', msg)

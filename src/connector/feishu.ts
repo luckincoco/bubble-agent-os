@@ -114,7 +114,7 @@ export class FeishuConnector {
     const ctx = this.resolveUserContext()
 
     try {
-      const response = await this.brain.think(text, ctx)
+      const { response } = await this.brain.think(text, ctx)
       await this.reply(chat_id, chat_type, message_id, response)
 
       // Fire-and-forget: scan message for contradictions

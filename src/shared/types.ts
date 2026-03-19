@@ -38,16 +38,57 @@ export interface AuthUser {
   spaces: Space[]
 }
 
+export type SpaceRole = 'owner' | 'editor' | 'viewer'
+
 export interface Space {
   id: string
   name: string
   description: string
+  creatorId?: string
+}
+
+export interface SpaceMember {
+  userId: string
+  username: string
+  displayName: string
+  role: SpaceRole
 }
 
 export interface UserContext {
   userId: string
   spaceIds: string[]
   activeSpaceId: string
+  activeAgentId?: string
+}
+
+// Citation / Source tracking
+export interface SourceRef {
+  refIndex: number
+  id: string
+  title: string
+  type: BubbleType
+  tags: string[]
+  source: string
+  snippet: string
+}
+
+export interface ThinkResult {
+  response: string
+  sources: SourceRef[]
+}
+
+// Custom Agent
+export interface CustomAgent {
+  id: string
+  name: string
+  description: string
+  systemPrompt: string
+  avatar: string
+  tools: string[]
+  spaceIds: string[]
+  creatorId: string
+  createdAt: number
+  updatedAt: number
 }
 
 // LLM types
@@ -91,6 +132,11 @@ export interface AppConfig {
   feishu?: {
     appId: string
     appSecret: string
+  }
+  tencent?: {
+    secretId: string
+    secretKey: string
+    region?: string
   }
   features: {
     focusTracking: boolean

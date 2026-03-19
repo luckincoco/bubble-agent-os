@@ -9,5 +9,5 @@ export default defineConfig({
   sourcemap: true,
   dts: true,
   banner: { js: '#!/usr/bin/env node' },
-  external: ['pdf-parse', 'mammoth', 'node-cron', 'better-sqlite3'],
+  external: ['pdf-parse', 'mammoth', 'node-cron', 'better-sqlite3', 'tencentcloud-sdk-nodejs-ocr'],
 })

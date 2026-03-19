@@ -76,7 +76,7 @@ async function main() {
     scheduler = undefined
   }
 
-  const serverModules: ServerModules = { semanticBridge, surpriseDetector, scheduler }
+  const serverModules: ServerModules = { semanticBridge, surpriseDetector, scheduler, tencentConfig: config.tencent }
 
   process.on('SIGINT', () => {
     scheduler?.stop()

@@ -52,6 +52,13 @@ export function getConfig(): AppConfig {
         appSecret: env.FEISHU_APP_SECRET,
       },
     } : {}),
+    ...(env.TENCENT_SECRET_ID && env.TENCENT_SECRET_KEY ? {
+      tencent: {
+        secretId: env.TENCENT_SECRET_ID,
+        secretKey: env.TENCENT_SECRET_KEY,
+        region: env.TENCENT_REGION || undefined,
+      },
+    } : {}),
     features: {
       focusTracking: env.FOCUS_TRACKING !== 'false',
       semanticBridge: env.SEMANTIC_BRIDGE !== 'false',

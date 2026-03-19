@@ -1,4 +1,4 @@
-import type { LLMProvider, EmbeddingProvider, Bubble } from '../shared/types.js'
+import type { LLMProvider, EmbeddingProvider, Bubble, SourceRef } from '../shared/types.js'
 import { MemoryExtractor } from './extractor.js'
 import { BubbleAggregator } from '../bubble/aggregator.js'
 import { createBubble, getAllMemoryBubbles, searchBubbles, updateBubble } from '../bubble/model.js'
@@ -92,20 +92,22 @@ export class MemoryManager {
     logger.info('Memory: embedding provider connected')
   }
 
-  async getContextForQuery(userInput: string, spaceIds?: string[], userId?: string, tokenBudget?: number): Promise<string> {
+  async getContextForQuery(userInput: string, spaceIds?: string[], userId?: string, tokenBudget?: number): Promise<{ context: string; sources: SourceRef[] }> {
     const budget = tokenBudget ?? TOKEN_LIMITS.MEMORY_BUDGET
     const focusBoostFn = this.focusEnabled && userId
       ? (content: string) => this.focusTracker.computeFocusBoost(userId, content)
       : undefined
     const bubbles = await this.aggregator.aggregate(userInput, 20, spaceIds, focusBoostFn)
-    if (bubbles.length === 0) return ''
+    if (bubbles.length === 0) return { context: '', sources: [] }
 
     // Separate structured data (excel summaries) from regular memories
     const summaries = bubbles.filter(b => b.tags?.includes('excel-summary'))
     const regular = bubbles.filter(b => !b.tags?.includes('excel-summary'))
 
     const parts: string[] = []
+    const sources: SourceRef[] = []
     let usedTokens = 0
+    let refIndex = 1
     // Reserve tokens for framing text around the data
     const framingOverhead = 200
 
@@ -116,7 +118,9 @@ export class MemoryManager {
         const capped = truncateToTokenBudget(m.content, TOKEN_LIMITS.SINGLE_BUBBLE_MAX)
         const cost = estimateTokens(capped)
         if (usedTokens + cost + framingOverhead > budget) break
-        included.push(capped)
+        included.push(`[ref:${refIndex}] ${capped}`)
+        sources.push({ refIndex, id: m.id, title: m.title, type: m.type, tags: m.tags, source: m.source, snippet: m.content.slice(0, 100) })
+        refIndex++
         usedTokens += cost
       }
       if (included.length > 0) {
@@ -128,10 +132,12 @@ export class MemoryManager {
     if (regular.length > 0) {
       const lines: string[] = []
       for (const m of regular) {
-        const line = `- [${m.type}] ${m.content}`
+        const line = `[ref:${refIndex}] [${m.type}] ${m.content}`
         const cost = estimateTokens(line)
         if (usedTokens + cost + framingOverhead > budget) break
         lines.push(line)
+        sources.push({ refIndex, id: m.id, title: m.title, type: m.type, tags: m.tags, source: m.source, snippet: m.content.slice(0, 100) })
+        refIndex++
         usedTokens += cost
       }
       if (lines.length > 0) {
@@ -139,11 +145,12 @@ export class MemoryManager {
       }
     }
 
-    if (parts.length === 0) return ''
+    if (parts.length === 0) return { context: '', sources: [] }
 
     logger.debug(`Memory context: ~${usedTokens} tokens (budget ${budget}), ${bubbles.length} candidates, ${parts.length} sections`)
 
-    return `\n${parts.join('\n\n')}\n\n请基于以上信息回答用户的问题。如果涉及数值计算（金额汇总、吨位统计等），请基于完整数据表列出相关数据并计算，确保不遗漏任何行。`
+    const context = `\n${parts.join('\n\n')}\n\n请基于以上信息回答用户的问题。如果涉及数值计算（金额汇总、吨位统计等），请基于完整数据表列出相关数据并计算，确保不遗漏任何行。`
+    return { context, sources }
   }
 
   async extractAndStore(userMessage: string, assistantMessage: string, spaceId?: string): Promise<void> {

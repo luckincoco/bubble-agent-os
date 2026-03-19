@@ -66,7 +66,7 @@ CREATE TABLE IF NOT EXISTS user_spaces (
 );
 `
 
-function runMigrations(database: Database.Database) {
+function runMigrations(database: Database.Database, defaultPassword: string) {
   // Check if bubbles table has space_id column
   const cols = database.pragma('table_info(bubbles)') as Array<{ name: string }>
   const hasSpaceId = cols.some(c => c.name === 'space_id')
@@ -80,7 +80,8 @@ function runMigrations(database: Database.Database) {
   const bobi = database.prepare('SELECT id FROM users WHERE username = ?').get('bobi') as { id: string } | undefined
   if (!bobi) {
     const bobiId = ulid()
-    const hash = bcrypt.hashSync('Bobi@Bubble2026', 10)
+    const bobiPwd = process.env.BOBI_PASSWORD || defaultPassword
+    const hash = bcrypt.hashSync(bobiPwd, 10)
     database.prepare(
       'INSERT INTO users (id, username, password_hash, display_name, role, created_at) VALUES (?, ?, ?, ?, ?, ?)'
     ).run(bobiId, 'bobi', hash, '波比', 'admin', Date.now())
@@ -108,6 +109,39 @@ function runMigrations(database: Database.Database) {
       updated_at INTEGER NOT NULL
     )
   `)
+
+  // P2-4: Add role column to user_spaces for space-level permissions
+  const usCols = database.pragma('table_info(user_spaces)') as Array<{ name: string }>
+  if (!usCols.some(c => c.name === 'role')) {
+    database.exec("ALTER TABLE user_spaces ADD COLUMN role TEXT NOT NULL DEFAULT 'editor'")
+    // Existing members become owners
+    database.exec("UPDATE user_spaces SET role = 'owner'")
+    logger.info('Migration: added role column to user_spaces')
+  }
+
+  // P2-4: Add creator_id column to spaces
+  const spCols = database.pragma('table_info(spaces)') as Array<{ name: string }>
+  if (!spCols.some(c => c.name === 'creator_id')) {
+    database.exec('ALTER TABLE spaces ADD COLUMN creator_id TEXT')
+    logger.info('Migration: added creator_id column to spaces')
+  }
+
+  // P2-3: Create custom_agents table
+  database.exec(`
+    CREATE TABLE IF NOT EXISTS custom_agents (
+      id TEXT PRIMARY KEY,
+      name TEXT NOT NULL,
+      description TEXT DEFAULT '',
+      system_prompt TEXT NOT NULL,
+      avatar TEXT DEFAULT '',
+      tools TEXT DEFAULT '[]',
+      space_ids TEXT DEFAULT '[]',
+      creator_id TEXT NOT NULL,
+      created_at INTEGER NOT NULL,
+      updated_at INTEGER NOT NULL
+    )
+  `)
+  database.exec('CREATE INDEX IF NOT EXISTS idx_agents_creator ON custom_agents(creator_id)')
 }
 
 function seedData(database: Database.Database, defaultPassword: string) {
@@ -117,26 +151,23 @@ function seedData(database: Database.Database, defaultPassword: string) {
   const now = Date.now()
   const hash = bcrypt.hashSync(defaultPassword, 10)
 
-  // Create spaces
-  const hrlId = ulid()
+  // Create default spaces
+  const workId = ulid()
   const personalId = ulid()
-  database.prepare('INSERT INTO spaces (id, name, description, created_at) VALUES (?, ?, ?, ?)').run(hrlId, '华瑞隆', '华瑞隆业务数据', now)
+  database.prepare('INSERT INTO spaces (id, name, description, created_at) VALUES (?, ?, ?, ?)').run(workId, '工作', '团队工作空间', now)
   database.prepare('INSERT INTO spaces (id, name, description, created_at) VALUES (?, ?, ?, ?)').run(personalId, '个人', '个人空间', now)
 
-  // Create users
-  const chunyuId = ulid()
-  const yingyunId = ulid()
-  database.prepare('INSERT INTO users (id, username, password_hash, display_name, role, created_at) VALUES (?, ?, ?, ?, ?, ?)').run(chunyuId, 'chunyu', hash, '姜春雨', 'admin', now)
-  database.prepare('INSERT INTO users (id, username, password_hash, display_name, role, created_at) VALUES (?, ?, ?, ?, ?, ?)').run(yingyunId, 'yingyun', hash, '姜英云', 'user', now)
+  // Create default admin user
+  const adminId = ulid()
+  database.prepare('INSERT INTO users (id, username, password_hash, display_name, role, created_at) VALUES (?, ?, ?, ?, ?, ?)').run(adminId, 'admin', hash, '管理员', 'admin', now)
 
   // Assign spaces
-  database.prepare('INSERT INTO user_spaces (user_id, space_id) VALUES (?, ?)').run(chunyuId, hrlId)
-  database.prepare('INSERT INTO user_spaces (user_id, space_id) VALUES (?, ?)').run(chunyuId, personalId)
-  database.prepare('INSERT INTO user_spaces (user_id, space_id) VALUES (?, ?)').run(yingyunId, personalId)
+  database.prepare('INSERT INTO user_spaces (user_id, space_id) VALUES (?, ?)').run(adminId, workId)
+  database.prepare('INSERT INTO user_spaces (user_id, space_id) VALUES (?, ?)').run(adminId, personalId)
 
-  // Migrate existing bubbles to 华瑞隆 space
-  const migrated = database.prepare('UPDATE bubbles SET space_id = ? WHERE space_id IS NULL').run(hrlId)
-  logger.info(`Seed: 2 spaces, 2 users created. ${migrated.changes} bubbles migrated to 华瑞隆 space`)
+  // Migrate existing bubbles to work space
+  const migrated = database.prepare('UPDATE bubbles SET space_id = ? WHERE space_id IS NULL').run(workId)
+  logger.info(`Seed: 2 spaces, 1 admin user created. ${migrated.changes} bubbles migrated to work space`)
 }
 
 export function initDatabase(dataDir: string, defaultPassword = 'bubble123'): Database.Database {
@@ -153,7 +184,7 @@ export function initDatabase(dataDir: string, defaultPassword = 'bubble123'): Da
   db.pragma('journal_mode = WAL')
   db.pragma('foreign_keys = ON')
   db.exec(SCHEMA)
-  runMigrations(db)
+  runMigrations(db, defaultPassword)
   seedData(db, defaultPassword)
 
   return db

@@ -55,7 +55,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
             const msgs = [...state.messages]
             const last = msgs[msgs.length - 1]
             if (last?.role === 'assistant') {
-              msgs[msgs.length - 1] = { ...last, content: msg.text || last.content, isStreaming: false }
+              msgs[msgs.length - 1] = { ...last, content: msg.text || last.content, isStreaming: false, sources: msg.sources }
               set({ messages: msgs, isStreaming: false })
             }
             break

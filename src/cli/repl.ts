@@ -92,7 +92,7 @@ export async function startREPL(brain: Brain, memory?: MemoryManager) {
     try {
       await brain.think(input, undefined, (chunk: string) => {
         process.stdout.write(chunk)
-      })
+      }).then(result => { /* ThinkResult - REPL only uses streaming output */ })
       process.stdout.write(`${COLORS.reset}\n\n`)
     } catch (err) {
       process.stdout.write(`${COLORS.reset}\n`)

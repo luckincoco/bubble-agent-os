@@ -11,7 +11,7 @@ import bcrypt from 'bcryptjs'
 import * as XLSX from 'xlsx'
 import type { Brain } from '../kernel/brain.js'
 import type { MemoryManager } from '../memory/manager.js'
-import type { BubbleType, UserContext } from '../shared/types.js'
+import type { BubbleType, UserContext, SpaceRole } from '../shared/types.js'
 import { createBubble } from '../bubble/model.js'
 import { addLink } from '../bubble/links.js'
 import { getDatabase } from '../storage/database.js'
@@ -21,6 +21,7 @@ import type { SurpriseDetector } from '../memory/surprise-detector.js'
 import type { TaskScheduler, ScheduledTaskType } from '../scheduler/scheduler.js'
 import { EXPORTS_DIR } from '../connector/tools/excel.js'
 import { parsePDF, parseDocx, parseTxt, splitIntoChunks, detectFileType } from '../connector/tools/doc-import.js'
+import { createAgent, getAgent, listAgents, updateAgent, deleteAgent } from '../agent/model.js'
 
 const __dirname = dirname(fileURLToPath(import.meta.url))
 
@@ -36,6 +37,7 @@ export interface ServerModules {
   semanticBridge?: SemanticBridge
   surpriseDetector?: SurpriseDetector
   scheduler?: TaskScheduler
+  tencentConfig?: { secretId: string; secretKey: string; region?: string }
 }
 
 export async function startServer(brain: Brain, memory: MemoryManager, port = 3000, jwtSecret = 'bubble-agent-secret', modules?: ServerModules, serviceApiKey?: string) {
@@ -161,14 +163,22 @@ export async function startServer(brain: Brain, memory: MemoryManager, port = 30
     }
   }
 
+  // Helper: get user's role in a specific space
+  function getSpaceRole(userId: string, spaceId: string, userRole: string): SpaceRole | null {
+    if (userRole === 'admin') return 'owner'
+    const db = getDatabase()
+    const row = db.prepare('SELECT role FROM user_spaces WHERE user_id = ? AND space_id = ?').get(userId, spaceId) as { role: string } | undefined
+    return (row?.role as SpaceRole) || null
+  }
+
   // --- API endpoints ---
 
   app.post('/api/chat', async (req, reply) => {
     const { message, spaceId } = req.body as { message: string; spaceId?: string }
     if (!message) return reply.code(400).send({ error: 'message required' })
     const ctx = getUserCtx(req, spaceId)
-    const response = await brain.think(message, ctx)
-    return { response }
+    const { response, sources } = await brain.think(message, ctx)
+    return { response, sources }
   })
 
   app.get('/api/memories', async (req) => {
@@ -206,11 +216,11 @@ export async function startServer(brain: Brain, memory: MemoryManager, port = 30
 
         socket.send(JSON.stringify({ type: 'start' }))
 
-        const response = await brain.think(message, ctx, (chunk) => {
+        const { response, sources } = await brain.think(message, ctx, (chunk) => {
           socket.send(JSON.stringify({ type: 'chunk', text: chunk }))
         })
 
-        socket.send(JSON.stringify({ type: 'done', text: response }))
+        socket.send(JSON.stringify({ type: 'done', text: response, sources }))
       } catch (err) {
         const msg = err instanceof Error ? err.message : String(err)
         socket.send(JSON.stringify({ type: 'error', text: msg }))
@@ -636,6 +646,231 @@ export async function startServer(brain: Brain, memory: MemoryManager, port = 30
       return result
     } catch (err) {
       return reply.code(500).send({ error: err instanceof Error ? err.message : String(err) })
+    }
+  })
+
+  // --- P2-4: Space member management ---
+
+  // Create a new space
+  app.post('/api/spaces', async (req, reply) => {
+    const payload = req.user as JwtPayload
+    const { name, description } = req.body as { name?: string; description?: string }
+    if (!name) return reply.code(400).send({ error: 'name 为必填项' })
+
+    const db = getDatabase()
+    const existing = db.prepare('SELECT id FROM spaces WHERE name = ?').get(name) as any
+    if (existing) return reply.code(409).send({ error: '空间名称已存在' })
+
+    const id = (await import('ulid')).ulid()
+    const now = Date.now()
+    db.prepare('INSERT INTO spaces (id, name, description, creator_id, created_at) VALUES (?, ?, ?, ?, ?)').run(id, name, description || '', payload.userId, now)
+    db.prepare("INSERT INTO user_spaces (user_id, space_id, role) VALUES (?, ?, 'owner')").run(payload.userId, id)
+
+    logger.info(`Space created: "${name}" by ${payload.username}`)
+    return { id, name, description: description || '' }
+  })
+
+  // List members of a space
+  app.get('/api/spaces/:id/members', async (req, reply) => {
+    const payload = req.user as JwtPayload
+    const { id } = req.params as { id: string }
+
+    const role = getSpaceRole(payload.userId, id, payload.role)
+    if (!role) return reply.code(403).send({ error: '无权访问该空间' })
+
+    const db = getDatabase()
+    const rows = db.prepare(`
+      SELECT u.id as user_id, u.username, u.display_name, us.role
+      FROM user_spaces us JOIN users u ON u.id = us.user_id
+      WHERE us.space_id = ?
+      ORDER BY us.role, u.display_name
+    `).all(id) as Array<{ user_id: string; username: string; display_name: string; role: string }>
+
+    return {
+      members: rows.map(r => ({
+        userId: r.user_id,
+        username: r.username,
+        displayName: r.display_name,
+        role: r.role,
+      })),
+    }
+  })
+
+  // Add member to a space
+  app.post('/api/spaces/:id/members', async (req, reply) => {
+    const payload = req.user as JwtPayload
+    const { id } = req.params as { id: string }
+    const { username, role: memberRole } = req.body as { username?: string; role?: SpaceRole }
+
+    const callerRole = getSpaceRole(payload.userId, id, payload.role)
+    if (callerRole !== 'owner') return reply.code(403).send({ error: '只有空间所有者可以添加成员' })
+    if (!username) return reply.code(400).send({ error: 'username 为必填项' })
+
+    const db = getDatabase()
+    const targetUser = db.prepare('SELECT id FROM users WHERE username = ?').get(username) as { id: string } | undefined
+    if (!targetUser) return reply.code(404).send({ error: '用户不存在' })
+
+    const existingMember = db.prepare('SELECT user_id FROM user_spaces WHERE user_id = ? AND space_id = ?').get(targetUser.id, id)
+    if (existingMember) return reply.code(409).send({ error: '该用户已在空间中' })
+
+    db.prepare('INSERT INTO user_spaces (user_id, space_id, role) VALUES (?, ?, ?)').run(targetUser.id, id, memberRole || 'editor')
+    logger.info(`Space ${id}: added ${username} as ${memberRole || 'editor'}`)
+    return { ok: true }
+  })
+
+  // Update member role
+  app.put('/api/spaces/:id/members/:userId', async (req, reply) => {
+    const payload = req.user as JwtPayload
+    const { id, userId } = req.params as { id: string; userId: string }
+    const { role: newRole } = req.body as { role?: SpaceRole }
+
+    const callerRole = getSpaceRole(payload.userId, id, payload.role)
+    if (callerRole !== 'owner') return reply.code(403).send({ error: '只有空间所有者可以修改角色' })
+    if (!newRole) return reply.code(400).send({ error: 'role 为必填项' })
+
+    const db = getDatabase()
+    const result = db.prepare('UPDATE user_spaces SET role = ? WHERE user_id = ? AND space_id = ?').run(newRole, userId, id)
+    if (result.changes === 0) return reply.code(404).send({ error: '该成员不在空间中' })
+
+    logger.info(`Space ${id}: ${userId} role -> ${newRole}`)
+    return { ok: true }
+  })
+
+  // Remove member from space
+  app.delete('/api/spaces/:id/members/:userId', async (req, reply) => {
+    const payload = req.user as JwtPayload
+    const { id, userId } = req.params as { id: string; userId: string }
+
+    const callerRole = getSpaceRole(payload.userId, id, payload.role)
+    if (callerRole !== 'owner') return reply.code(403).send({ error: '只有空间所有者可以移除成员' })
+    if (userId === payload.userId) return reply.code(400).send({ error: '不能移除自己' })
+
+    const db = getDatabase()
+    const result = db.prepare('DELETE FROM user_spaces WHERE user_id = ? AND space_id = ?').run(userId, id)
+    if (result.changes === 0) return reply.code(404).send({ error: '该成员不在空间中' })
+
+    logger.info(`Space ${id}: removed ${userId}`)
+    return { ok: true }
+  })
+
+  // --- P2-3: Custom Agent CRUD ---
+
+  app.get('/api/agents', async (req) => {
+    const payload = req.user as JwtPayload
+    const agents = listAgents(payload.userId, payload.spaceIds)
+    return { agents }
+  })
+
+  app.post('/api/agents', async (req, reply) => {
+    const payload = req.user as JwtPayload
+    const { name, description, systemPrompt, avatar, tools, spaceIds } = req.body as {
+      name?: string; description?: string; systemPrompt?: string; avatar?: string; tools?: string[]; spaceIds?: string[]
+    }
+    if (!name || !systemPrompt) return reply.code(400).send({ error: 'name 和 systemPrompt 为必填项' })
+
+    const agent = createAgent({ name, description, systemPrompt, avatar, tools, spaceIds, creatorId: payload.userId })
+    logger.info(`Agent created: "${name}" by ${payload.username}`)
+    return { agent }
+  })
+
+  app.put('/api/agents/:id', async (req, reply) => {
+    const payload = req.user as JwtPayload
+    const { id } = req.params as { id: string }
+    const updates = req.body as Partial<{ name: string; description: string; systemPrompt: string; avatar: string; tools: string[]; spaceIds: string[] }>
+
+    const agent = getAgent(id)
+    if (!agent) return reply.code(404).send({ error: 'Agent 不存在' })
+    if (agent.creatorId !== payload.userId && payload.role !== 'admin') {
+      return reply.code(403).send({ error: '无权修改该 Agent' })
+    }
+
+    updateAgent(id, updates)
+    return { agent: getAgent(id) }
+  })
+
+  app.delete('/api/agents/:id', async (req, reply) => {
+    const payload = req.user as JwtPayload
+    const { id } = req.params as { id: string }
+
+    const agent = getAgent(id)
+    if (!agent) return reply.code(404).send({ error: 'Agent 不存在' })
+    if (agent.creatorId !== payload.userId && payload.role !== 'admin') {
+      return reply.code(403).send({ error: '无权删除该 Agent' })
+    }
+
+    deleteAgent(id)
+    // Deactivate for all users that had this agent active
+    brain.setActiveAgent(payload.userId, null)
+    logger.info(`Agent deleted: "${agent.name}" by ${payload.username}`)
+    return { ok: true }
+  })
+
+  // Activate / deactivate an agent for the current user
+  app.post('/api/agents/:id/activate', async (req, reply) => {
+    const payload = req.user as JwtPayload
+    const { id } = req.params as { id: string }
+
+    if (id === 'none') {
+      brain.setActiveAgent(payload.userId, null)
+      return { ok: true, agentId: null }
+    }
+
+    const agent = getAgent(id)
+    if (!agent) return reply.code(404).send({ error: 'Agent 不存在' })
+    brain.setActiveAgent(payload.userId, agent)
+    return { ok: true, agentId: agent.id }
+  })
+
+  // --- P2-1: OCR image import ---
+
+  app.post('/api/import-image', async (req, reply) => {
+    const ctx = getUserCtx(req)
+    const file = await req.file()
+    if (!file) return reply.code(400).send({ error: '请上传图片文件' })
+
+    if (!modules?.tencentConfig) {
+      return reply.code(503).send({ error: 'OCR 服务未配置（需要 TENCENT_SECRET_ID / TENCENT_SECRET_KEY）' })
+    }
+
+    const buf = await file.toBuffer()
+    const filename = file.filename || 'image'
+
+    try {
+      const { recognizeImage } = await import('../connector/ocr.js')
+      const result = await recognizeImage(buf, modules.tencentConfig)
+
+      if (!result.text.trim()) {
+        return reply.code(400).send({ error: '图片中未识别到文字' })
+      }
+
+      const targetSpace = ctx.activeSpaceId
+      const bubble = createBubble({
+        type: 'document' as BubbleType,
+        title: `OCR识别: ${filename}`,
+        content: result.text,
+        metadata: {
+          source_file: filename,
+          ocr_confidence: result.averageConfidence,
+          ocr_regions: result.regions.length,
+        },
+        tags: ['ocr', filename],
+        source: 'ocr',
+        confidence: result.averageConfidence / 100,
+        pinned: false,
+        spaceId: targetSpace,
+      })
+
+      logger.info(`OCR import: "${filename}" -> ${result.regions.length} regions, bubble ${bubble.id}`)
+      return {
+        bubbleId: bubble.id,
+        text: result.text,
+        confidence: result.averageConfidence,
+        regions: result.regions.length,
+      }
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err)
+      logger.error('OCR error:', msg)
+      return reply.code(500).send({ error: `OCR 识别失败: ${msg}` })
     }
   })
 

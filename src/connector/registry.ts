@@ -24,9 +24,13 @@ export class ToolRegistry {
     return [...this.tools.values()]
   }
 
-  getToolDescriptions(): string {
+  getToolDescriptions(filter?: string[]): string {
     if (this.tools.size === 0) return ''
-    const lines = this.list().map((t) => {
+    const toolList = filter?.length
+      ? this.list().filter(t => filter.includes(t.name))
+      : this.list()
+    if (toolList.length === 0) return ''
+    const lines = toolList.map((t) => {
       const params = Object.entries(t.parameters)
         .map(([k, v]) => `${k}: ${v.type}${v.required ? ' (required)' : ''}`)
         .join(', ')

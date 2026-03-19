@@ -1,11 +1,11 @@
 /**
- * 华瑞隆进销存数据 → 泡泡记忆系统导入脚本
+ * 进销存数据 → 泡泡记忆系统导入脚本（示例）
  * 
- * 读取微信小程序导出的 JSON 数据，转换为 Bubble 格式，
+ * 读取 JSON 数据，转换为 Bubble 格式，
  * 通过 POST /api/import 批量导入，并自动建立关联关系。
  * 
- * 用法：node scripts/import-hrl.mjs [SERVER_URL]
- * 默认：http://101.34.243.245:3000
+ * 用法：node scripts/import-sample.mjs [SERVER_URL] [DATA_DIR]
+ * 示例：node scripts/import-sample.mjs http://localhost:3000 ./data/export
  */
 
 import { readFileSync } from 'node:fs'
@@ -13,8 +13,8 @@ import { resolve, dirname } from 'node:path'
 import { fileURLToPath } from 'node:url'
 
 const __dirname = dirname(fileURLToPath(import.meta.url))
-const SERVER = process.argv[2] || 'http://101.34.243.245:3000'
-const DATA_DIR = '/Users/jiangchunyu/Desktop/huaruilong-miniapp/scripts/output'
+const SERVER = process.argv[2] || 'http://localhost:3000'
+const DATA_DIR = process.argv[3] || resolve(__dirname, '../data/sample-export')
 
 function readJsonLines(filename) {
   const content = readFileSync(resolve(DATA_DIR, filename), 'utf-8').trim()

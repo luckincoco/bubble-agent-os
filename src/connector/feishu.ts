@@ -17,6 +17,9 @@ export class FeishuConnector {
   private userCtx: UserContext | null = null
   private surpriseDetector: SurpriseDetector | null = null
   private botOpenId: string | null = null
+  /** Track processed message IDs to prevent duplicate handling on WS reconnect */
+  private processedMsgIds = new Set<string>()
+  private static readonly MAX_DEDUP_SIZE = 500
 
   constructor(config: FeishuConfig, brain: Brain, surpriseDetector?: SurpriseDetector) {
     const baseConfig = {
@@ -83,6 +86,17 @@ export class FeishuConnector {
     if (!msg) return
 
     const { chat_id, content, message_type, chat_type, message_id, mentions } = msg
+
+    // Deduplicate: skip messages already processed (Feishu WS re-delivers on reconnect)
+    if (message_id) {
+      if (this.processedMsgIds.has(message_id)) return
+      this.processedMsgIds.add(message_id)
+      // Evict oldest entries when set grows too large
+      if (this.processedMsgIds.size > FeishuConnector.MAX_DEDUP_SIZE) {
+        const first = this.processedMsgIds.values().next().value
+        if (first) this.processedMsgIds.delete(first)
+      }
+    }
 
     // In group chats, only respond when this bot is @mentioned
     if (chat_type === 'group' && this.botOpenId) {

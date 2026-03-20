@@ -39,6 +39,17 @@ function classifyIntent(query: string): QueryIntent {
   return 'fuzzy'
 }
 
+/** Boost factor based on abstraction level and query intent */
+function abstractionBoost(level: number, intent: QueryIntent): number {
+  const BOOST: Record<QueryIntent, number[]> = {
+    precise:   [1.0, 0.6, 0.3],  // L0: find concrete facts
+    fuzzy:     [0.7, 1.0, 1.2],  // L1/L2: find high-level understanding
+    temporal:  [1.0, 0.8, 0.5],  // L0: has precise timestamps
+    aggregate: [0.5, 1.0, 1.3],  // L1/L2: already aggregated results
+  }
+  return BOOST[intent][Math.min(level, 2)] ?? 1.0
+}
+
 export class BubbleAggregator {
   private embeddings: EmbeddingProvider | null = null
 
@@ -129,6 +140,9 @@ export class BubbleAggregator {
       // Apply tier-based memory level multiplier
       score *= tierMultiplier(entry.bubble.accessedAt, entry.bubble.pinned)
 
+      // Apply abstraction level boost
+      score *= abstractionBoost(entry.bubble.abstractionLevel ?? 0, intent)
+
       if (score > 0.01) {
         results.push({ bubble: entry.bubble, score })
       }
@@ -187,5 +201,6 @@ function getAllBubblesWithEmbeddings(spaceIds?: string[], maxRows = 200): Bubble
     updatedAt: row.updated_at,
     accessedAt: row.accessed_at,
     spaceId: row.space_id ?? undefined,
+    abstractionLevel: row.abstraction_level ?? 0,
   }))
 }

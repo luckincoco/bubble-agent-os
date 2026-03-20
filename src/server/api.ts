@@ -83,6 +83,16 @@ export async function startServer(brain: Brain, memory: MemoryManager, port = 30
   ].find(p => existsSync(p)) ?? resolve(process.cwd(), 'web/dist')
   if (existsSync(webDist)) {
     await app.register(fastifyStatic, { root: webDist, prefix: '/' })
+
+    // Prevent browsers from caching index.html so deploys take effect immediately
+    app.addHook('onSend', async (req, reply, payload) => {
+      const url = req.url.split('?')[0]
+      if (url === '/' || url === '/index.html') {
+        reply.header('Cache-Control', 'no-cache, no-store, must-revalidate')
+      }
+      return payload
+    })
+
     logger.info(`Serving frontend from ${webDist}`)
   }
 
@@ -877,6 +887,7 @@ export async function startServer(brain: Brain, memory: MemoryManager, port = 30
   // SPA fallback
   if (existsSync(webDist)) {
     app.setNotFoundHandler(async (_req, reply) => {
+      reply.header('Cache-Control', 'no-cache, no-store, must-revalidate')
       return reply.sendFile('index.html')
     })
   }

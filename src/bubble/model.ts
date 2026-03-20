@@ -14,6 +14,7 @@ export interface CreateBubbleInput {
   decayRate?: number
   pinned?: boolean
   spaceId?: string
+  abstractionLevel?: number
 }
 
 export function createBubble(input: CreateBubbleInput): Bubble {
@@ -36,11 +37,12 @@ export function createBubble(input: CreateBubbleInput): Bubble {
     updatedAt: now,
     accessedAt: now,
     spaceId: input.spaceId,
+    abstractionLevel: input.abstractionLevel ?? 0,
   }
 
   db.prepare(`
-    INSERT INTO bubbles (id, type, title, content, metadata, tags, embedding, source, confidence, decay_rate, pinned, created_at, updated_at, accessed_at, space_id)
-    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    INSERT INTO bubbles (id, type, title, content, metadata, tags, embedding, source, confidence, decay_rate, pinned, created_at, updated_at, accessed_at, space_id, abstraction_level)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
   `).run(
     bubble.id,
     bubble.type,
@@ -57,6 +59,7 @@ export function createBubble(input: CreateBubbleInput): Bubble {
     bubble.updatedAt,
     bubble.accessedAt,
     bubble.spaceId ?? null,
+    bubble.abstractionLevel,
   )
 
   return bubble
@@ -183,7 +186,7 @@ export function deleteBubble(id: string): boolean {
   return result.changes > 0
 }
 
-export function updateBubble(id: string, updates: Partial<Pick<Bubble, 'title' | 'content' | 'metadata' | 'tags' | 'confidence' | 'pinned'>>): boolean {
+export function updateBubble(id: string, updates: Partial<Pick<Bubble, 'title' | 'content' | 'metadata' | 'tags' | 'confidence' | 'pinned' | 'decayRate'>>): boolean {
   const db = getDatabase()
   const sets: string[] = ['updated_at = ?']
   const values: unknown[] = [Date.now()]
@@ -194,13 +197,47 @@ export function updateBubble(id: string, updates: Partial<Pick<Bubble, 'title' |
   if (updates.tags !== undefined) { sets.push('tags = ?'); values.push(JSON.stringify(updates.tags)) }
   if (updates.confidence !== undefined) { sets.push('confidence = ?'); values.push(updates.confidence) }
   if (updates.pinned !== undefined) { sets.push('pinned = ?'); values.push(updates.pinned ? 1 : 0) }
+  if (updates.decayRate !== undefined) { sets.push('decay_rate = ?'); values.push(updates.decayRate) }
 
   values.push(id)
   const result = db.prepare(`UPDATE bubbles SET ${sets.join(', ')} WHERE id = ?`).run(...values)
   return result.changes > 0
 }
 
-function rowToBubble(row: any): Bubble {
+/** Find bubbles at a given abstraction level that haven't been compacted yet */
+export function findCompactionCandidates(level: number, spaceId?: string, limit = 200): Bubble[] {
+  const db = getDatabase()
+  let sql = `SELECT * FROM bubbles WHERE abstraction_level = ? AND pinned = 0
+    AND id NOT IN (SELECT target_id FROM bubble_links WHERE relation = 'composed_of')`
+  const params: unknown[] = [level]
+
+  if (spaceId) {
+    sql += ' AND space_id = ?'
+    params.push(spaceId)
+  } else {
+    sql += ' AND space_id IS NULL'
+  }
+
+  sql += ' ORDER BY created_at ASC LIMIT ?'
+  params.push(limit)
+
+  const rows = db.prepare(sql).all(...params) as any[]
+  return rows.map(rowToBubble)
+}
+
+/** Get child bubbles of a parent (connected via composed_of links) */
+export function getChildBubbles(parentId: string): Bubble[] {
+  const db = getDatabase()
+  const rows = db.prepare(`
+    SELECT b.* FROM bubbles b
+    INNER JOIN bubble_links bl ON b.id = bl.target_id
+    WHERE bl.source_id = ? AND bl.relation = 'composed_of'
+    ORDER BY b.created_at ASC
+  `).all(parentId) as any[]
+  return rows.map(rowToBubble)
+}
+
+export function rowToBubble(row: any): Bubble {
   return {
     id: row.id,
     type: row.type,
@@ -218,5 +255,6 @@ function rowToBubble(row: any): Bubble {
     updatedAt: row.updated_at,
     accessedAt: row.accessed_at,
     spaceId: row.space_id ?? undefined,
+    abstractionLevel: row.abstraction_level ?? 0,
   }
 }

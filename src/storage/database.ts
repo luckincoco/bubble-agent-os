@@ -142,6 +142,14 @@ function runMigrations(database: Database.Database, defaultPassword: string) {
     )
   `)
   database.exec('CREATE INDEX IF NOT EXISTS idx_agents_creator ON custom_agents(creator_id)')
+
+  // Bubble Compaction: add abstraction_level column
+  const bubbleCols2 = database.pragma('table_info(bubbles)') as Array<{ name: string }>
+  if (!bubbleCols2.some(c => c.name === 'abstraction_level')) {
+    database.exec('ALTER TABLE bubbles ADD COLUMN abstraction_level INTEGER NOT NULL DEFAULT 0')
+    logger.info('Migration: added abstraction_level column to bubbles')
+  }
+  database.exec('CREATE INDEX IF NOT EXISTS idx_bubbles_abstraction ON bubbles(abstraction_level)')
 }
 
 function seedData(database: Database.Database, defaultPassword: string) {

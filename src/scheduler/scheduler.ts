@@ -10,8 +10,9 @@ import type { FeishuConnector } from '../connector/feishu.js'
 import { executeDailyDigest } from './tasks/daily-digest.js'
 import { executeKeywordMonitor } from './tasks/keyword-monitor.js'
 import { executeMemoryDecay } from './tasks/memory-decay.js'
+import { executeBubbleCompaction } from './tasks/bubble-compaction.js'
 
-export type ScheduledTaskType = 'daily_digest' | 'keyword_monitor' | 'memory_decay'
+export type ScheduledTaskType = 'daily_digest' | 'keyword_monitor' | 'memory_decay' | 'bubble_compaction'
 
 export interface TaskDeps {
   brain: Brain
@@ -46,6 +47,7 @@ const EXECUTORS: Record<ScheduledTaskType, TaskExecutor> = {
   daily_digest: executeDailyDigest,
   keyword_monitor: executeKeywordMonitor,
   memory_decay: executeMemoryDecay,
+  bubble_compaction: executeBubbleCompaction,
 }
 
 export class TaskScheduler {
@@ -68,6 +70,16 @@ export class TaskScheduler {
     const count = (db.prepare('SELECT COUNT(*) as cnt FROM scheduled_tasks').get() as { cnt: number }).cnt
     if (count === 0) {
       this.seedDefaults()
+    }
+
+    // Ensure bubble_compaction task exists (migration for existing installations)
+    const hasCompaction = db.prepare("SELECT id FROM scheduled_tasks WHERE type = 'bubble_compaction'").get()
+    if (!hasCompaction) {
+      const now = Date.now()
+      db.prepare(
+        'INSERT INTO scheduled_tasks (id, name, type, cron, params, enabled, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)',
+      ).run(ulid(), '泡泡压缩引擎', 'bubble_compaction', '0 4 * * *', '{}', 0, now, now)
+      logger.info('Scheduler: seeded bubble_compaction task (disabled)')
     }
 
     logger.info(`Scheduler: ${this.jobs.size} active jobs loaded`)

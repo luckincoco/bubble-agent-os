@@ -243,7 +243,7 @@ export async function startServer(brain: Brain, memory: MemoryManager, port = 30
   })
 
   // Health check (public)
-  app.get('/api/health', async () => ({ status: 'ok', version: '0.2.0' }))
+  app.get('/api/health', async () => ({ status: 'ok', version: '0.2.1' }))
 
   // Search
   app.get('/api/search', async (req) => {

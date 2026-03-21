@@ -22,6 +22,7 @@ import type { TaskScheduler, ScheduledTaskType } from '../scheduler/scheduler.js
 import { EXPORTS_DIR } from '../connector/tools/excel.js'
 import { parsePDF, parseDocx, parseTxt, splitIntoChunks, detectFileType } from '../connector/tools/doc-import.js'
 import { createAgent, getAgent, listAgents, updateAgent, deleteAgent } from '../agent/model.js'
+import type { WeComConnector } from '../connector/wecom.js'
 
 const __dirname = dirname(fileURLToPath(import.meta.url))
 
@@ -38,6 +39,7 @@ export interface ServerModules {
   surpriseDetector?: SurpriseDetector
   scheduler?: TaskScheduler
   tencentConfig?: { secretId: string; secretKey: string; region?: string }
+  wecom?: WeComConnector
 }
 
 export async function startServer(brain: Brain, memory: MemoryManager, port = 3000, jwtSecret = 'bubble-agent-secret', modules?: ServerModules, serviceApiKey?: string) {
@@ -55,6 +57,8 @@ export async function startServer(brain: Brain, memory: MemoryManager, port = 30
     if (url === '/api/login' || url === '/api/health') return
     // WebSocket: token verified inside ws handler via query string
     if (url === '/ws') return
+    // WeCom callback: verified via signature inside connector
+    if (url.startsWith('/wecom/')) return
     // Static files (non-API)
     if (!url.startsWith('/api/')) return
 
@@ -883,6 +887,11 @@ export async function startServer(brain: Brain, memory: MemoryManager, port = 30
       return reply.code(500).send({ error: `OCR 识别失败: ${msg}` })
     }
   })
+
+  // Register WeCom callback routes (before SPA fallback to avoid being caught by it)
+  if (modules?.wecom) {
+    modules.wecom.registerRoutes(app)
+  }
 
   // SPA fallback
   if (existsSync(webDist)) {

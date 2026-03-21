@@ -134,6 +134,13 @@ export interface AppConfig {
     appId: string
     appSecret: string
   }
+  wecom?: {
+    corpId: string
+    agentId: number
+    secret: string
+    token: string
+    encodingAESKey: string
+  }
   tencent?: {
     secretId: string
     secretKey: string

@@ -11,8 +11,9 @@ import { executeDailyDigest } from './tasks/daily-digest.js'
 import { executeKeywordMonitor } from './tasks/keyword-monitor.js'
 import { executeMemoryDecay } from './tasks/memory-decay.js'
 import { executeBubbleCompaction } from './tasks/bubble-compaction.js'
+import { executeSteelPrice } from './tasks/steel-price.js'
 
-export type ScheduledTaskType = 'daily_digest' | 'keyword_monitor' | 'memory_decay' | 'bubble_compaction'
+export type ScheduledTaskType = 'daily_digest' | 'keyword_monitor' | 'memory_decay' | 'bubble_compaction' | 'steel_price'
 
 export interface TaskDeps {
   brain: Brain
@@ -48,6 +49,7 @@ const EXECUTORS: Record<ScheduledTaskType, TaskExecutor> = {
   keyword_monitor: executeKeywordMonitor,
   memory_decay: executeMemoryDecay,
   bubble_compaction: executeBubbleCompaction,
+  steel_price: executeSteelPrice,
 }
 
 export class TaskScheduler {
@@ -80,6 +82,18 @@ export class TaskScheduler {
         'INSERT INTO scheduled_tasks (id, name, type, cron, params, enabled, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)',
       ).run(ulid(), '泡泡压缩引擎', 'bubble_compaction', '0 4 * * *', '{}', 0, now, now)
       logger.info('Scheduler: seeded bubble_compaction task (disabled)')
+    }
+
+    // Ensure steel_price task exists (Mon-Fri 8:30 AM)
+    const hasSteelPrice = db.prepare("SELECT id FROM scheduled_tasks WHERE type = 'steel_price'").get()
+    if (!hasSteelPrice) {
+      const now = Date.now()
+      db.prepare(
+        'INSERT INTO scheduled_tasks (id, name, type, cron, params, enabled, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)',
+      ).run(ulid(), '钢材价格抓取', 'steel_price', '30 9 * * 1-5', '{}', 1, now, now)
+      const row = db.prepare("SELECT * FROM scheduled_tasks WHERE type = 'steel_price'").get() as ScheduledTaskRow
+      this.scheduleJob(row)
+      logger.info('Scheduler: seeded steel_price task (Mon-Fri 9:30)')
     }
 
     logger.info(`Scheduler: ${this.jobs.size} active jobs loaded`)

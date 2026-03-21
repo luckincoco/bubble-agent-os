@@ -15,6 +15,10 @@ function loadEnv(): Record<string, string> {
     const key = trimmed.slice(0, eqIdx).trim()
     const val = trimmed.slice(eqIdx + 1).trim()
     env[key] = val
+    // Sync to process.env so tools that read process.env directly can access .env values
+    if (!process.env[key]) {
+      process.env[key] = val
+    }
   }
   return env
 }
@@ -50,6 +54,15 @@ export function getConfig(): AppConfig {
       feishu: {
         appId: env.FEISHU_APP_ID,
         appSecret: env.FEISHU_APP_SECRET,
+      },
+    } : {}),
+    ...(env.WECOM_CORP_ID && env.WECOM_SECRET ? {
+      wecom: {
+        corpId: env.WECOM_CORP_ID,
+        agentId: parseInt(env.WECOM_AGENT_ID || '0'),
+        secret: env.WECOM_SECRET,
+        token: env.WECOM_TOKEN || '',
+        encodingAESKey: env.WECOM_ENCODING_AES_KEY || '',
       },
     } : {}),
     ...(env.TENCENT_SECRET_ID && env.TENCENT_SECRET_KEY ? {

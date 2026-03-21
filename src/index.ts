@@ -10,7 +10,9 @@ import { createWeatherTool } from './connector/tools/weather.js'
 import { createTimeTool } from './connector/tools/time.js'
 import { createQueryExcelTool, createExportExcelTool, createCleanExcelTool, createCrossAnalyzeTool } from './connector/tools/excel.js'
 import { createWebSearchTool } from './connector/tools/web-search.js'
+import { createFetchPageTool } from './connector/tools/fetch-page.js'
 import { FeishuConnector } from './connector/feishu.js'
+import { WeComConnector } from './connector/wecom.js'
 import { TaskScheduler } from './scheduler/scheduler.js'
 import { initDatabase, closeDatabase } from './storage/database.js'
 import { startServer, type ServerModules } from './server/api.js'
@@ -45,6 +47,7 @@ async function main() {
   tools.register(createCleanExcelTool())
   tools.register(createCrossAnalyzeTool())
   tools.register(createWebSearchTool())
+  tools.register(createFetchPageTool())
 
   const brain = new Brain(llm)
   brain.setMemory(memory)
@@ -61,8 +64,15 @@ async function main() {
   // Start Feishu connector if configured (lifted to outer scope for scheduler access)
   let feishu: FeishuConnector | undefined
   if (config.feishu) {
-    feishu = new FeishuConnector(config.feishu, brain, surpriseDetector)
+    feishu = new FeishuConnector(config.feishu, brain, surpriseDetector, config.tencent, tools)
     await feishu.start()
+  }
+
+  // Initialize WeCom connector if configured (routes registered later by server)
+  let wecom: WeComConnector | undefined
+  if (config.wecom) {
+    wecom = new WeComConnector(config.wecom, brain, surpriseDetector, config.tencent, tools)
+    logger.info('WeCom connector: initialized')
   }
 
   // Initialize scheduler
@@ -76,7 +86,7 @@ async function main() {
     scheduler = undefined
   }
 
-  const serverModules: ServerModules = { semanticBridge, surpriseDetector, scheduler, tencentConfig: config.tencent }
+  const serverModules: ServerModules = { semanticBridge, surpriseDetector, scheduler, tencentConfig: config.tencent, wecom }
 
   process.on('SIGINT', () => {
     scheduler?.stop()

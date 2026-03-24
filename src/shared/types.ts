@@ -1,5 +1,5 @@
 // Bubble types
-export type BubbleType = 'memory' | 'entity' | 'api' | 'workflow' | 'document' | 'event' | 'synthesis' | 'portrait'
+export type BubbleType = 'memory' | 'entity' | 'api' | 'workflow' | 'document' | 'event' | 'synthesis' | 'portrait' | 'question'
 
 export interface BubbleLink {
   targetId: string

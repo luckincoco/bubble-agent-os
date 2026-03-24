@@ -5,6 +5,7 @@ import type { Brain } from '../kernel/brain.js'
 import type { ToolRegistry } from '../connector/registry.js'
 import type { UserContext } from '../shared/types.js'
 import type { SurpriseDetector } from '../memory/surprise-detector.js'
+import { MessageRouter } from './router.js'
 import { getDatabase } from '../storage/database.js'
 import { logger } from '../shared/logger.js'
 
@@ -21,20 +22,12 @@ interface WeComAccessToken {
   expiresAt: number
 }
 
-/** Keywords that indicate the user wants a web search */
-const SEARCH_INTENT_RE = /搜索|查一下|查询下|查询|搜一下|搜下|检索|今[天日].*价格|最新.*价格|实时|行情|现货|报价|新闻|帮我[查搜找]|价格.*多少/
-
-/** Keywords for steel price queries */
-const STEEL_PRICE_RE = /钢[材筋]|螺纹|盘螺|高线|圆钢|工字钢|角钢|槽钢|H型钢|焊管/
-const STEEL_PRICE_URL = 'https://shanghai.steelx2.com/city/Quotation/quotation/1/index.html'
-
 const WECOM_API_BASE = 'https://qyapi.weixin.qq.com/cgi-bin'
 
 export class WeComConnector {
   private config: WeComConfig
   private brain: Brain
-  private tools: ToolRegistry | null = null
-  private surpriseDetector: SurpriseDetector | null = null
+  private router: MessageRouter
   private userCtx: UserContext | null = null
 
   private tokenCache: WeComAccessToken | null = null
@@ -54,8 +47,7 @@ export class WeComConnector {
   ) {
     this.config = config
     this.brain = brain
-    this.surpriseDetector = surpriseDetector ?? null
-    this.tools = tools ?? null
+    this.router = new MessageRouter({ brain, tools, surpriseDetector })
   }
 
   /** Resolve the admin user context from database */
@@ -292,37 +284,8 @@ export class WeComConnector {
     const ctx = this.resolveUserContext()
 
     try {
-      // Proactive data fetch: detect intent and get real-time data
-      let searchContext = ''
-      if (SEARCH_INTENT_RE.test(text) && this.tools) {
-        try {
-          if (STEEL_PRICE_RE.test(text)) {
-            logger.info('WeCom: steel price intent detected, fetching steelx2')
-            const pageResult = await this.tools.execute('fetch_page', { url: STEEL_PRICE_URL })
-            if (pageResult && !pageResult.startsWith('抓取失败') && !pageResult.startsWith('抓取出错')) {
-              searchContext = `\n\n[以下是西本新干线今日上海钢材价格数据，请基于这些数据回答用户]\n${pageResult}\n`
-            }
-          } else {
-            logger.info('WeCom: search intent detected, calling web_search')
-            const searchResult = await this.tools.execute('web_search', { query: text })
-            if (searchResult && !searchResult.startsWith('Error') && !searchResult.startsWith('未配置')) {
-              searchContext = `\n\n[以下是实时网络搜索结果，请基于这些数据回答用户]\n${searchResult}\n`
-            }
-          }
-        } catch (err) {
-          logger.error('WeCom search/fetch error:', err instanceof Error ? err.message : String(err))
-        }
-      }
-
-      const finalInput = searchContext ? `${text}${searchContext}` : text
-      const { response } = await this.brain.think(finalInput, ctx)
+      const { response } = await this.router.handle(text, ctx)
       await this.sendTextMessage(userId, response)
-
-      // Fire-and-forget: scan for contradictions
-      if (this.surpriseDetector) {
-        this.surpriseDetector.scanMessage(text, ctx.activeSpaceId)
-          .catch(err => logger.error('SurpriseDetector wecom error:', err instanceof Error ? err.message : String(err)))
-      }
     } catch (err) {
       const errMsg = err instanceof Error ? err.message : String(err)
       logger.error('WeCom think error:', errMsg)

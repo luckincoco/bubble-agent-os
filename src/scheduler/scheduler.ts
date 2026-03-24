@@ -12,8 +12,9 @@ import { executeKeywordMonitor } from './tasks/keyword-monitor.js'
 import { executeMemoryDecay } from './tasks/memory-decay.js'
 import { executeBubbleCompaction } from './tasks/bubble-compaction.js'
 import { executeSteelPrice } from './tasks/steel-price.js'
+import { executeQuestionGenerator } from './tasks/question-generator.js'
 
-export type ScheduledTaskType = 'daily_digest' | 'keyword_monitor' | 'memory_decay' | 'bubble_compaction' | 'steel_price'
+export type ScheduledTaskType = 'daily_digest' | 'keyword_monitor' | 'memory_decay' | 'bubble_compaction' | 'steel_price' | 'question_generator'
 
 export interface TaskDeps {
   brain: Brain
@@ -50,6 +51,7 @@ const EXECUTORS: Record<ScheduledTaskType, TaskExecutor> = {
   memory_decay: executeMemoryDecay,
   bubble_compaction: executeBubbleCompaction,
   steel_price: executeSteelPrice,
+  question_generator: executeQuestionGenerator,
 }
 
 export class TaskScheduler {
@@ -94,6 +96,18 @@ export class TaskScheduler {
       const row = db.prepare("SELECT * FROM scheduled_tasks WHERE type = 'steel_price'").get() as ScheduledTaskRow
       this.scheduleJob(row)
       logger.info('Scheduler: seeded steel_price task (Mon-Fri 9:30)')
+    }
+
+    // Ensure question_generator task exists (daily 8:00 AM)
+    const hasQuestionGen = db.prepare("SELECT id FROM scheduled_tasks WHERE type = 'question_generator'").get()
+    if (!hasQuestionGen) {
+      const now = Date.now()
+      db.prepare(
+        'INSERT INTO scheduled_tasks (id, name, type, cron, params, enabled, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)',
+      ).run(ulid(), '问题发现引擎', 'question_generator', '0 8 * * *', '{"lookbackDays":7,"silenceDays":14}', 1, now, now)
+      const row = db.prepare("SELECT * FROM scheduled_tasks WHERE type = 'question_generator'").get() as ScheduledTaskRow
+      this.scheduleJob(row)
+      logger.info('Scheduler: seeded question_generator task (daily 8:00)')
     }
 
     logger.info(`Scheduler: ${this.jobs.size} active jobs loaded`)

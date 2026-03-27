@@ -1,5 +1,5 @@
 // Bubble types
-export type BubbleType = 'memory' | 'entity' | 'api' | 'workflow' | 'document' | 'event' | 'synthesis' | 'portrait' | 'question'
+export type BubbleType = 'memory' | 'entity' | 'api' | 'workflow' | 'document' | 'event' | 'synthesis' | 'portrait' | 'question' | 'observation'
 
 export interface BubbleLink {
   targetId: string
@@ -27,6 +27,7 @@ export interface Bubble {
   pinned: boolean
   spaceId?: string
   abstractionLevel: number  // 0=atomic, 1=synthesis, 2=portrait
+  summary?: string
 }
 
 // Auth types

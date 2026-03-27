@@ -176,6 +176,222 @@ function runMigrations(database: Database.Database, defaultPassword: string) {
     logger.info('Migration: added abstraction_level column to bubbles')
   }
   database.exec('CREATE INDEX IF NOT EXISTS idx_bubbles_abstraction ON bubbles(abstraction_level)')
+
+  // v0.4: add summary column for tiered loading
+  const bubbleCols3 = database.pragma('table_info(bubbles)') as Array<{ name: string }>
+  if (!bubbleCols3.some(c => c.name === 'summary')) {
+    database.exec('ALTER TABLE bubbles ADD COLUMN summary TEXT')
+    logger.info('Migration: added summary column to bubbles')
+  }
+
+  // ── v0.5: Structured business tables (进销存) ─────────────────────
+
+  // Products master data
+  database.exec(`
+    CREATE TABLE IF NOT EXISTS biz_products (
+      id TEXT PRIMARY KEY,
+      tenant_id TEXT NOT NULL DEFAULT 'default',
+      code TEXT NOT NULL,
+      brand TEXT NOT NULL,
+      name TEXT NOT NULL,
+      spec TEXT NOT NULL,
+      spec_display TEXT,
+      category TEXT DEFAULT '螺纹钢',
+      measure_type TEXT DEFAULT '理计',
+      weight_per_bundle REAL,
+      pieces_per_bundle INTEGER,
+      lifting_fee REAL,
+      metadata TEXT DEFAULT '{}',
+      created_at INTEGER NOT NULL,
+      updated_at INTEGER NOT NULL,
+      UNIQUE(tenant_id, code)
+    )
+  `)
+
+  // Counterparties (suppliers, customers, logistics providers)
+  database.exec(`
+    CREATE TABLE IF NOT EXISTS biz_counterparties (
+      id TEXT PRIMARY KEY,
+      tenant_id TEXT NOT NULL DEFAULT 'default',
+      name TEXT NOT NULL,
+      type TEXT NOT NULL,
+      contact TEXT,
+      phone TEXT,
+      address TEXT,
+      bank_info TEXT,
+      tax_id TEXT,
+      metadata TEXT DEFAULT '{}',
+      created_at INTEGER NOT NULL,
+      updated_at INTEGER NOT NULL,
+      UNIQUE(tenant_id, name, type)
+    )
+  `)
+
+  // Projects (construction sites / customer projects)
+  database.exec(`
+    CREATE TABLE IF NOT EXISTS biz_projects (
+      id TEXT PRIMARY KEY,
+      tenant_id TEXT NOT NULL DEFAULT 'default',
+      name TEXT NOT NULL,
+      customer_id TEXT REFERENCES biz_counterparties(id),
+      contract_no TEXT,
+      address TEXT,
+      builder TEXT,
+      developer TEXT,
+      contact TEXT,
+      phone TEXT,
+      status TEXT DEFAULT 'active',
+      metadata TEXT DEFAULT '{}',
+      created_at INTEGER NOT NULL,
+      updated_at INTEGER NOT NULL,
+      UNIQUE(tenant_id, name)
+    )
+  `)
+
+  // Purchase records
+  database.exec(`
+    CREATE TABLE IF NOT EXISTS biz_purchases (
+      id TEXT PRIMARY KEY,
+      tenant_id TEXT NOT NULL DEFAULT 'default',
+      date TEXT NOT NULL,
+      order_no TEXT,
+      supplier_id TEXT REFERENCES biz_counterparties(id),
+      product_id TEXT REFERENCES biz_products(id),
+      bundle_count INTEGER,
+      tonnage REAL NOT NULL,
+      unit_price REAL NOT NULL,
+      total_amount REAL NOT NULL,
+      project_id TEXT REFERENCES biz_projects(id),
+      invoice_status TEXT DEFAULT 'none',
+      payment_status TEXT DEFAULT 'unpaid',
+      notes TEXT,
+      bubble_id TEXT,
+      raw_input TEXT,
+      created_by TEXT,
+      created_at INTEGER NOT NULL,
+      updated_at INTEGER NOT NULL,
+      deleted_at INTEGER
+    )
+  `)
+  database.exec('CREATE INDEX IF NOT EXISTS idx_biz_purchases_date ON biz_purchases(date)')
+  database.exec('CREATE INDEX IF NOT EXISTS idx_biz_purchases_supplier ON biz_purchases(supplier_id)')
+  database.exec('CREATE INDEX IF NOT EXISTS idx_biz_purchases_product ON biz_purchases(product_id)')
+
+  // Sales records
+  database.exec(`
+    CREATE TABLE IF NOT EXISTS biz_sales (
+      id TEXT PRIMARY KEY,
+      tenant_id TEXT NOT NULL DEFAULT 'default',
+      date TEXT NOT NULL,
+      order_no TEXT,
+      customer_id TEXT REFERENCES biz_counterparties(id),
+      supplier_id TEXT REFERENCES biz_counterparties(id),
+      product_id TEXT REFERENCES biz_products(id),
+      bundle_count INTEGER,
+      tonnage REAL NOT NULL,
+      unit_price REAL NOT NULL,
+      total_amount REAL NOT NULL,
+      cost_price REAL,
+      cost_amount REAL,
+      profit REAL,
+      project_id TEXT REFERENCES biz_projects(id),
+      logistics_provider TEXT,
+      invoice_status TEXT DEFAULT 'none',
+      collection_status TEXT DEFAULT 'uncollected',
+      notes TEXT,
+      bubble_id TEXT,
+      raw_input TEXT,
+      created_by TEXT,
+      created_at INTEGER NOT NULL,
+      updated_at INTEGER NOT NULL,
+      deleted_at INTEGER
+    )
+  `)
+  database.exec('CREATE INDEX IF NOT EXISTS idx_biz_sales_date ON biz_sales(date)')
+  database.exec('CREATE INDEX IF NOT EXISTS idx_biz_sales_customer ON biz_sales(customer_id)')
+  database.exec('CREATE INDEX IF NOT EXISTS idx_biz_sales_product ON biz_sales(product_id)')
+
+  // Logistics records
+  database.exec(`
+    CREATE TABLE IF NOT EXISTS biz_logistics (
+      id TEXT PRIMARY KEY,
+      tenant_id TEXT NOT NULL DEFAULT 'default',
+      date TEXT NOT NULL,
+      waybill_no TEXT,
+      carrier_id TEXT REFERENCES biz_counterparties(id),
+      project_id TEXT REFERENCES biz_projects(id),
+      destination TEXT,
+      tonnage REAL,
+      freight REAL DEFAULT 0,
+      lifting_fee REAL DEFAULT 0,
+      total_fee REAL DEFAULT 0,
+      driver TEXT,
+      driver_phone TEXT,
+      license_plate TEXT,
+      settlement_status TEXT DEFAULT 'unpaid',
+      notes TEXT,
+      bubble_id TEXT,
+      raw_input TEXT,
+      created_by TEXT,
+      created_at INTEGER NOT NULL,
+      updated_at INTEGER NOT NULL,
+      deleted_at INTEGER
+    )
+  `)
+  database.exec('CREATE INDEX IF NOT EXISTS idx_biz_logistics_date ON biz_logistics(date)')
+  database.exec('CREATE INDEX IF NOT EXISTS idx_biz_logistics_carrier ON biz_logistics(carrier_id)')
+
+  // Payment records
+  database.exec(`
+    CREATE TABLE IF NOT EXISTS biz_payments (
+      id TEXT PRIMARY KEY,
+      tenant_id TEXT NOT NULL DEFAULT 'default',
+      date TEXT NOT NULL,
+      doc_no TEXT,
+      direction TEXT NOT NULL,
+      counterparty_id TEXT REFERENCES biz_counterparties(id),
+      project_id TEXT REFERENCES biz_projects(id),
+      amount REAL NOT NULL,
+      method TEXT,
+      reference_no TEXT,
+      notes TEXT,
+      bubble_id TEXT,
+      raw_input TEXT,
+      created_by TEXT,
+      created_at INTEGER NOT NULL,
+      updated_at INTEGER NOT NULL,
+      deleted_at INTEGER
+    )
+  `)
+  database.exec('CREATE INDEX IF NOT EXISTS idx_biz_payments_date ON biz_payments(date)')
+  database.exec('CREATE INDEX IF NOT EXISTS idx_biz_payments_counterparty ON biz_payments(counterparty_id)')
+
+  // Invoice records
+  database.exec(`
+    CREATE TABLE IF NOT EXISTS biz_invoices (
+      id TEXT PRIMARY KEY,
+      tenant_id TEXT NOT NULL DEFAULT 'default',
+      date TEXT NOT NULL,
+      direction TEXT NOT NULL,
+      invoice_no TEXT,
+      counterparty_id TEXT REFERENCES biz_counterparties(id),
+      amount REAL NOT NULL,
+      tax_rate REAL DEFAULT 0.13,
+      tax_amount REAL,
+      total_amount REAL,
+      related_ids TEXT DEFAULT '[]',
+      status TEXT DEFAULT 'registered',
+      notes TEXT,
+      bubble_id TEXT,
+      created_by TEXT,
+      created_at INTEGER NOT NULL,
+      updated_at INTEGER NOT NULL,
+      deleted_at INTEGER
+    )
+  `)
+  database.exec('CREATE INDEX IF NOT EXISTS idx_biz_invoices_date ON biz_invoices(date)')
+
+  logger.info('Migration: biz tables created/verified')
 }
 
 function seedData(database: Database.Database, defaultPassword: string) {

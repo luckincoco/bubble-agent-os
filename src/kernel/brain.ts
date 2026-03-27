@@ -133,11 +133,6 @@ export class Brain {
       }
     }
 
-    // Append citation instruction when sources exist
-    if (sources.length > 0) {
-      systemContent += '\n\n当你在回答中使用了上述参考信息时，请在相关段落末尾使用 [ref:N] 标注来源编号。不要强制引用，只在确实使用了某条信息时标注。'
-    }
-
     if (toolDesc) systemContent += toolDesc
 
     const systemMessage: LLMMessage = { role: 'system', content: systemContent }

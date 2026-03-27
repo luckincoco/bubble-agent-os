@@ -2,11 +2,20 @@ import type { Bubble, EmbeddingProvider } from '../shared/types.js'
 import { getDatabase, buildInClause } from '../storage/database.js'
 import { cosineSimilarity } from '../ai/embeddings.js'
 import { getNeighborIds } from './links.js'
-import { searchBubbles, getAllMemoryBubbles } from './model.js'
+import { searchBubbles, getAllMemoryBubbles, getBubble } from './model.js'
 import { logger } from '../shared/logger.js'
 
 interface AggregateResult {
   bubble: Bubble
+  score: number
+}
+
+/** Lightweight bubble representation for Phase 1 of tiered loading */
+export interface BubbleSummaryHit {
+  id: string
+  type: string
+  title: string
+  summary: string
   score: number
 }
 
@@ -151,6 +160,37 @@ export class BubbleAggregator {
     results.sort((a, b) => b.score - a.score)
     return results.slice(0, limit).map((r) => r.bubble)
   }
+
+  /**
+   * Two-phase tiered retrieval:
+   * Phase 1: Run full aggregate but return only lightweight summaries (saves token budget)
+   * Phase 2: Caller uses loadFullBubbles() to fetch full content for top-K
+   */
+  async aggregateSummaries(query: string, limit = 20, spaceIds?: string[], focusBoostFn?: (content: string) => number): Promise<BubbleSummaryHit[]> {
+    const bubbles = await this.aggregate(query, limit, spaceIds, focusBoostFn)
+
+    // Convert full bubbles to lightweight summaries with re-computed scores
+    const intent = classifyIntent(query)
+    return bubbles.map((b, i) => ({
+      id: b.id,
+      type: b.type,
+      title: b.title,
+      summary: b.summary || b.content.slice(0, 100).replace(/[\n\r]+/g, ' '),
+      score: 1 - i / bubbles.length, // normalized rank score
+    }))
+  }
+
+  /**
+   * Phase 2: Load full bubble content for selected IDs
+   */
+  loadFullBubbles(ids: string[]): Bubble[] {
+    const results: Bubble[] = []
+    for (const id of ids) {
+      const b = getBubble(id)
+      if (b) results.push(b)
+    }
+    return results
+  }
 }
 
 function recencyScore(accessedAt: number): number {
@@ -202,5 +242,6 @@ function getAllBubblesWithEmbeddings(spaceIds?: string[], maxRows = 200): Bubble
     accessedAt: row.accessed_at,
     spaceId: row.space_id ?? undefined,
     abstractionLevel: row.abstraction_level ?? 0,
+    summary: row.summary ?? undefined,
   }))
 }

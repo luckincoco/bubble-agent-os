@@ -1,5 +1,27 @@
 # Changelog
 
+## [0.3.0] - 2026-03-27
+
+### Added
+- **可插拔技能系统** (`connector/skills/`): SKILL.md 配置化技能定义 + SkillLoader 解析器 + SkillRouter 分发路由
+- **业务录入技能** (`connector/biz/`): 钢贸进销存自然语言录入，含品类检测器(螺纹钢/线材/盘螺/板材/管材)、LLM 结构化解析、确认流程
+- **教学技能** (`connector/teach/`): "泡泡记住/忘记" 自然语言教学，支持记忆创建、更新、遗忘，含冲突检测与解决
+- **Excel 语义翻译层** (`connector/tools/excel-translator.ts`): 自然语言 → SQL 翻译，支持查询/聚合/交叉分析
+- **反思引擎** (`memory/reflector.ts`): observation 泡泡类型 + discover/validate/suggest 闭环
+- **用户管理 API**: Admin CRUD 6 端点 (POST/GET/PUT/DELETE /api/users)，含空间自动创建、角色管理、密码重置
+- **AGENTS.md**: 开发指南，含架构速查、文件索引、构建命令、开发规范
+- **数据迁移脚本** (`scripts/`): Excel → API 批量导入工具 (TypeScript/Python/ESM 三种实现)
+
+### Changed
+- **三层路由增强**: MessageRouter 集成 SkillRouter，支持 Skill 优先级短路
+- **记忆检索增强**: aggregator 4-Path Fusion 优化，两阶段检索 (summary → full content)
+- **Brain 增强**: 支持工具调用结果注入、技能上下文传递
+- **前端**: NavTabs 组件重构，新增业务录入 UI 组件
+- **数据库 schema**: 新增 biz_* 结构化业务表
+
+### Security
+- **脱敏处理**: 所有脚本/文档中的 API Key、服务器 IP、SSH 凭证已移除，改为环境变量读取
+
 ## [0.2.1] - 2026-03-20
 
 ### Fixed

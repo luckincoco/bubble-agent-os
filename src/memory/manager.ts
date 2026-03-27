@@ -97,11 +97,18 @@ export class MemoryManager {
     const focusBoostFn = this.focusEnabled && userId
       ? (content: string) => this.focusTracker.computeFocusBoost(userId, content)
       : undefined
-    const bubbles = await this.aggregator.aggregate(userInput, 20, spaceIds, focusBoostFn)
+
+    // Phase 1: Get lightweight summaries (wider net, lower cost)
+    const summaryHits = await this.aggregator.aggregateSummaries(userInput, 30, spaceIds, focusBoostFn)
+    if (summaryHits.length === 0) return { context: '', sources: [] }
+
+    // Phase 2: Load full content only for top candidates within budget
+    const topIds = summaryHits.slice(0, 20).map(h => h.id)
+    const bubbles = this.aggregator.loadFullBubbles(topIds)
     if (bubbles.length === 0) return { context: '', sources: [] }
 
     // Separate structured data (excel summaries) from regular memories
-    const summaries = bubbles.filter(b => b.tags?.includes('excel-summary'))
+    const excelBubbles = bubbles.filter(b => b.tags?.includes('excel-summary'))
     const regular = bubbles.filter(b => !b.tags?.includes('excel-summary'))
 
     const parts: string[] = []
@@ -112,13 +119,13 @@ export class MemoryManager {
     const framingOverhead = 200
 
     // Add excel summaries first (higher value for data queries), with per-bubble cap
-    if (summaries.length > 0) {
+    if (excelBubbles.length > 0) {
       const included: string[] = []
-      for (const m of summaries) {
+      for (const m of excelBubbles) {
         const capped = truncateToTokenBudget(m.content, TOKEN_LIMITS.SINGLE_BUBBLE_MAX)
         const cost = estimateTokens(capped)
         if (usedTokens + cost + framingOverhead > budget) break
-        included.push(`[ref:${refIndex}] ${capped}`)
+        included.push(capped)
         sources.push({ refIndex, id: m.id, title: m.title, type: m.type, tags: m.tags, source: m.source, snippet: m.content.slice(0, 100) })
         refIndex++
         usedTokens += cost
@@ -132,7 +139,7 @@ export class MemoryManager {
     if (regular.length > 0) {
       const lines: string[] = []
       for (const m of regular) {
-        const line = `[ref:${refIndex}] [${m.type}] ${m.content}`
+        const line = `[${m.type}] ${m.content}`
         const cost = estimateTokens(line)
         if (usedTokens + cost + framingOverhead > budget) break
         lines.push(line)
@@ -147,7 +154,7 @@ export class MemoryManager {
 
     if (parts.length === 0) return { context: '', sources: [] }
 
-    logger.debug(`Memory context: ~${usedTokens} tokens (budget ${budget}), ${bubbles.length} candidates, ${parts.length} sections`)
+    logger.debug(`Memory context: ~${usedTokens} tokens (budget ${budget}), ${summaryHits.length} candidates → ${bubbles.length} loaded, ${parts.length} sections`)
 
     const context = `\n${parts.join('\n\n')}\n\n请基于以上信息回答用户的问题。如果涉及数值计算（金额汇总、吨位统计等），请基于完整数据表列出相关数据并计算，确保不遗漏任何行。`
     return { context, sources }

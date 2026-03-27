@@ -20,9 +20,16 @@ import type { SemanticBridge } from '../memory/semantic-bridge.js'
 import type { SurpriseDetector } from '../memory/surprise-detector.js'
 import type { TaskScheduler, ScheduledTaskType } from '../scheduler/scheduler.js'
 import { EXPORTS_DIR } from '../connector/tools/excel.js'
+import {
+  detectSheetCategory, translateRow, generateKnowledgeCards, isBaseInfoSheet,
+  isTransactionSheet, isTranslatableSheet, computePurchaseAggregations,
+  computeSalesAggregations, type KnowledgeCard, type AggregationBubble,
+} from '../connector/tools/excel-translator.js'
 import { parsePDF, parseDocx, parseTxt, splitIntoChunks, detectFileType } from '../connector/tools/doc-import.js'
 import { createAgent, getAgent, listAgents, updateAgent, deleteAgent } from '../agent/model.js'
 import type { WeComConnector } from '../connector/wecom.js'
+import type { MessageRouter } from '../connector/router.js'
+import * as biz from '../connector/biz/structured-store.js'
 
 const __dirname = dirname(fileURLToPath(import.meta.url))
 
@@ -42,7 +49,7 @@ export interface ServerModules {
   wecom?: WeComConnector
 }
 
-export async function startServer(brain: Brain, memory: MemoryManager, port = 3000, jwtSecret = 'bubble-agent-secret', modules?: ServerModules, serviceApiKey?: string) {
+export async function startServer(brain: Brain, memory: MemoryManager, port = 3000, jwtSecret = 'bubble-agent-secret', modules?: ServerModules, serviceApiKey?: string, router?: MessageRouter) {
   const app = Fastify()
   await app.register(fastifyCors, { origin: true })
   await app.register(fastifyWebsocket)
@@ -167,6 +174,213 @@ export async function startServer(brain: Brain, memory: MemoryManager, port = 30
     return { ok: true }
   })
 
+  // ─── User Management (admin) ─────────────────────────────────
+
+  function requireAdmin(payload: JwtPayload, reply: any): boolean {
+    if (payload.role !== 'admin') {
+      reply.code(403).send({ error: '权限不足，仅管理员可操作' })
+      return true
+    }
+    return false
+  }
+
+  const RESERVED_USERNAMES = new Set(['service', 'system'])
+  const USERNAME_RE = /^[a-zA-Z0-9_]{2,30}$/
+
+  // POST /api/users — Create user
+  app.post('/api/users', async (req, reply) => {
+    const payload = req.user as JwtPayload
+    if (requireAdmin(payload, reply)) return
+
+    const { username, password, displayName, role } = req.body as {
+      username?: string; password?: string; displayName?: string; role?: string
+    }
+    if (!username || !password || !displayName) {
+      return reply.code(400).send({ error: '请输入用户名、密码和显示名' })
+    }
+    if (!USERNAME_RE.test(username)) {
+      return reply.code(400).send({ error: '用户名只能包含字母、数字和下划线，长度2-30位' })
+    }
+    if (RESERVED_USERNAMES.has(username)) {
+      return reply.code(400).send({ error: '该用户名为系统保留' })
+    }
+    if (password.length < 6) {
+      return reply.code(400).send({ error: '密码至少6位' })
+    }
+    const userRole = role || 'user'
+    if (userRole !== 'admin' && userRole !== 'user') {
+      return reply.code(400).send({ error: '角色只能是 admin 或 user' })
+    }
+
+    const db = getDatabase()
+    const existing = db.prepare('SELECT id FROM users WHERE username = ?').get(username)
+    if (existing) return reply.code(409).send({ error: '用户名已存在' })
+
+    const { ulid } = await import('ulid')
+    const userId = ulid()
+    const spaceId = ulid()
+    const hash = bcrypt.hashSync(password, 10)
+    const now = Date.now()
+
+    const createUser = db.transaction(() => {
+      db.prepare(
+        'INSERT INTO users (id, username, password_hash, display_name, role, created_at) VALUES (?, ?, ?, ?, ?, ?)'
+      ).run(userId, username, hash, displayName, userRole, now)
+      db.prepare(
+        'INSERT INTO spaces (id, name, description, creator_id, created_at) VALUES (?, ?, ?, ?, ?)'
+      ).run(spaceId, displayName, `${displayName}的个人空间`, userId, now)
+      db.prepare(
+        "INSERT INTO user_spaces (user_id, space_id, role) VALUES (?, ?, 'owner')"
+      ).run(userId, spaceId)
+    })
+    createUser()
+
+    logger.info(`User created: "${username}" (${userRole}) by ${payload.username}`)
+    return {
+      user: { id: userId, username, displayName, role: userRole },
+      space: { id: spaceId, name: displayName },
+    }
+  })
+
+  // GET /api/users — List all users
+  app.get('/api/users', async (req, reply) => {
+    const payload = req.user as JwtPayload
+    if (requireAdmin(payload, reply)) return
+
+    const db = getDatabase()
+    const rows = db.prepare(`
+      SELECT u.id, u.username, u.display_name, u.role, u.created_at,
+             COUNT(us.space_id) as space_count
+      FROM users u
+      LEFT JOIN user_spaces us ON us.user_id = u.id
+      GROUP BY u.id
+      ORDER BY u.created_at
+    `).all() as Array<{ id: string; username: string; display_name: string; role: string; created_at: number; space_count: number }>
+
+    return {
+      users: rows.map(r => ({
+        id: r.id,
+        username: r.username,
+        displayName: r.display_name,
+        role: r.role,
+        createdAt: r.created_at,
+        spaceCount: r.space_count,
+      })),
+    }
+  })
+
+  // GET /api/users/:id — User detail
+  app.get('/api/users/:id', async (req, reply) => {
+    const payload = req.user as JwtPayload
+    if (requireAdmin(payload, reply)) return
+
+    const { id } = req.params as { id: string }
+    const db = getDatabase()
+    const user = db.prepare('SELECT id, username, display_name, role, created_at FROM users WHERE id = ?').get(id) as any
+    if (!user) return reply.code(404).send({ error: '用户不存在' })
+
+    const spaces = db.prepare(`
+      SELECT s.id, s.name, s.description, us.role
+      FROM user_spaces us
+      JOIN spaces s ON s.id = us.space_id
+      WHERE us.user_id = ?
+      ORDER BY s.created_at
+    `).all(id) as Array<{ id: string; name: string; description: string; role: string }>
+
+    return {
+      user: {
+        id: user.id,
+        username: user.username,
+        displayName: user.display_name,
+        role: user.role,
+        createdAt: user.created_at,
+        spaces,
+      },
+    }
+  })
+
+  // PUT /api/users/:id — Update user
+  app.put('/api/users/:id', async (req, reply) => {
+    const payload = req.user as JwtPayload
+    if (requireAdmin(payload, reply)) return
+
+    const { id } = req.params as { id: string }
+    const { displayName, role } = req.body as { displayName?: string; role?: string }
+    if (!displayName && !role) return reply.code(400).send({ error: '请提供要更新的字段' })
+
+    if (role) {
+      if (role !== 'admin' && role !== 'user') {
+        return reply.code(400).send({ error: '角色只能是 admin 或 user' })
+      }
+      if (id === payload.userId) {
+        return reply.code(400).send({ error: '不能修改自己的角色' })
+      }
+    }
+
+    const db = getDatabase()
+    const existing = db.prepare('SELECT id FROM users WHERE id = ?').get(id)
+    if (!existing) return reply.code(404).send({ error: '用户不存在' })
+
+    const sets: string[] = []
+    const params: unknown[] = []
+    if (displayName) { sets.push('display_name = ?'); params.push(displayName) }
+    if (role) { sets.push('role = ?'); params.push(role) }
+    params.push(id)
+
+    db.prepare(`UPDATE users SET ${sets.join(', ')} WHERE id = ?`).run(...params)
+    logger.info(`User updated: ${id} by ${payload.username}`)
+    return { ok: true }
+  })
+
+  // DELETE /api/users/:id — Delete user
+  app.delete('/api/users/:id', async (req, reply) => {
+    const payload = req.user as JwtPayload
+    if (requireAdmin(payload, reply)) return
+
+    const { id } = req.params as { id: string }
+    if (id === payload.userId) return reply.code(400).send({ error: '不能删除自己' })
+
+    const db = getDatabase()
+    const target = db.prepare('SELECT id, username, role FROM users WHERE id = ?').get(id) as any
+    if (!target) return reply.code(404).send({ error: '用户不存在' })
+
+    if (target.role === 'admin') {
+      const count = db.prepare("SELECT COUNT(*) as cnt FROM users WHERE role = 'admin'").get() as { cnt: number }
+      if (count.cnt <= 1) return reply.code(400).send({ error: '不能删除最后一个管理员' })
+    }
+
+    const deleteUser = db.transaction(() => {
+      db.prepare('DELETE FROM user_spaces WHERE user_id = ?').run(id)
+      db.prepare('DELETE FROM users WHERE id = ?').run(id)
+    })
+    deleteUser()
+
+    logger.info(`User deleted: "${target.username}" by ${payload.username}`)
+    return { ok: true }
+  })
+
+  // POST /api/users/:id/reset-password — Admin resets password
+  app.post('/api/users/:id/reset-password', async (req, reply) => {
+    const payload = req.user as JwtPayload
+    if (requireAdmin(payload, reply)) return
+
+    const { id } = req.params as { id: string }
+    const { newPassword } = req.body as { newPassword?: string }
+    if (!newPassword) return reply.code(400).send({ error: '请输入新密码' })
+    if (newPassword.length < 6) return reply.code(400).send({ error: '密码至少6位' })
+
+    const db = getDatabase()
+    const existing = db.prepare('SELECT id FROM users WHERE id = ?').get(id)
+    if (!existing) return reply.code(404).send({ error: '用户不存在' })
+
+    const hash = bcrypt.hashSync(newPassword, 10)
+    db.prepare('UPDATE users SET password_hash = ? WHERE id = ?').run(hash, id)
+    logger.info(`Password reset for user ${id} by ${payload.username}`)
+    return { ok: true }
+  })
+
+  // ─────────────────────────────────────────────────────────────
+
   // Helper: extract user context from JWT
   function getUserCtx(req: any, spaceIdOverride?: string): UserContext {
     const payload = req.user as JwtPayload
@@ -191,6 +405,11 @@ export async function startServer(brain: Brain, memory: MemoryManager, port = 30
     const { message, spaceId } = req.body as { message: string; spaceId?: string }
     if (!message) return reply.code(400).send({ error: 'message required' })
     const ctx = getUserCtx(req, spaceId)
+    // Use router if available (unified Layer 0 → Layer 1 flow), fallback to brain.think
+    if (router) {
+      const result = await router.handle(message, ctx)
+      return { response: result.response, sources: result.sources }
+    }
     const { response, sources } = await brain.think(message, ctx)
     return { response, sources }
   })
@@ -230,9 +449,23 @@ export async function startServer(brain: Brain, memory: MemoryManager, port = 30
 
         socket.send(JSON.stringify({ type: 'start' }))
 
-        const { response, sources } = await brain.think(message, ctx, (chunk) => {
+        // Use router if available (unified Layer 0 → Layer 1 flow), fallback to brain.think
+        const onChunk = (chunk: string) => {
           socket.send(JSON.stringify({ type: 'chunk', text: chunk }))
-        })
+        }
+
+        let response: string
+        let sources: any[]
+
+        if (router) {
+          const result = await router.handle(message, ctx, { onChunk })
+          response = result.response
+          sources = result.sources
+        } else {
+          const result = await brain.think(message, ctx, onChunk)
+          response = result.response
+          sources = result.sources
+        }
 
         socket.send(JSON.stringify({ type: 'done', text: response, sources }))
       } catch (err) {
@@ -243,7 +476,7 @@ export async function startServer(brain: Brain, memory: MemoryManager, port = 30
   })
 
   // Health check (public)
-  app.get('/api/health', async () => ({ status: 'ok', version: '0.2.1' }))
+  app.get('/api/health', async () => ({ status: 'ok', version: '0.4.0' }))
 
   // Search
   app.get('/api/search', async (req) => {
@@ -279,7 +512,8 @@ export async function startServer(brain: Brain, memory: MemoryManager, port = 30
     }
 
     if (!bubbles.length) return reply.code(400).send({ error: 'bubbles array required' })
-    const targetSpace = spaceId && ctx.spaceIds.includes(spaceId) ? spaceId : ctx.activeSpaceId
+    // spaceIds=[] means "access all" (admin/service user)
+    const targetSpace = spaceId && (ctx.spaceIds.length === 0 || ctx.spaceIds.includes(spaceId)) ? spaceId : ctx.activeSpaceId
 
     const refToId = new Map<string, string>()
     let created = 0
@@ -327,48 +561,126 @@ export async function startServer(brain: Brain, memory: MemoryManager, port = 30
     if (!workbook.SheetNames.length) return reply.code(400).send({ error: 'Excel中没有工作表' })
 
     let totalCreated = 0
-    const sheetsProcessed: Array<{ sheet: string; rows: number; columns: string[] }> = []
+    let knowledgeCardsCreated = 0
+    let aggregationsCreated = 0
+    const sheetsProcessed: Array<{ sheet: string; rows: number; columns: string[]; category: string }> = []
 
     for (const sheetName of workbook.SheetNames) {
       const rows = XLSX.utils.sheet_to_json<Record<string, unknown>>(workbook.Sheets[sheetName]!)
       if (!rows.length) continue
 
       const headers = Object.keys(rows[0]!)
+      const category = detectSheetCategory(sheetName)
       const newBubbleIds: string[] = []
 
-      // Create individual row bubbles
-      for (const row of rows) {
-        const values = headers.map(h => row[h]).filter(v => v != null && v !== '')
-        if (!values.length) continue
-
-        const title = `${sheetName} - ${String(values[0])}`
-        const contentParts = headers
-          .map(h => ({ key: h, val: row[h] }))
-          .filter(p => p.val != null && p.val !== '')
-          .map(p => `${p.key}: ${p.val}`)
-        const content = contentParts.join('\n')
-
-        const metadata: Record<string, unknown> = {}
-        for (const h of headers) {
-          if (row[h] != null && row[h] !== '') metadata[h] = row[h]
+      // --- Phase 1: Generate knowledge cards from base-info sheets ---
+      if (isBaseInfoSheet(category)) {
+        const cards = generateKnowledgeCards(rows, category)
+        for (const card of cards) {
+          const bubble = createBubble({
+            type: card.type as BubbleType,
+            title: card.title,
+            content: card.content,
+            metadata: card.metadata,
+            tags: [...card.tags, sheetName, 'knowledge-card'],
+            source: 'excel-translated',
+            confidence: card.confidence,
+            decayRate: card.decayRate,
+            pinned: card.pinned,
+            abstractionLevel: card.abstractionLevel,
+            spaceId: targetSpace,
+          })
+          newBubbleIds.push(bubble.id)
+          knowledgeCardsCreated++
+          totalCreated++
         }
-
-        const bubble = createBubble({
-          type: 'entity' as BubbleType,
-          title,
-          content,
-          metadata,
-          tags: [sheetName, 'excel-row'],
-          source: 'excel',
-          confidence: 1.0,
-          pinned: false,
-          spaceId: targetSpace,
-        })
-        newBubbleIds.push(bubble.id)
-        totalCreated++
+        logger.info(`Excel import: sheet "${sheetName}" (${category}) → ${cards.length} knowledge cards`)
       }
 
-      // Build numeric column statistics
+      // --- Phase 2: Create translated row bubbles for transaction sheets ---
+      if (isTranslatableSheet(category)) {
+        for (const row of rows) {
+          const values = headers.map(h => row[h]).filter(v => v != null && v !== '')
+          if (!values.length) continue
+
+          const translated = translateRow(row, sheetName, category)
+
+          const bubble = createBubble({
+            type: 'memory' as BubbleType,
+            title: translated.title,
+            content: translated.content,
+            metadata: translated.metadata,
+            tags: [...translated.tags, sheetName, 'excel-row'],
+            source: 'excel-translated',
+            confidence: 0.95,
+            pinned: false,
+            spaceId: targetSpace,
+          })
+          newBubbleIds.push(bubble.id)
+          totalCreated++
+        }
+      } else if (!isBaseInfoSheet(category)) {
+        // Non-translatable, non-base-info sheets: use original key:value format
+        for (const row of rows) {
+          const values = headers.map(h => row[h]).filter(v => v != null && v !== '')
+          if (!values.length) continue
+
+          const title = `${sheetName} - ${String(values[0])}`
+          const contentParts = headers
+            .map(h => ({ key: h, val: row[h] }))
+            .filter(p => p.val != null && p.val !== '')
+            .map(p => `${p.key}: ${p.val}`)
+          const content = contentParts.join('\n')
+
+          const metadata: Record<string, unknown> = {}
+          for (const h of headers) {
+            if (row[h] != null && row[h] !== '') metadata[h] = row[h]
+          }
+
+          const bubble = createBubble({
+            type: 'entity' as BubbleType,
+            title,
+            content,
+            metadata,
+            tags: [sheetName, 'excel-row'],
+            source: 'excel',
+            confidence: 1.0,
+            pinned: false,
+            spaceId: targetSpace,
+          })
+          newBubbleIds.push(bubble.id)
+          totalCreated++
+        }
+      }
+
+      // --- Phase 3: Pre-computed aggregations for transaction sheets ---
+      if (isTransactionSheet(category)) {
+        const aggBubbles: AggregationBubble[] = category === 'purchase'
+          ? computePurchaseAggregations(rows)
+          : computeSalesAggregations(rows)
+
+        for (const agg of aggBubbles) {
+          const bubble = createBubble({
+            type: 'synthesis' as BubbleType,
+            title: agg.title,
+            content: agg.content,
+            metadata: agg.metadata,
+            tags: [...agg.tags, sheetName, 'excel-aggregation'],
+            source: 'excel-translated',
+            confidence: 1.0,
+            pinned: true,
+            abstractionLevel: agg.abstractionLevel,
+            spaceId: targetSpace,
+          })
+          // Link aggregation to summary
+          newBubbleIds.push(bubble.id)
+          aggregationsCreated++
+          totalCreated++
+        }
+        logger.info(`Excel import: sheet "${sheetName}" (${category}) → ${aggBubbles.length} aggregation bubbles`)
+      }
+
+      // --- Phase 4: Build summary bubble (enhanced with semantic info) ---
       const numericStats: Record<string, { sum: number; min: number; max: number; count: number }> = {}
       for (const h of headers) {
         const nums: number[] = []
@@ -394,8 +706,8 @@ export async function startServer(brain: Brain, memory: MemoryManager, port = 30
       )
 
       const statsLines: string[] = []
-      for (const [col, st] of Object.entries(numericStats)) {
-        statsLines.push(`${col}: 合计=${st.sum}, 最小=${st.min}, 最大=${st.max}, 有效行数=${st.count}`)
+      for (const [colName, st] of Object.entries(numericStats)) {
+        statsLines.push(`${colName}: 合计=${st.sum}, 最小=${st.min}, 最大=${st.max}, 有效行数=${st.count}`)
       }
 
       // --- Semantic bridge: rule-based natural language summary ---
@@ -412,20 +724,20 @@ export async function startServer(brain: Brain, memory: MemoryManager, port = 30
         }
       }
 
-      semanticLines.push(`这是一份「${sheetName}」表格，共${rows.length}条记录。`)
+      semanticLines.push(`这是一份「${sheetName}」表格（类型: ${category}），共${rows.length}条记录。`)
 
-      for (const [col, vals] of Object.entries(textCols)) {
+      for (const [colName, vals] of Object.entries(textCols)) {
         if (vals.size <= 10) {
-          semanticLines.push(`${col}包含: ${[...vals].join('、')}（共${vals.size}种）`)
+          semanticLines.push(`${colName}包含: ${[...vals].join('、')}（共${vals.size}种）`)
         } else {
           const sample = [...vals].slice(0, 5).join('、')
-          semanticLines.push(`${col}共${vals.size}种，如: ${sample}等`)
+          semanticLines.push(`${colName}共${vals.size}种，如: ${sample}等`)
         }
       }
 
-      for (const [col, st] of Object.entries(numericStats)) {
+      for (const [colName, st] of Object.entries(numericStats)) {
         const avg = (st.sum / st.count).toFixed(2)
-        semanticLines.push(`${col}合计${st.sum}，平均${avg}，范围${st.min}~${st.max}`)
+        semanticLines.push(`${colName}合计${st.sum}，平均${avg}，范围${st.min}~${st.max}`)
       }
 
       const firstTextCol = Object.keys(textCols)[0]
@@ -443,7 +755,7 @@ export async function startServer(brain: Brain, memory: MemoryManager, port = 30
       }
 
       const summaryContent = [
-        `数据来源: Excel文件 工作表「${sheetName}」`,
+        `数据来源: Excel文件 工作表「${sheetName}」（${category}）`,
         `共 ${rows.length} 行数据，列: ${headers.join(', ')}`,
         '',
         '业务摘要:',
@@ -461,13 +773,18 @@ export async function startServer(brain: Brain, memory: MemoryManager, port = 30
         type: 'document' as BubbleType,
         title: `Excel数据总览: ${sheetName}`,
         content: summaryContent,
-        metadata: { columns: headers, rowCount: rows.length, numericStats, source_file: file.filename },
+        metadata: { columns: headers, rowCount: rows.length, numericStats, source_file: file.filename, sheetCategory: category },
         tags: [sheetName, 'excel-summary'],
         source: 'excel',
         confidence: 1.0,
         pinned: true,
         spaceId: targetSpace,
       })
+
+      // Link all row bubbles to summary
+      for (const rowId of newBubbleIds) {
+        addLink(rowId, summaryBubble.id, 'belongs_to', 0.6, 'system')
+      }
 
       if (modules?.semanticBridge) {
         modules.semanticBridge.bridgeExcelImport(
@@ -481,14 +798,14 @@ export async function startServer(brain: Brain, memory: MemoryManager, port = 30
         ).catch(err => logger.error('SurpriseDetector error:', err instanceof Error ? err.message : String(err)))
       }
 
-      sheetsProcessed.push({ sheet: sheetName, rows: rows.length, columns: headers })
-      logger.info(`Excel import: sheet "${sheetName}" - ${newBubbleIds.length} rows + 1 summary`)
+      sheetsProcessed.push({ sheet: sheetName, rows: rows.length, columns: headers, category })
+      logger.info(`Excel import: sheet "${sheetName}" (${category}) - ${newBubbleIds.length} bubbles + 1 summary`)
     }
 
     if (!sheetsProcessed.length) return reply.code(400).send({ error: 'Excel中没有数据行' })
 
-    logger.info(`Excel import complete: ${totalCreated} rows across ${sheetsProcessed.length} sheets from "${file.filename}"`)
-    return { created: totalCreated, sheets: sheetsProcessed }
+    logger.info(`Excel import complete: ${totalCreated} total (${knowledgeCardsCreated} knowledge cards, ${aggregationsCreated} aggregations) across ${sheetsProcessed.length} sheets from "${file.filename}"`)
+    return { created: totalCreated, knowledgeCards: knowledgeCardsCreated, aggregations: aggregationsCreated, sheets: sheetsProcessed }
   })
 
   // Document import (PDF, Word, TXT)
@@ -833,6 +1150,228 @@ export async function startServer(brain: Brain, memory: MemoryManager, port = 30
     if (!agent) return reply.code(404).send({ error: 'Agent 不存在' })
     brain.setActiveAgent(payload.userId, agent)
     return { ok: true, agentId: agent.id }
+  })
+
+  // ═══════════════════════════════════════════════════════════════
+  // Structured Business API (进销存 v0.5)
+  // ═══════════════════════════════════════════════════════════════
+
+  // ── Products ──────────────────────────────────────────────────
+
+  app.get('/api/biz/products', async (req) => {
+    const { q } = req.query as { q?: string }
+    return { data: biz.getProducts(q) }
+  })
+
+  app.post('/api/biz/products', async (req, reply) => {
+    const body = req.body as any
+    if (!body.code || !body.name) return reply.code(400).send({ error: 'code 和 name 为必填项' })
+    return { data: biz.createProduct(body) }
+  })
+
+  app.put('/api/biz/products/:id', async (req, reply) => {
+    const { id } = req.params as { id: string }
+    if (!biz.getProductById(id)) return reply.code(404).send({ error: '产品不存在' })
+    biz.updateProduct(id, req.body as any)
+    return { data: biz.getProductById(id) }
+  })
+
+  app.delete('/api/biz/products/:id', async (req) => {
+    const { id } = req.params as { id: string }
+    biz.deleteProduct(id)
+    return { ok: true }
+  })
+
+  // ── Counterparties ────────────────────────────────────────────
+
+  app.get('/api/biz/counterparties', async (req) => {
+    const { type } = req.query as { type?: string }
+    return { data: biz.getCounterparties(type) }
+  })
+
+  app.post('/api/biz/counterparties', async (req, reply) => {
+    const body = req.body as any
+    if (!body.name || !body.type) return reply.code(400).send({ error: 'name 和 type 为必填项' })
+    return { data: biz.createCounterparty(body) }
+  })
+
+  app.put('/api/biz/counterparties/:id', async (req) => {
+    const { id } = req.params as { id: string }
+    biz.updateCounterparty(id, req.body as any)
+    return { ok: true }
+  })
+
+  app.delete('/api/biz/counterparties/:id', async (req) => {
+    const { id } = req.params as { id: string }
+    biz.deleteCounterparty(id)
+    return { ok: true }
+  })
+
+  // ── Projects ──────────────────────────────────────────────────
+
+  app.get('/api/biz/projects', async () => {
+    return { data: biz.getProjects() }
+  })
+
+  app.post('/api/biz/projects', async (req, reply) => {
+    const body = req.body as any
+    if (!body.name) return reply.code(400).send({ error: 'name 为必填项' })
+    return { data: biz.createProject(body) }
+  })
+
+  app.put('/api/biz/projects/:id', async (req) => {
+    const { id } = req.params as { id: string }
+    biz.updateProject(id, req.body as any)
+    return { ok: true }
+  })
+
+  app.delete('/api/biz/projects/:id', async (req) => {
+    const { id } = req.params as { id: string }
+    biz.deleteProject(id)
+    return { ok: true }
+  })
+
+  // ── Purchases ─────────────────────────────────────────────────
+
+  app.get('/api/biz/purchases', async (req) => {
+    const filter = req.query as biz.BizQueryFilter
+    return { data: biz.getPurchases(filter) }
+  })
+
+  app.post('/api/biz/purchases', async (req, reply) => {
+    const body = req.body as any
+    if (!body.date || !body.supplierId || !body.productId) {
+      return reply.code(400).send({ error: 'date, supplierId, productId 为必填项' })
+    }
+    return { data: biz.createPurchase(body) }
+  })
+
+  app.put('/api/biz/purchases/:id', async (req) => {
+    const { id } = req.params as { id: string }
+    biz.updatePurchase(id, req.body as any)
+    return { ok: true }
+  })
+
+  app.delete('/api/biz/purchases/:id', async (req) => {
+    const { id } = req.params as { id: string }
+    biz.deletePurchase(id)
+    return { ok: true }
+  })
+
+  // ── Sales ─────────────────────────────────────────────────────
+
+  app.get('/api/biz/sales', async (req) => {
+    const filter = req.query as biz.BizQueryFilter
+    return { data: biz.getSales(filter) }
+  })
+
+  app.post('/api/biz/sales', async (req, reply) => {
+    const body = req.body as any
+    if (!body.date || !body.customerId || !body.productId) {
+      return reply.code(400).send({ error: 'date, customerId, productId 为必填项' })
+    }
+    if (body.costPrice == null) {
+      const lastPrice = biz.getLastPurchasePrice(body.productId)
+      if (lastPrice != null) {
+        body.costPrice = lastPrice
+        body.costAmount = Math.round(body.tonnage * lastPrice * 100) / 100
+        body.profit = Math.round((body.totalAmount - body.costAmount) * 100) / 100
+      }
+    }
+    return { data: biz.createSale(body) }
+  })
+
+  app.put('/api/biz/sales/:id', async (req) => {
+    const { id } = req.params as { id: string }
+    biz.updateSale(id, req.body as any)
+    return { ok: true }
+  })
+
+  app.delete('/api/biz/sales/:id', async (req) => {
+    const { id } = req.params as { id: string }
+    biz.deleteSale(id)
+    return { ok: true }
+  })
+
+  // ── Logistics ─────────────────────────────────────────────────
+
+  app.get('/api/biz/logistics', async (req) => {
+    const filter = req.query as biz.BizQueryFilter
+    return { data: biz.getLogistics(filter) }
+  })
+
+  app.post('/api/biz/logistics', async (req, reply) => {
+    const body = req.body as any
+    if (!body.date) return reply.code(400).send({ error: 'date 为必填项' })
+    return { data: biz.createLogistics(body) }
+  })
+
+  app.delete('/api/biz/logistics/:id', async (req) => {
+    const { id } = req.params as { id: string }
+    biz.deleteLogistics(id)
+    return { ok: true }
+  })
+
+  // ── Payments ──────────────────────────────────────────────────
+
+  app.get('/api/biz/payments', async (req) => {
+    const filter = req.query as biz.BizQueryFilter
+    return { data: biz.getPayments(filter) }
+  })
+
+  app.post('/api/biz/payments', async (req, reply) => {
+    const body = req.body as any
+    if (!body.date || !body.direction || !body.counterpartyId || !body.amount) {
+      return reply.code(400).send({ error: 'date, direction, counterpartyId, amount 为必填项' })
+    }
+    return { data: biz.createPayment(body) }
+  })
+
+  app.delete('/api/biz/payments/:id', async (req) => {
+    const { id } = req.params as { id: string }
+    biz.deletePayment(id)
+    return { ok: true }
+  })
+
+  // ── Invoices ──────────────────────────────────────────────────
+
+  app.get('/api/biz/invoices', async (req) => {
+    const filter = req.query as biz.BizQueryFilter
+    return { data: biz.getInvoices(filter) }
+  })
+
+  app.post('/api/biz/invoices', async (req, reply) => {
+    const body = req.body as any
+    if (!body.date || !body.direction || !body.counterpartyId || !body.amount) {
+      return reply.code(400).send({ error: 'date, direction, counterpartyId, amount 为必填项' })
+    }
+    return { data: biz.createInvoice(body) }
+  })
+
+  app.delete('/api/biz/invoices/:id', async (req) => {
+    const { id } = req.params as { id: string }
+    biz.deleteInvoice(id)
+    return { ok: true }
+  })
+
+  // ── Computed Views ────────────────────────────────────────────
+
+  app.get('/api/biz/inventory', async () => ({ data: biz.getInventory() }))
+  app.get('/api/biz/receivables', async () => ({ data: biz.getReceivables() }))
+  app.get('/api/biz/payables', async () => ({ data: biz.getPayables() }))
+  app.get('/api/biz/dashboard', async () => ({ data: biz.getDashboard() }))
+  app.get('/api/biz/reconciliation', async () => ({ data: biz.getProjectReconciliation() }))
+
+  // ── Lookup (VLOOKUP replacement) ──────────────────────────────
+
+  app.get('/api/biz/lookup/product', async (req) => {
+    const { code } = req.query as { code?: string }
+    return { data: code ? biz.lookupProduct(code) ?? null : null }
+  })
+
+  app.get('/api/biz/lookup/last-price', async (req) => {
+    const { productId } = req.query as { productId?: string }
+    return { data: productId ? biz.getLastPurchasePrice(productId) ?? null : null }
   })
 
   // --- P2-1: OCR image import ---

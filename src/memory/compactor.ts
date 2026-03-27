@@ -112,8 +112,9 @@ export class BubbleCompactor {
   async compact(spaceId?: string): Promise<CompactionResult> {
     const result: CompactionResult = { synthesized: 0, portrayed: 0, clustersFound: 0, skipped: 0 }
 
-    // Round 1: Level 0 → Level 1
+    // Round 1: Level 0 → Level 1 (skip observations — they have their own lifecycle)
     const l0Candidates = findCompactionCandidates(0, spaceId)
+      .filter(b => b.type !== 'observation')
     if (l0Candidates.length >= MIN_CLUSTER_SIZE) {
       const l0Clusters = this.findClusters(l0Candidates)
       result.clustersFound += l0Clusters.length

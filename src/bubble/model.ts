@@ -15,11 +15,15 @@ export interface CreateBubbleInput {
   pinned?: boolean
   spaceId?: string
   abstractionLevel?: number
+  summary?: string
 }
 
 export function createBubble(input: CreateBubbleInput): Bubble {
   const db = getDatabase()
   const now = Date.now()
+
+  // Auto-generate summary if not provided: title + truncated content
+  const summary = input.summary ?? generateSummary(input.title, input.content)
 
   const bubble: Bubble = {
     id: ulid(),
@@ -38,11 +42,12 @@ export function createBubble(input: CreateBubbleInput): Bubble {
     accessedAt: now,
     spaceId: input.spaceId,
     abstractionLevel: input.abstractionLevel ?? 0,
+    summary,
   }
 
   db.prepare(`
-    INSERT INTO bubbles (id, type, title, content, metadata, tags, embedding, source, confidence, decay_rate, pinned, created_at, updated_at, accessed_at, space_id, abstraction_level)
-    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    INSERT INTO bubbles (id, type, title, content, metadata, tags, embedding, source, confidence, decay_rate, pinned, created_at, updated_at, accessed_at, space_id, abstraction_level, summary)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
   `).run(
     bubble.id,
     bubble.type,
@@ -60,9 +65,19 @@ export function createBubble(input: CreateBubbleInput): Bubble {
     bubble.accessedAt,
     bubble.spaceId ?? null,
     bubble.abstractionLevel,
+    summary ?? null,
   )
 
   return bubble
+}
+
+/** Generate a short summary from title + content (max ~100 chars) */
+function generateSummary(title: string, content: string): string {
+  if (content.length <= 100) return content
+  const prefix = title ? `${title}: ` : ''
+  const remaining = 100 - prefix.length
+  if (remaining <= 0) return title.slice(0, 100)
+  return prefix + content.slice(0, remaining).replace(/[\n\r]+/g, ' ')
 }
 
 export function getBubble(id: string, spaceIds?: string[]): Bubble | null {
@@ -256,5 +271,6 @@ export function rowToBubble(row: any): Bubble {
     accessedAt: row.accessed_at,
     spaceId: row.space_id ?? undefined,
     abstractionLevel: row.abstraction_level ?? 0,
+    summary: row.summary ?? undefined,
   }
 }

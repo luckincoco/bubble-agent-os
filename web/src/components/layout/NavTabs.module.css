@@ -25,7 +25,7 @@
   color: var(--text-primary);
 }
 
-.tab[data-active="true"] .icon {
+.tab[data-active="true"] .svg {
   filter: drop-shadow(0 0 6px var(--glow-purple));
 }
 
@@ -41,6 +41,13 @@
   box-shadow: 0 0 8px var(--glow-purple);
 }
 
-.icon {
-  font-size: 20px;
+.svg {
+  width: 22px;
+  height: 22px;
+  flex-shrink: 0;
+}
+
+.label {
+  font-size: 11px;
+  line-height: 1;
 }

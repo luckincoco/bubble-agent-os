@@ -13,8 +13,9 @@ import { executeMemoryDecay } from './tasks/memory-decay.js'
 import { executeBubbleCompaction } from './tasks/bubble-compaction.js'
 import { executeSteelPrice } from './tasks/steel-price.js'
 import { executeQuestionGenerator } from './tasks/question-generator.js'
+import { executeReflection } from './tasks/reflection.js'
 
-export type ScheduledTaskType = 'daily_digest' | 'keyword_monitor' | 'memory_decay' | 'bubble_compaction' | 'steel_price' | 'question_generator'
+export type ScheduledTaskType = 'daily_digest' | 'keyword_monitor' | 'memory_decay' | 'bubble_compaction' | 'steel_price' | 'question_generator' | 'reflection'
 
 export interface TaskDeps {
   brain: Brain
@@ -52,6 +53,7 @@ const EXECUTORS: Record<ScheduledTaskType, TaskExecutor> = {
   bubble_compaction: executeBubbleCompaction,
   steel_price: executeSteelPrice,
   question_generator: executeQuestionGenerator,
+  reflection: executeReflection,
 }
 
 export class TaskScheduler {
@@ -108,6 +110,18 @@ export class TaskScheduler {
       const row = db.prepare("SELECT * FROM scheduled_tasks WHERE type = 'question_generator'").get() as ScheduledTaskRow
       this.scheduleJob(row)
       logger.info('Scheduler: seeded question_generator task (daily 8:00)')
+    }
+
+    // Ensure reflection task exists (daily 5:00 AM — runs after compaction at 4:00)
+    const hasReflection = db.prepare("SELECT id FROM scheduled_tasks WHERE type = 'reflection'").get()
+    if (!hasReflection) {
+      const now = Date.now()
+      db.prepare(
+        'INSERT INTO scheduled_tasks (id, name, type, cron, params, enabled, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)',
+      ).run(ulid(), '反思引擎', 'reflection', '0 5 * * *', '{}', 1, now, now)
+      const row = db.prepare("SELECT * FROM scheduled_tasks WHERE type = 'reflection'").get() as ScheduledTaskRow
+      this.scheduleJob(row)
+      logger.info('Scheduler: seeded reflection task (daily 5:00)')
     }
 
     logger.info(`Scheduler: ${this.jobs.size} active jobs loaded`)

@@ -1,88 +1,74 @@
-export interface SourceRef {
-  refIndex: number
-  id: string
-  title: string
-  type: string
-  tags: string[]
-  source: string
-  snippet: string
+/**
+ * Business record types for natural language entry.
+ * Follows the "Time - Person - Thing - Value" paradigm.
+ */
+
+export type BizType = 'procurement' | 'sales' | 'payment' | 'logistics'
+
+export interface BizRecordBase {
+  bizType: BizType
+  date: string          // YYYY-MM-DD
+  rawInput: string      // original user input
+  project?: string      // associated project / construction site
 }
 
-export interface ChatMessage {
-  id: string
-  role: 'user' | 'assistant' | 'error'
-  content: string
-  timestamp: number
-  isStreaming?: boolean
-  sources?: SourceRef[]
+export interface ProcurementRecord extends BizRecordBase {
+  bizType: 'procurement'
+  supplier: string
+  product: string
+  spec?: string
+  quantity: number
+  unitPrice: number
+  totalAmount?: number
+  invoiceStatus?: string
+  paymentStatus?: string
 }
 
-export interface WSMessage {
-  type: 'start' | 'chunk' | 'done' | 'error'
-  text?: string
-  sources?: SourceRef[]
+export interface SalesRecord extends BizRecordBase {
+  bizType: 'sales'
+  customer: string
+  product: string
+  spec?: string
+  quantity: number
+  unitPrice: number
+  totalAmount?: number
+  invoiceStatus?: string
+  collectionStatus?: string
 }
 
-export type ConnectionStatus = 'connecting' | 'connected' | 'disconnected' | 'error'
-
-export interface BubbleMemory {
-  id: string
-  type: string
-  title: string
-  content: string
-  metadata: Record<string, unknown>
-  tags: string[]
-  source: string
-  confidence: number
-  pinned: boolean
-  createdAt: number
-  updatedAt: number
+export interface PaymentRecord extends BizRecordBase {
+  bizType: 'payment'
+  counterparty: string
+  direction: '收' | '付'
+  amount: number
+  method?: string
 }
 
-export interface AuthUserInfo {
-  id: string
-  username: string
-  displayName: string
-  role: 'admin' | 'user'
-  spaceIds: string[]
-  spaces: SpaceInfo[]
+export interface LogisticsRecord extends BizRecordBase {
+  bizType: 'logistics'
+  carrier?: string
+  waybillNo?: string
+  destination: string
+  tonnage: number
+  freight?: number
+  liftingFee?: number
+  driver?: string
+  licensePlate?: string
 }
 
-export interface SpaceInfo {
-  id: string
-  name: string
-  description: string
+export type BizRecord = ProcurementRecord | SalesRecord | PaymentRecord | LogisticsRecord
+
+/** Chinese display names for biz types */
+export const BIZ_TYPE_LABELS: Record<BizType, string> = {
+  procurement: '采购',
+  sales: '销售',
+  payment: '收付款',
+  logistics: '物流',
 }
 
-export interface LoginResponse {
-  token: string
-  user: AuthUserInfo
-}
+// ── Structured business data types (v0.5 进销存) ──────────────────
 
-export type SpaceRole = 'owner' | 'editor' | 'viewer'
-
-export interface SpaceMember {
-  userId: string
-  username: string
-  displayName: string
-  role: SpaceRole
-}
-
-export interface CustomAgent {
-  id: string
-  name: string
-  description: string
-  systemPrompt: string
-  avatar: string
-  tools: string[]
-  spaceIds: string[]
-  creatorId: string
-  createdAt: number
-  updatedAt: number
-}
-
-// ── Structured Business Types (进销存 v0.5) ──────────────────────
-
+/** Product master data */
 export interface BizProduct {
   id: string
   tenantId: string
@@ -101,6 +87,7 @@ export interface BizProduct {
   updatedAt: number
 }
 
+/** Counterparty (supplier / customer / logistics provider) */
 export interface BizCounterparty {
   id: string
   tenantId: string
@@ -116,6 +103,7 @@ export interface BizCounterparty {
   updatedAt: number
 }
 
+/** Customer project / construction site */
 export interface BizProject {
   id: string
   tenantId: string
@@ -133,6 +121,7 @@ export interface BizProject {
   updatedAt: number
 }
 
+/** Purchase record (structured) */
 export interface BizPurchase {
   id: string
   tenantId: string
@@ -153,8 +142,10 @@ export interface BizPurchase {
   createdBy?: string
   createdAt: number
   updatedAt: number
+  deletedAt?: number
 }
 
+/** Sales record (structured) */
 export interface BizSale {
   id: string
   tenantId: string
@@ -180,8 +171,10 @@ export interface BizSale {
   createdBy?: string
   createdAt: number
   updatedAt: number
+  deletedAt?: number
 }
 
+/** Logistics record (structured) */
 export interface BizLogisticsRecord {
   id: string
   tenantId: string
@@ -204,8 +197,10 @@ export interface BizLogisticsRecord {
   createdBy?: string
   createdAt: number
   updatedAt: number
+  deletedAt?: number
 }
 
+/** Payment record (structured) */
 export interface BizPayment {
   id: string
   tenantId: string
@@ -223,7 +218,32 @@ export interface BizPayment {
   createdBy?: string
   createdAt: number
   updatedAt: number
+  deletedAt?: number
 }
+
+/** Invoice record (structured) */
+export interface BizInvoice {
+  id: string
+  tenantId: string
+  date: string
+  direction: 'in' | 'out'
+  invoiceNo?: string
+  counterpartyId: string
+  amount: number
+  taxRate: number
+  taxAmount?: number
+  totalAmount?: number
+  relatedIds: string[]
+  status: string
+  notes?: string
+  bubbleId?: string
+  createdBy?: string
+  createdAt: number
+  updatedAt: number
+  deletedAt?: number
+}
+
+// ── Computed view types ──────────────────────────────────────────
 
 export interface InventoryItem {
   productId: string
@@ -252,7 +272,7 @@ export interface PayableItem {
   outstanding: number
 }
 
-export interface BizDashboardData {
+export interface DashboardData {
   todayPurchases: number
   todaySales: number
   todayLogistics: number

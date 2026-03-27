@@ -1,6 +1,6 @@
 import { create } from 'zustand'
 
-type Tab = 'chat' | 'memory'
+export type Tab = 'home' | 'entry' | 'query' | 'chat' | 'memory'
 
 interface UIState {
   activeTab: Tab
@@ -8,6 +8,6 @@ interface UIState {
 }
 
 export const useUIStore = create<UIState>((set) => ({
-  activeTab: 'chat',
+  activeTab: 'home',
   setTab: (tab) => set({ activeTab: tab }),
 }))

@@ -1,4 +1,5 @@
 import { getConfig } from './shared/config.js'
+import { resolve } from 'node:path'
 import { createLLM } from './ai/llm.js'
 import { createEmbeddingProvider } from './ai/embeddings.js'
 import { Brain } from './kernel/brain.js'
@@ -13,6 +14,11 @@ import { createWebSearchTool } from './connector/tools/web-search.js'
 import { createFetchPageTool } from './connector/tools/fetch-page.js'
 import { FeishuConnector } from './connector/feishu.js'
 import { WeComConnector } from './connector/wecom.js'
+import { MessageRouter } from './connector/router.js'
+import { BizEntryHandler } from './connector/biz/handler.js'
+import { TeachHandler } from './connector/teach/handler.js'
+import { SkillLoader } from './connector/skills/loader.js'
+import { SkillRouter } from './connector/skills/skill-router.js'
 import { TaskScheduler } from './scheduler/scheduler.js'
 import { initDatabase, closeDatabase } from './storage/database.js'
 import { startServer, type ServerModules } from './server/api.js'
@@ -26,14 +32,15 @@ async function main() {
   const llm = createLLM(config.llm)
   const memory = new MemoryManager(llm, config.features.focusTracking)
 
+  let embeddingProvider: import('./shared/types.js').EmbeddingProvider | undefined
   if (config.llm.apiKey && config.llm.baseUrl) {
     try {
-      const ep = createEmbeddingProvider({
+      embeddingProvider = createEmbeddingProvider({
         apiKey: config.llm.apiKey,
         baseUrl: config.llm.baseUrl,
         model: process.env.EMBEDDING_MODEL || 'text-embedding-ada-002',
       })
-      memory.setEmbeddingProvider(ep)
+      memory.setEmbeddingProvider(embeddingProvider)
     } catch {
       logger.debug('Embedding provider not available')
     }
@@ -60,6 +67,15 @@ async function main() {
   if (semanticBridge) logger.info('Module: SemanticBridge enabled')
   if (surpriseDetector) logger.info('Module: SurpriseDetector enabled')
   if (config.features.focusTracking) logger.info('Module: FocusTracker enabled')
+
+  // Initialize biz entry handler, teach handler, skill system, and unified message router
+  const bizHandler = new BizEntryHandler(llm, embeddingProvider)
+  const teachHandler = new TeachHandler(llm, embeddingProvider)
+  const skillsDir = resolve(config.storage.dataDir, '..', 'skills')
+  const skillLoader = new SkillLoader(skillsDir)
+  const skillRouter = new SkillRouter(skillLoader, bizHandler, teachHandler)
+  const router = new MessageRouter({ brain, tools, surpriseDetector, bizHandler, skillRouter })
+  logger.info('Module: SkillRouter + MessageRouter enabled')
 
   // Start Feishu connector if configured (lifted to outer scope for scheduler access)
   let feishu: FeishuConnector | undefined
@@ -96,7 +112,7 @@ async function main() {
 
   if (process.argv.includes('--serve')) {
     const port = parseInt(process.env.PORT || '3000')
-    await startServer(brain, memory, port, config.auth.jwtSecret, serverModules, config.auth.serviceApiKey)
+    await startServer(brain, memory, port, config.auth.jwtSecret, serverModules, config.auth.serviceApiKey, router)
     // Keep process alive in serve-only mode (no REPL needed)
     if (!process.stdin.isTTY) return
   }

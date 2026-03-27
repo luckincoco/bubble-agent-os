@@ -255,3 +255,206 @@ describe('Change Password', () => {
     expect(res.status).toBe(400)
   })
 })
+
+// ─── User Management (admin) ───────────────────────────────
+
+describe('User Management (admin)', () => {
+  let createdUserId: string
+
+  it('POST /api/users creates a new user with personal space', async () => {
+    const res = await api('/api/users', {
+      method: 'POST',
+      body: JSON.stringify({ username: 'yingyun', password: 'test456', displayName: '盈韵' }),
+    })
+    expect(res.status).toBe(200)
+    const data = await res.json() as any
+    expect(data.user.username).toBe('yingyun')
+    expect(data.user.displayName).toBe('盈韵')
+    expect(data.user.role).toBe('user')
+    expect(data.user.id).toBeTruthy()
+    expect(data.space.id).toBeTruthy()
+    expect(data.space.name).toBe('盈韵')
+    createdUserId = data.user.id
+  })
+
+  it('POST /api/users rejects duplicate username', async () => {
+    const res = await api('/api/users', {
+      method: 'POST',
+      body: JSON.stringify({ username: 'yingyun', password: 'test456', displayName: '盈韵2' }),
+    })
+    expect(res.status).toBe(409)
+  })
+
+  it('POST /api/users rejects missing fields', async () => {
+    const res = await api('/api/users', {
+      method: 'POST',
+      body: JSON.stringify({ username: 'testuser' }),
+    })
+    expect(res.status).toBe(400)
+  })
+
+  it('POST /api/users rejects short password', async () => {
+    const res = await api('/api/users', {
+      method: 'POST',
+      body: JSON.stringify({ username: 'testuser', password: '12', displayName: 'Test' }),
+    })
+    expect(res.status).toBe(400)
+  })
+
+  it('POST /api/users rejects invalid username', async () => {
+    const res = await api('/api/users', {
+      method: 'POST',
+      body: JSON.stringify({ username: '用户!@#', password: 'test456', displayName: 'Test' }),
+    })
+    expect(res.status).toBe(400)
+  })
+
+  it('POST /api/users rejects reserved username', async () => {
+    const res = await api('/api/users', {
+      method: 'POST',
+      body: JSON.stringify({ username: 'service', password: 'test456', displayName: 'Service' }),
+    })
+    expect(res.status).toBe(400)
+  })
+
+  it('GET /api/users lists all users', async () => {
+    const res = await api('/api/users')
+    expect(res.status).toBe(200)
+    const data = await res.json() as any
+    expect(Array.isArray(data.users)).toBe(true)
+    const usernames = data.users.map((u: any) => u.username)
+    expect(usernames).toContain('bobi')
+    expect(usernames).toContain('yingyun')
+  })
+
+  it('GET /api/users never exposes password_hash', async () => {
+    const res = await api('/api/users')
+    const data = await res.json() as any
+    for (const u of data.users) {
+      expect(u.password_hash).toBeUndefined()
+      expect(u.passwordHash).toBeUndefined()
+    }
+  })
+
+  it('GET /api/users/:id returns user detail with spaces', async () => {
+    const res = await api(`/api/users/${createdUserId}`)
+    expect(res.status).toBe(200)
+    const data = await res.json() as any
+    expect(data.user.username).toBe('yingyun')
+    expect(data.user.displayName).toBe('盈韵')
+    expect(Array.isArray(data.user.spaces)).toBe(true)
+    expect(data.user.spaces.length).toBeGreaterThanOrEqual(1)
+    expect(data.user.spaces[0].name).toBe('盈韵')
+  })
+
+  it('GET /api/users/:id returns 404 for non-existent user', async () => {
+    const res = await api('/api/users/nonexistent_id')
+    expect(res.status).toBe(404)
+  })
+
+  it('PUT /api/users/:id updates displayName', async () => {
+    const res = await api(`/api/users/${createdUserId}`, {
+      method: 'PUT',
+      body: JSON.stringify({ displayName: '盈赟会计' }),
+    })
+    expect(res.status).toBe(200)
+    const data = await res.json() as any
+    expect(data.ok).toBe(true)
+  })
+
+  it('PUT /api/users/:id rejects changing own role', async () => {
+    // bobi is the current admin logged in — get their userId from JWT
+    const meRes = await api('/api/users')
+    const meData = await meRes.json() as any
+    const bobiId = meData.users.find((u: any) => u.username === 'bobi')?.id
+    expect(bobiId).toBeTruthy()
+
+    const res = await api(`/api/users/${bobiId}`, {
+      method: 'PUT',
+      body: JSON.stringify({ role: 'user' }),
+    })
+    expect(res.status).toBe(400)
+  })
+
+  it('POST /api/users/:id/reset-password succeeds', async () => {
+    const res = await api(`/api/users/${createdUserId}/reset-password`, {
+      method: 'POST',
+      body: JSON.stringify({ newPassword: 'newpass789' }),
+    })
+    expect(res.status).toBe(200)
+    const data = await res.json() as any
+    expect(data.ok).toBe(true)
+  })
+
+  it('POST /api/users/:id/reset-password rejects short password', async () => {
+    const res = await api(`/api/users/${createdUserId}/reset-password`, {
+      method: 'POST',
+      body: JSON.stringify({ newPassword: '12' }),
+    })
+    expect(res.status).toBe(400)
+  })
+
+  it('login with new password works after reset', async () => {
+    const res = await api('/api/login', {
+      method: 'POST',
+      body: JSON.stringify({ username: 'yingyun', password: 'newpass789' }),
+    })
+    expect(res.status).toBe(200)
+    const data = await res.json() as any
+    expect(data.user.username).toBe('yingyun')
+    expect(data.user.role).toBe('user')
+    expect(data.user.spaceIds.length).toBeGreaterThanOrEqual(1)
+  })
+
+  it('non-admin user cannot access user management', async () => {
+    // Login as yingyun (regular user)
+    const loginRes = await api('/api/login', {
+      method: 'POST',
+      body: JSON.stringify({ username: 'yingyun', password: 'newpass789' }),
+    })
+    const loginData = await loginRes.json() as any
+    const userToken = loginData.token
+
+    const res = await fetch(`${baseUrl}/api/users`, {
+      headers: {
+        'Content-Type': 'application/json',
+        'Authorization': `Bearer ${userToken}`,
+      },
+    })
+    expect(res.status).toBe(403)
+  })
+
+  it('DELETE /api/users/:id rejects deleting self', async () => {
+    const meRes = await api('/api/users')
+    const meData = await meRes.json() as any
+    const bobiId = meData.users.find((u: any) => u.username === 'bobi')?.id
+
+    const res = await fetch(`${baseUrl}/api/users/${bobiId}`, {
+      method: 'DELETE',
+      headers: { 'Authorization': `Bearer ${token}` },
+    })
+    expect(res.status).toBe(400)
+  })
+
+  it('DELETE /api/users/:id returns 404 for non-existent user', async () => {
+    const res = await fetch(`${baseUrl}/api/users/nonexistent_id`, {
+      method: 'DELETE',
+      headers: { 'Authorization': `Bearer ${token}` },
+    })
+    expect(res.status).toBe(404)
+  })
+
+  it('DELETE /api/users/:id deletes user', async () => {
+    const res = await fetch(`${baseUrl}/api/users/${createdUserId}`, {
+      method: 'DELETE',
+      headers: { 'Authorization': `Bearer ${token}` },
+    })
+    expect(res.status).toBe(200)
+    const data = await res.json() as any
+    expect(data.ok).toBe(true)
+
+    // Verify user is gone
+    const checkRes = await api(`/api/users/${createdUserId}`)
+    expect(checkRes.status).toBe(404)
+  })
+})

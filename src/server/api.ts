@@ -498,7 +498,9 @@ export async function startServer(brain: Brain, memory: MemoryManager, port = 30
   })
 
   // Health check (public)
-  app.get('/api/health', async () => ({ status: 'ok', version: '0.4.0' }))
+  const pkgPath = resolve(dirname(fileURLToPath(import.meta.url)), '../../package.json')
+  const pkgVersion = JSON.parse(readFileSync(pkgPath, 'utf-8')).version as string
+  app.get('/api/health', async () => ({ status: 'ok', version: pkgVersion }))
 
   // Search
   app.get('/api/search', async (req) => {

@@ -63,22 +63,6 @@
   background: rgba(255, 255, 255, 0.05);
 }
 
-.logoutBtn {
-  padding: 4px 10px;
-  border-radius: 6px;
-  border: 1px solid rgba(255, 255, 255, 0.1);
-  background: transparent;
-  color: var(--text-dim);
-  font-size: 12px;
-  cursor: pointer;
-  transition: color 0.2s, border-color 0.2s;
-}
-
-.logoutBtn:hover {
-  color: #F87171;
-  border-color: rgba(248, 113, 113, 0.3);
-}
-
 .userMenu {
   position: relative;
 }
@@ -134,14 +118,8 @@
   border-color: rgba(139, 92, 246, 0.4);
 }
 
-.pwdActions {
-  display: flex;
-  gap: 8px;
-  align-items: center;
-}
-
 .pwdBtn {
-  flex: 1;
+  width: 100%;
   padding: 6px 0;
   border-radius: 6px;
   border: none;
@@ -155,17 +133,45 @@
 .pwdBtn:hover { opacity: 0.85; }
 .pwdBtn:disabled { opacity: 0.5; cursor: not-allowed; }
 
-.logoutLink {
-  padding: 6px 8px;
+.menuItem {
+  width: 100%;
+  padding: 8px 10px;
   border: none;
+  border-radius: 6px;
   background: transparent;
-  color: #F87171;
-  font-size: 12px;
+  color: var(--text-primary);
+  font-size: 13px;
   cursor: pointer;
-  white-space: nowrap;
+  text-align: left;
+  transition: background 0.15s;
 }
 
-.logoutLink:hover { text-decoration: underline; }
+.menuItem:hover {
+  background: rgba(255, 255, 255, 0.08);
+}
+
+.menuDivider {
+  height: 1px;
+  background: rgba(255, 255, 255, 0.06);
+  margin: 4px 0;
+}
+
+.logoutLink {
+  width: 100%;
+  padding: 8px 10px;
+  border: none;
+  border-radius: 6px;
+  background: transparent;
+  color: #F87171;
+  font-size: 13px;
+  cursor: pointer;
+  text-align: left;
+  transition: background 0.15s;
+}
+
+.logoutLink:hover {
+  background: rgba(248, 113, 113, 0.08);
+}
 
 .pwdMsg {
   font-size: 12px;

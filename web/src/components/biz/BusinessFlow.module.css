@@ -1,0 +1,68 @@
+.container {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  overflow-y: auto;
+}
+
+/* ── Bubble Grid ─────────────────────────────────────── */
+
+.grid {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 12px;
+  padding: 20px 16px;
+  max-width: 400px;
+  margin: 0 auto;
+  width: 100%;
+}
+
+.cell {
+  animation: bubbleIn var(--duration-normal) var(--ease-bubble) both;
+}
+
+/* ── Detail View ─────────────────────────────────────── */
+
+.detailHeader {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 12px 16px;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.06);
+  flex-shrink: 0;
+}
+
+.backBtn {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 32px;
+  height: 32px;
+  border-radius: 50%;
+  border: none;
+  background: var(--bg-glass);
+  color: var(--text-secondary);
+  cursor: pointer;
+  transition: background var(--duration-fast), color var(--duration-fast);
+}
+
+.backBtn:hover {
+  background: var(--bg-glass-hover);
+  color: var(--text-primary);
+}
+
+.detailEmoji {
+  font-size: 20px;
+}
+
+.detailTitle {
+  font-size: 16px;
+  font-weight: 600;
+  color: var(--text-primary);
+}
+
+.detailContent {
+  flex: 1;
+  overflow-y: auto;
+  animation: fadeIn var(--duration-normal) ease;
+}

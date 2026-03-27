@@ -1,5 +1,5 @@
 import { useAuthStore } from '../stores/authStore'
-import type { SpaceMember, SpaceRole, CustomAgent, BizProduct, BizCounterparty, BizProject, BizPurchase, BizSale, BizLogisticsRecord, BizPayment, InventoryItem, ReceivableItem, PayableItem, BizDashboardData, ProjectReconciliationItem } from '../types'
+import type { SpaceMember, SpaceRole, CustomAgent, BizProduct, BizCounterparty, BizProject, BizPurchase, BizSale, BizLogisticsRecord, BizPayment, BizInvoice, InventoryItem, ReceivableItem, PayableItem, BizDashboardData, ProjectReconciliationItem, UserPreferences } from '../types'
 
 const BASE = import.meta.env.DEV ? 'http://localhost:3000' : ''
 
@@ -283,3 +283,32 @@ export const fetchReconciliation = () => bizGet<ProjectReconciliationItem[]>('/r
 // Lookup
 export const lookupProduct = (code: string) => bizGet<BizProduct | null>(`/lookup/product?code=${encodeURIComponent(code)}`)
 export const lookupLastPrice = (productId: string) => bizGet<number | null>(`/lookup/last-price?productId=${productId}`)
+
+// Invoices
+export const fetchInvoices = (filter?: Record<string, string>) => {
+  const qs = filter ? '?' + new URLSearchParams(filter).toString() : ''
+  return bizGet<BizInvoice[]>(`/invoices${qs}`)
+}
+export const createInvoiceApi = (data: Partial<BizInvoice>) => bizPost<BizInvoice>('/invoices', data)
+export const deleteInvoiceApi = (id: string) => bizDel(`/invoices/${id}`)
+
+// --- User Preferences ---
+
+export async function fetchPreferences(): Promise<UserPreferences> {
+  const res = await authFetch(`${BASE}/api/preferences`)
+  if (!res.ok) throw new Error(`HTTP ${res.status}`)
+  const data = await res.json()
+  return data.preferences
+}
+
+export async function updatePreferences(preferences: UserPreferences): Promise<void> {
+  const res = await authFetch(`${BASE}/api/preferences`, {
+    method: 'PUT',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ preferences }),
+  })
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({ error: `HTTP ${res.status}` }))
+    throw new Error(err.error || `HTTP ${res.status}`)
+  }
+}

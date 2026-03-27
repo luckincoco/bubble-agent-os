@@ -39,6 +39,11 @@ export interface BubbleMemory {
   updatedAt: number
 }
 
+export interface UserPreferences {
+  enabledModules?: string[]
+  onboardingCompleted?: boolean
+}
+
 export interface AuthUserInfo {
   id: string
   username: string
@@ -46,6 +51,7 @@ export interface AuthUserInfo {
   role: 'admin' | 'user'
   spaceIds: string[]
   spaces: SpaceInfo[]
+  preferences?: UserPreferences
 }
 
 export interface SpaceInfo {
@@ -277,4 +283,24 @@ export interface ProjectReconciliationItem {
   totalPaymentsIn: number
   totalPaymentsOut: number
   outstanding: number
+}
+
+export interface BizInvoice {
+  id: string
+  tenantId: string
+  date: string
+  direction: 'in' | 'out'
+  invoiceNo?: string
+  counterpartyId: string
+  amount: number
+  taxRate: number
+  taxAmount?: number
+  totalAmount?: number
+  relatedIds: string[]
+  status: string
+  notes?: string
+  bubbleId?: string
+  createdBy?: string
+  createdAt: number
+  updatedAt: number
 }

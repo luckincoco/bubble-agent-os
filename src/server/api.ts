@@ -151,8 +151,30 @@ export async function startServer(brain: Brain, memory: MemoryManager, port = 30
         role: user.role,
         spaceIds,
         spaces,
+        preferences: user.preferences ? JSON.parse(user.preferences) : {},
       },
     }
+  })
+
+  // --- User Preferences ---
+
+  app.get('/api/preferences', async (req) => {
+    const payload = req.user as JwtPayload
+    const db = getDatabase()
+    const row = db.prepare('SELECT preferences FROM users WHERE id = ?').get(payload.userId) as { preferences?: string } | undefined
+    const prefs = row?.preferences ? JSON.parse(row.preferences) : {}
+    return { preferences: prefs }
+  })
+
+  app.put('/api/preferences', async (req, reply) => {
+    const payload = req.user as JwtPayload
+    const { preferences } = req.body as { preferences?: unknown }
+    if (!preferences || typeof preferences !== 'object' || Array.isArray(preferences)) {
+      return reply.code(400).send({ error: 'preferences 必须是一个对象' })
+    }
+    const db = getDatabase()
+    db.prepare('UPDATE users SET preferences = ? WHERE id = ?').run(JSON.stringify(preferences), payload.userId)
+    return { ok: true }
   })
 
   // Change password

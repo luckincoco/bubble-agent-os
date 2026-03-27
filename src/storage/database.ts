@@ -392,6 +392,13 @@ function runMigrations(database: Database.Database, defaultPassword: string) {
   database.exec('CREATE INDEX IF NOT EXISTS idx_biz_invoices_date ON biz_invoices(date)')
 
   logger.info('Migration: biz tables created/verified')
+
+  // v0.4: Add preferences column to users table
+  const userCols = database.pragma('table_info(users)') as Array<{ name: string }>
+  if (!userCols.some(c => c.name === 'preferences')) {
+    database.exec("ALTER TABLE users ADD COLUMN preferences TEXT DEFAULT '{}'")
+    logger.info('Migration: added preferences column to users')
+  }
 }
 
 function seedData(database: Database.Database, defaultPassword: string) {

@@ -2,6 +2,7 @@ import { useState } from 'react'
 import { useChatStore } from '../../stores/chatStore'
 import { useAuthStore } from '../../stores/authStore'
 import { changePassword } from '../../services/api'
+import { ModuleSettings } from '../settings/ModuleSettings'
 import s from './Header.module.css'
 
 export function Header() {
@@ -11,7 +12,9 @@ export function Header() {
   const switchSpace = useAuthStore((s) => s.switchSpace)
   const logout = useAuthStore((s) => s.logout)
 
+  const [showMenu, setShowMenu] = useState(false)
   const [showPwd, setShowPwd] = useState(false)
+  const [showModules, setShowModules] = useState(false)
   const [oldPwd, setOldPwd] = useState('')
   const [newPwd, setNewPwd] = useState('')
   const [pwdMsg, setPwdMsg] = useState('')
@@ -30,7 +33,7 @@ export function Header() {
       setPwdMsg('修改成功')
       setOldPwd('')
       setNewPwd('')
-      setTimeout(() => setShowPwd(false), 1200)
+      setTimeout(() => { setShowPwd(false); setShowMenu(false) }, 1200)
     } catch (err) {
       setPwdMsg(err instanceof Error ? err.message : '修改失败')
     } finally {
@@ -60,36 +63,52 @@ export function Header() {
       <div className={s.dot} data-status={status} title={status} />
       {user && (
         <div className={s.userMenu}>
-          <button className={s.userBtn} onClick={() => setShowPwd(!showPwd)}>
+          <button className={s.userBtn} onClick={() => setShowMenu(!showMenu)}>
             {user.displayName}
           </button>
-          {showPwd && (
+          {showMenu && (
             <div className={s.pwdPanel}>
-              <input
-                className={s.pwdInput}
-                type="password"
-                placeholder="旧密码"
-                value={oldPwd}
-                onChange={(e) => setOldPwd(e.target.value)}
-              />
-              <input
-                className={s.pwdInput}
-                type="password"
-                placeholder="新密码 (至少6位)"
-                value={newPwd}
-                onChange={(e) => setNewPwd(e.target.value)}
-              />
-              <div className={s.pwdActions}>
-                <button className={s.pwdBtn} onClick={handleChangePwd} disabled={pwdLoading}>
-                  {pwdLoading ? '...' : '确认修改'}
-                </button>
-                <button className={s.logoutLink} onClick={logout}>退出登录</button>
-              </div>
-              {pwdMsg && <div className={s.pwdMsg}>{pwdMsg}</div>}
+              <button
+                className={s.menuItem}
+                onClick={() => { setShowModules(true); setShowMenu(false) }}
+              >
+                功能模块
+              </button>
+              <button
+                className={s.menuItem}
+                onClick={() => { setShowPwd(!showPwd) }}
+              >
+                修改密码
+              </button>
+              {showPwd && (
+                <>
+                  <input
+                    className={s.pwdInput}
+                    type="password"
+                    placeholder="旧密码"
+                    value={oldPwd}
+                    onChange={(e) => setOldPwd(e.target.value)}
+                  />
+                  <input
+                    className={s.pwdInput}
+                    type="password"
+                    placeholder="新密码 (至少6位)"
+                    value={newPwd}
+                    onChange={(e) => setNewPwd(e.target.value)}
+                  />
+                  <button className={s.pwdBtn} onClick={handleChangePwd} disabled={pwdLoading}>
+                    {pwdLoading ? '...' : '确认修改'}
+                  </button>
+                  {pwdMsg && <div className={s.pwdMsg}>{pwdMsg}</div>}
+                </>
+              )}
+              <div className={s.menuDivider} />
+              <button className={s.logoutLink} onClick={logout}>退出登录</button>
             </div>
           )}
         </div>
       )}
+      {showModules && <ModuleSettings onClose={() => setShowModules(false)} />}
     </header>
   )
 }

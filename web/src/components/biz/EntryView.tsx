@@ -95,7 +95,7 @@ async function findOrCreateProduct(
 
 // ── Purchase Form ───────────────────────────────────────────────
 
-function PurchaseForm() {
+export function PurchaseForm() {
   const { products, counterparties, projects, createPurchase, addProduct } = useBizStore()
   const suppliers = counterparties.filter(c => c.type === 'supplier' || c.type === 'both')
   const projectOpts = projects.map(p => ({ id: p.id, label: p.name }))
@@ -185,7 +185,7 @@ function PurchaseForm() {
 
 // ── Sale Form ───────────────────────────────────────────────────
 
-function SaleForm() {
+export function SaleForm() {
   const { products, counterparties, projects, createSale, addProduct } = useBizStore()
   const customers = counterparties.filter(c => c.type === 'customer' || c.type === 'both')
   const projectOpts = projects.map(p => ({ id: p.id, label: p.name }))
@@ -274,7 +274,7 @@ function SaleForm() {
 
 // ── Logistics Form ──────────────────────────────────────────────
 
-function LogisticsForm() {
+export function LogisticsForm() {
   const { counterparties, projects, createLogistic } = useBizStore()
   const carriers = counterparties.filter(c => c.type === 'logistics')
   const projectOpts = projects.map(p => ({ id: p.id, label: p.name }))
@@ -344,7 +344,7 @@ function LogisticsForm() {
 
 // ── Payment Form ────────────────────────────────────────────────
 
-function PaymentForm() {
+export function PaymentForm() {
   const { counterparties, projects, createPayment } = useBizStore()
   const projectOpts = projects.map(p => ({ id: p.id, label: p.name }))
 

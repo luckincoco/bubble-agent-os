@@ -1,7 +1,7 @@
 import { create } from 'zustand'
 import type {
   BizProduct, BizCounterparty, BizProject,
-  BizPurchase, BizSale, BizLogisticsRecord, BizPayment,
+  BizPurchase, BizSale, BizLogisticsRecord, BizPayment, BizInvoice,
   InventoryItem, ReceivableItem, PayableItem, BizDashboardData, ProjectReconciliationItem,
 } from '../types'
 import {
@@ -13,6 +13,7 @@ import {
   createProjectApi, updateProjectApi, deleteProjectApi,
   createPurchaseApi, createSaleApi, createLogisticsApi, createPaymentApi,
   deletePurchaseApi, deleteSaleApi, deleteLogisticsApi, deletePaymentApi,
+  fetchInvoices, createInvoiceApi, deleteInvoiceApi,
 } from '../services/api'
 
 interface BizState {
@@ -26,6 +27,7 @@ interface BizState {
   sales: BizSale[]
   logistics: BizLogisticsRecord[]
   payments: BizPayment[]
+  invoices: BizInvoice[]
 
   // Computed views
   inventory: InventoryItem[]
@@ -49,6 +51,7 @@ interface BizState {
   loadReceivables: () => Promise<void>
   loadPayables: () => Promise<void>
   loadReconciliation: () => Promise<void>
+  loadInvoices: (filter?: Record<string, string>) => Promise<void>
 
   // Master data CRUD
   addProduct: (data: Partial<BizProduct>) => Promise<void>
@@ -65,11 +68,13 @@ interface BizState {
   createSale: (data: Partial<BizSale>) => Promise<BizSale>
   createLogistic: (data: Partial<BizLogisticsRecord>) => Promise<BizLogisticsRecord>
   createPayment: (data: Partial<BizPayment>) => Promise<BizPayment>
+  createInvoice: (data: Partial<BizInvoice>) => Promise<BizInvoice>
 
   removePurchase: (id: string) => Promise<void>
   removeSale: (id: string) => Promise<void>
   removeLogistic: (id: string) => Promise<void>
   removePayment: (id: string) => Promise<void>
+  removeInvoice: (id: string) => Promise<void>
 }
 
 export const useBizStore = create<BizState>((set, get) => ({
@@ -80,6 +85,7 @@ export const useBizStore = create<BizState>((set, get) => ({
   sales: [],
   logistics: [],
   payments: [],
+  invoices: [],
   inventory: [],
   receivables: [],
   payables: [],
@@ -191,6 +197,16 @@ export const useBizStore = create<BizState>((set, get) => ({
     }
   },
 
+  loadInvoices: async (filter) => {
+    set({ loading: true })
+    try {
+      const invoices = await fetchInvoices(filter)
+      set({ invoices, loading: false })
+    } catch (e: any) {
+      set({ error: e.message, loading: false })
+    }
+  },
+
   // Master data CRUD
   addProduct: async (data) => {
     const p = await createProductApi(data)
@@ -271,5 +287,16 @@ export const useBizStore = create<BizState>((set, get) => ({
   removePayment: async (id) => {
     await deletePaymentApi(id)
     set({ payments: get().payments.filter(p => p.id !== id) })
+  },
+
+  createInvoice: async (data) => {
+    const result = await createInvoiceApi(data)
+    set({ invoices: [result, ...get().invoices] })
+    return result
+  },
+
+  removeInvoice: async (id) => {
+    await deleteInvoiceApi(id)
+    set({ invoices: get().invoices.filter(p => p.id !== id) })
   },
 }))

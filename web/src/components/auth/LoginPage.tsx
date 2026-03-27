@@ -1,11 +1,17 @@
-import { useState } from 'react'
+import { useState, useEffect } from 'react'
 import { useAuthStore } from '../../stores/authStore'
+import { fetchHealth } from '../../services/api'
 import s from './LoginPage.module.css'
 
 export function LoginPage() {
   const { login, error, isLoading } = useAuthStore()
   const [username, setUsername] = useState('')
   const [password, setPassword] = useState('')
+  const [version, setVersion] = useState('')
+
+  useEffect(() => {
+    fetchHealth().then((d) => setVersion(d.version)).catch(() => {})
+  }, [])
 
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault()
@@ -40,6 +46,7 @@ export function LoginPage() {
           {isLoading ? '登录中...' : '登录'}
         </button>
       </form>
+      {version && <span className={s.version}>v{version}</span>}
     </div>
   )
 }

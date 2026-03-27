@@ -91,3 +91,17 @@
   color: var(--text-dim);
   text-align: center;
 }
+
+.quickCreate {
+  padding: 10px 12px;
+  font-size: 13px;
+  color: var(--teal);
+  cursor: pointer;
+  font-weight: 500;
+  transition: background var(--duration-fast);
+  border-top: 1px solid rgba(255, 255, 255, 0.06);
+}
+
+.quickCreate:hover {
+  background: rgba(94, 234, 212, 0.08);
+}

@@ -87,7 +87,18 @@ export interface CustomAgent {
   updatedAt: number
 }
 
-// ── Structured Business Types (进销存 v0.5) ──────────────────────
+// ── Structured Business Types (进销存 v0.5 → v0.6 SaaS) ──────────
+
+export type DocStatus = 'draft' | 'confirmed' | 'completed' | 'cancelled'
+
+export interface DocLink {
+  id: string
+  sourceType: string
+  sourceId: string
+  targetType: string
+  targetId: string
+  createdAt: number
+}
 
 export interface BizProduct {
   id: string
@@ -157,6 +168,11 @@ export interface BizPurchase {
   bubbleId?: string
   rawInput?: string
   createdBy?: string
+  docStatus: DocStatus
+  sourceType?: string
+  sourceId?: string
+  cancelReason?: string
+  amendedFrom?: string
   createdAt: number
   updatedAt: number
 }
@@ -184,6 +200,11 @@ export interface BizSale {
   bubbleId?: string
   rawInput?: string
   createdBy?: string
+  docStatus: DocStatus
+  sourceType?: string
+  sourceId?: string
+  cancelReason?: string
+  amendedFrom?: string
   createdAt: number
   updatedAt: number
 }
@@ -208,6 +229,11 @@ export interface BizLogisticsRecord {
   bubbleId?: string
   rawInput?: string
   createdBy?: string
+  docStatus: DocStatus
+  sourceType?: string
+  sourceId?: string
+  cancelReason?: string
+  amendedFrom?: string
   createdAt: number
   updatedAt: number
 }
@@ -227,6 +253,11 @@ export interface BizPayment {
   bubbleId?: string
   rawInput?: string
   createdBy?: string
+  docStatus: DocStatus
+  sourceType?: string
+  sourceId?: string
+  cancelReason?: string
+  amendedFrom?: string
   createdAt: number
   updatedAt: number
 }
@@ -301,6 +332,57 @@ export interface BizInvoice {
   notes?: string
   bubbleId?: string
   createdBy?: string
+  docStatus: DocStatus
+  sourceType?: string
+  sourceId?: string
+  cancelReason?: string
+  amendedFrom?: string
   createdAt: number
   updatedAt: number
+}
+
+// ── Report types (v0.6 SaaS) ─────────────────────────────────────
+
+export interface ProfitReportRow {
+  month: string
+  salesRevenue: number
+  purchaseCost: number
+  logisticsCost: number
+  grossProfit: number
+  margin: number
+  salesTons: number
+  purchaseTons: number
+}
+
+export interface CounterpartyStatementRow {
+  date: string
+  type: 'purchase' | 'sale' | 'payment_in' | 'payment_out' | 'invoice_in' | 'invoice_out'
+  description: string
+  debit: number
+  credit: number
+  balance: number
+  docId: string
+}
+
+export interface CounterpartyStatementResult {
+  counterpartyId: string
+  counterpartyName: string
+  counterpartyType: string
+  rows: CounterpartyStatementRow[]
+  totalDebit: number
+  totalCredit: number
+  closingBalance: number
+}
+
+export interface MonthlyOverviewRow {
+  month: string
+  purchaseAmount: number
+  purchaseTons: number
+  salesAmount: number
+  salesTons: number
+  logisticsAmount: number
+  paymentsIn: number
+  paymentsOut: number
+  invoicesIn: number
+  invoicesOut: number
 }

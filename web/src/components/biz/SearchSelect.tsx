@@ -12,11 +12,14 @@ interface Props {
   onChange: (id: string) => void
   options: Option[]
   placeholder?: string
+  /** If provided, show "+ 新增" when no match found. Returns the new entity's id. */
+  onQuickCreate?: (name: string) => Promise<string>
 }
 
-export function SearchSelect({ label, value, onChange, options, placeholder }: Props) {
+export function SearchSelect({ label, value, onChange, options, placeholder, onQuickCreate }: Props) {
   const [query, setQuery] = useState('')
   const [open, setOpen] = useState(false)
+  const [creating, setCreating] = useState(false)
   const ref = useRef<HTMLDivElement>(null)
   const inputRef = useRef<HTMLInputElement>(null)
 
@@ -38,6 +41,20 @@ export function SearchSelect({ label, value, onChange, options, placeholder }: P
     setOpen(false)
   }, [onChange])
 
+  const handleQuickCreate = useCallback(async () => {
+    if (!onQuickCreate || !query.trim()) return
+    setCreating(true)
+    try {
+      const newId = await onQuickCreate(query.trim())
+      onChange(newId)
+      setQuery('')
+      setOpen(false)
+    } catch (err: any) {
+      alert(err.message || '创建失败')
+    }
+    setCreating(false)
+  }, [onQuickCreate, query, onChange])
+
   useEffect(() => {
     const handler = (e: MouseEvent) => {
       if (ref.current && !ref.current.contains(e.target as Node)) {
@@ -48,6 +65,8 @@ export function SearchSelect({ label, value, onChange, options, placeholder }: P
     document.addEventListener('mousedown', handler)
     return () => document.removeEventListener('mousedown', handler)
   }, [])
+
+  const showQuickCreate = onQuickCreate && open && query.trim() && filtered.length === 0
 
   return (
     <div className={s.field}>
@@ -67,7 +86,7 @@ export function SearchSelect({ label, value, onChange, options, placeholder }: P
         )}
         {open && (
           <div className={s.dropdown}>
-            {filtered.length === 0 ? (
+            {filtered.length === 0 && !showQuickCreate ? (
               <div className={s.empty}>无匹配项</div>
             ) : (
               filtered.slice(0, 30).map(o => (
@@ -80,6 +99,14 @@ export function SearchSelect({ label, value, onChange, options, placeholder }: P
                   {o.label}
                 </div>
               ))
+            )}
+            {showQuickCreate && (
+              <div
+                className={s.quickCreate}
+                onClick={handleQuickCreate}
+              >
+                {creating ? '创建中...' : `+ 新增「${query.trim()}」`}
+              </div>
             )}
             {filtered.length > 30 && (
               <div className={s.more}>还有 {filtered.length - 30} 项，请输入更多关键字...</div>

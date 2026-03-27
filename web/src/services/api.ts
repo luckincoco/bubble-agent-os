@@ -1,5 +1,5 @@
 import { useAuthStore } from '../stores/authStore'
-import type { SpaceMember, SpaceRole, CustomAgent, BizProduct, BizCounterparty, BizProject, BizPurchase, BizSale, BizLogisticsRecord, BizPayment, BizInvoice, InventoryItem, ReceivableItem, PayableItem, BizDashboardData, ProjectReconciliationItem, UserPreferences } from '../types'
+import type { SpaceMember, SpaceRole, CustomAgent, BizProduct, BizCounterparty, BizProject, BizPurchase, BizSale, BizLogisticsRecord, BizPayment, BizInvoice, InventoryItem, ReceivableItem, PayableItem, BizDashboardData, ProjectReconciliationItem, UserPreferences, DocStatus, DocLink, ProfitReportRow, CounterpartyStatementResult, MonthlyOverviewRow } from '../types'
 
 const BASE = import.meta.env.DEV ? 'http://localhost:3000' : ''
 
@@ -280,6 +280,27 @@ export const fetchPayables = () => bizGet<PayableItem[]>('/payables')
 export const fetchBizDashboard = () => bizGet<BizDashboardData>('/dashboard')
 export const fetchReconciliation = () => bizGet<ProjectReconciliationItem[]>('/reconciliation')
 
+// Reports (v0.6 SaaS)
+export function fetchProfitReport(dateFrom?: string, dateTo?: string) {
+  const params = new URLSearchParams()
+  if (dateFrom) params.set('dateFrom', dateFrom)
+  if (dateTo) params.set('dateTo', dateTo)
+  const qs = params.toString()
+  return bizGet<ProfitReportRow[]>(`/reports/profit${qs ? `?${qs}` : ''}`)
+}
+
+export function fetchCounterpartyStatement(counterpartyId: string, dateFrom?: string, dateTo?: string) {
+  const params = new URLSearchParams()
+  if (dateFrom) params.set('dateFrom', dateFrom)
+  if (dateTo) params.set('dateTo', dateTo)
+  const qs = params.toString()
+  return bizGet<CounterpartyStatementResult>(`/reports/statement/${counterpartyId}${qs ? `?${qs}` : ''}`)
+}
+
+export function fetchMonthlyOverview(year?: number) {
+  return bizGet<MonthlyOverviewRow[]>(`/reports/monthly${year ? `?year=${year}` : ''}`)
+}
+
 // Lookup
 export const lookupProduct = (code: string) => bizGet<BizProduct | null>(`/lookup/product?code=${encodeURIComponent(code)}`)
 export const lookupLastPrice = (productId: string) => bizGet<number | null>(`/lookup/last-price?productId=${productId}`)
@@ -291,6 +312,68 @@ export const fetchInvoices = (filter?: Record<string, string>) => {
 }
 export const createInvoiceApi = (data: Partial<BizInvoice>) => bizPost<BizInvoice>('/invoices', data)
 export const deleteInvoiceApi = (id: string) => bizDel(`/invoices/${id}`)
+
+// ── Document Lifecycle (v0.6) ─────────────────────────────────────
+
+export async function transitionDocStatus(docType: string, id: string, newStatus: DocStatus, cancelReason?: string): Promise<void> {
+  const res = await authFetch(`${BASE}/api/biz/doc/transition`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ docType, id, newStatus, cancelReason }),
+  })
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({ error: `HTTP ${res.status}` }))
+    throw new Error(err.error || `HTTP ${res.status}`)
+  }
+}
+
+export async function fetchDocLinks(docType: string, id: string): Promise<{ children: DocLink[]; parents: DocLink[] }> {
+  const res = await authFetch(`${BASE}/api/biz/doc/links/${docType}/${id}`)
+  if (!res.ok) throw new Error(`HTTP ${res.status}`)
+  return res.json()
+}
+
+export async function createFromDoc(action: string, sourceId: string): Promise<{ doc: unknown; link: DocLink }> {
+  const res = await authFetch(`${BASE}/api/biz/doc/create-from`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ action, sourceId }),
+  })
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({ error: `HTTP ${res.status}` }))
+    throw new Error(err.error || `HTTP ${res.status}`)
+  }
+  const json = await res.json()
+  return json.data
+}
+
+export async function linkPaymentToInvoiceApi(paymentId: string, invoiceId: string): Promise<DocLink> {
+  const res = await authFetch(`${BASE}/api/biz/doc/link-payment`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ paymentId, invoiceId }),
+  })
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({ error: `HTTP ${res.status}` }))
+    throw new Error(err.error || `HTTP ${res.status}`)
+  }
+  const json = await res.json()
+  return json.data
+}
+
+export async function amendDocApi(docType: string, id: string): Promise<string> {
+  const res = await authFetch(`${BASE}/api/biz/doc/amend`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ docType, id }),
+  })
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({ error: `HTTP ${res.status}` }))
+    throw new Error(err.error || `HTTP ${res.status}`)
+  }
+  const json = await res.json()
+  return json.newId
+}
 
 // --- User Preferences ---
 

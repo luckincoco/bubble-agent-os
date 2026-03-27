@@ -5,6 +5,58 @@
   overflow-y: auto;
 }
 
+/* ── KPI Banner ──────────────────────────────────────── */
+
+.kpiBanner {
+  display: flex;
+  gap: 8px;
+  padding: 12px 16px 0;
+  overflow-x: auto;
+  -webkit-overflow-scrolling: touch;
+  flex-shrink: 0;
+}
+
+.kpiCard {
+  flex: 1;
+  min-width: 90px;
+  padding: 10px 12px;
+  border-radius: 12px;
+  background: var(--bg-glass);
+  backdrop-filter: blur(12px);
+  -webkit-backdrop-filter: blur(12px);
+  border: 1px solid rgba(255, 255, 255, 0.06);
+  transition: border-color var(--duration-fast);
+}
+
+.kpiCard:hover {
+  border-color: rgba(124, 58, 237, 0.25);
+}
+
+.kpiLabel {
+  display: block;
+  font-size: 11px;
+  color: var(--text-dim);
+  margin-bottom: 2px;
+  white-space: nowrap;
+}
+
+.kpiValue {
+  display: block;
+  font-size: 15px;
+  font-weight: 700;
+  color: var(--text-primary);
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+
+.kpiLoading {
+  text-align: center;
+  padding: 10px 16px;
+  color: var(--text-dim);
+  font-size: 12px;
+  flex-shrink: 0;
+}
+
 /* ── Bubble Grid ─────────────────────────────────────── */
 
 .grid {

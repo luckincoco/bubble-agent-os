@@ -20,7 +20,7 @@ function Input({ label, value, onChange, type = 'text', placeholder, step }: {
 }
 
 export function InvoiceForm() {
-  const { counterparties, createInvoice } = useBizStore()
+  const { counterparties, createInvoice, addCounterparty } = useBizStore()
 
   const [date, setDate] = useState(today())
   const [direction, setDirection] = useState<'in' | 'out'>('out')
@@ -80,6 +80,7 @@ export function InvoiceForm() {
         onChange={setCounterpartyId}
         options={counterparties.map(c => ({ id: c.id, label: c.name }))}
         placeholder="搜索供应商/客户..."
+        onQuickCreate={async (name) => (await addCounterparty({ name, type: 'both' })).id}
       />
       <Input label="发票号" value={invoiceNo} onChange={setInvoiceNo} placeholder="可选" />
       <div className={s.row}>

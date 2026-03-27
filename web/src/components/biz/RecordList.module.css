@@ -5,6 +5,37 @@
   padding: 12px 16px 16px;
 }
 
+/* Status filter tabs */
+.filterBar {
+  display: flex;
+  gap: 6px;
+  padding: 0 16px 4px;
+  overflow-x: auto;
+}
+
+.filterTab {
+  padding: 4px 10px;
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  border-radius: 12px;
+  background: transparent;
+  color: var(--text-dim);
+  font-size: 12px;
+  cursor: pointer;
+  white-space: nowrap;
+  transition: all var(--duration-fast);
+}
+
+.filterTab:hover {
+  border-color: rgba(255, 255, 255, 0.15);
+  color: var(--text-secondary);
+}
+
+.filterTab[data-active='true'] {
+  border-color: var(--teal);
+  color: var(--teal);
+  background: rgba(94, 234, 212, 0.08);
+}
+
 .empty {
   display: flex;
   align-items: center;
@@ -44,6 +75,39 @@
   color: var(--text-dim);
   flex-shrink: 0;
   width: 80px;
+}
+
+/* Status badge */
+.badge {
+  display: inline-flex;
+  align-items: center;
+  padding: 1px 6px;
+  border-radius: 8px;
+  font-size: 10px;
+  font-weight: 500;
+  flex-shrink: 0;
+  line-height: 16px;
+}
+
+.badge[data-status='draft'] {
+  background: rgba(161, 161, 170, 0.15);
+  color: #a1a1aa;
+}
+
+.badge[data-status='confirmed'] {
+  background: rgba(94, 234, 212, 0.12);
+  color: var(--teal);
+}
+
+.badge[data-status='completed'] {
+  background: rgba(74, 222, 128, 0.12);
+  color: #4ade80;
+}
+
+.badge[data-status='cancelled'] {
+  background: rgba(248, 113, 113, 0.10);
+  color: #f87171;
+  text-decoration: line-through;
 }
 
 .main {
@@ -101,6 +165,64 @@
   text-overflow: ellipsis;
 }
 
+/* Action bar */
+.actions {
+  display: flex;
+  gap: 6px;
+  margin-top: 8px;
+  flex-wrap: wrap;
+}
+
+.actionBtn {
+  flex: 1;
+  min-width: 60px;
+  padding: 7px 8px;
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  border-radius: var(--radius-button);
+  background: transparent;
+  color: var(--text-secondary);
+  font-size: 12px;
+  cursor: pointer;
+  transition: all var(--duration-fast);
+}
+
+.actionBtn:hover:not(:disabled) {
+  background: rgba(255, 255, 255, 0.05);
+  border-color: rgba(255, 255, 255, 0.2);
+}
+
+.actionBtn:disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
+}
+
+.actionBtn[data-variant='confirm'] {
+  border-color: rgba(94, 234, 212, 0.3);
+  color: var(--teal);
+}
+
+.actionBtn[data-variant='confirm']:hover:not(:disabled) {
+  background: rgba(94, 234, 212, 0.08);
+}
+
+.actionBtn[data-variant='complete'] {
+  border-color: rgba(74, 222, 128, 0.3);
+  color: #4ade80;
+}
+
+.actionBtn[data-variant='complete']:hover:not(:disabled) {
+  background: rgba(74, 222, 128, 0.08);
+}
+
+.actionBtn[data-variant='danger'] {
+  border-color: rgba(248, 113, 113, 0.3);
+  color: #f87171;
+}
+
+.actionBtn[data-variant='danger']:hover:not(:disabled) {
+  background: rgba(248, 113, 113, 0.08);
+}
+
 .deleteBtn {
   width: 100%;
   margin-top: 8px;
@@ -121,4 +243,79 @@
 .deleteBtn:disabled {
   opacity: 0.5;
   cursor: not-allowed;
+}
+
+/* ── Inline edit form ─────────────────────────────────── */
+
+.editForm {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  margin-top: 10px;
+  padding: 10px;
+  border-radius: 8px;
+  background: rgba(255, 255, 255, 0.03);
+  border: 1px solid rgba(255, 255, 255, 0.08);
+}
+
+.editRow {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.editLabel {
+  font-size: 12px;
+  color: var(--text-dim);
+  width: 48px;
+  flex-shrink: 0;
+}
+
+.editInput {
+  flex: 1;
+  padding: 5px 8px;
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  border-radius: 6px;
+  background: rgba(255, 255, 255, 0.04);
+  color: white;
+  font-size: 13px;
+}
+
+.editInput:focus {
+  outline: none;
+  border-color: var(--teal);
+}
+
+.editActions {
+  display: flex;
+  gap: 8px;
+  margin-top: 4px;
+}
+
+.editSave {
+  flex: 1;
+  padding: 7px;
+  border: none;
+  border-radius: 6px;
+  background: var(--teal);
+  color: #111;
+  font-size: 12px;
+  font-weight: 600;
+  cursor: pointer;
+}
+
+.editSave:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.editCancel {
+  flex: 1;
+  padding: 7px;
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  border-radius: 6px;
+  background: transparent;
+  color: var(--text-dim);
+  font-size: 12px;
+  cursor: pointer;
 }

@@ -7,10 +7,12 @@
 import { getDatabase } from '../../storage/database.js'
 import { ulid } from 'ulid'
 import { logger } from '../../shared/logger.js'
+import { createDocLink } from './doc-engine.js'
 import type {
   BizProduct, BizCounterparty, BizProject,
   BizPurchase, BizSale, BizLogisticsRecord, BizPayment, BizInvoice,
   InventoryItem, ReceivableItem, PayableItem, DashboardData, ProjectReconciliationItem,
+  DocLink,
 } from './schema.js'
 
 const TENANT = 'default'
@@ -229,8 +231,8 @@ export function createPurchase(input: CreatePurchaseInput): BizPurchase {
   const id = ulid()
   const ts = now()
   db.prepare(`
-    INSERT INTO biz_purchases (id, tenant_id, date, order_no, supplier_id, product_id, bundle_count, tonnage, unit_price, total_amount, project_id, invoice_status, payment_status, notes, bubble_id, raw_input, created_by, created_at, updated_at)
-    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    INSERT INTO biz_purchases (id, tenant_id, date, order_no, supplier_id, product_id, bundle_count, tonnage, unit_price, total_amount, project_id, invoice_status, payment_status, notes, bubble_id, raw_input, created_by, doc_status, created_at, updated_at)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'draft', ?, ?)
   `).run(id, TENANT, input.date, input.orderNo ?? null, input.supplierId, input.productId, input.bundleCount ?? null, input.tonnage, input.unitPrice, input.totalAmount, input.projectId ?? null, input.invoiceStatus ?? 'none', input.paymentStatus ?? 'unpaid', input.notes ?? null, input.bubbleId ?? null, input.rawInput ?? null, input.createdBy ?? null, ts, ts)
   return toCamel<BizPurchase>(db.prepare('SELECT * FROM biz_purchases WHERE id = ?').get(id) as Record<string, unknown>)
 }
@@ -244,8 +246,18 @@ export interface BizQueryFilter {
   projectId?: string
   counterpartyId?: string
   status?: string
+  docStatus?: string  // comma-separated: 'draft,confirmed'
   limit?: number
   offset?: number
+}
+
+/** Append docStatus filter to query conditions */
+function applyDocStatusFilter(conditions: string[], params: unknown[], docStatus?: string) {
+  if (docStatus) {
+    const statuses = docStatus.split(',').map(s => s.trim())
+    conditions.push(`doc_status IN (${statuses.map(() => '?').join(',')})`)
+    params.push(...statuses)
+  }
 }
 
 export function getPurchases(filter: BizQueryFilter = {}): BizPurchase[] {
@@ -257,6 +269,7 @@ export function getPurchases(filter: BizQueryFilter = {}): BizPurchase[] {
   if (filter.supplierId) { conditions.push('supplier_id = ?'); params.push(filter.supplierId) }
   if (filter.productId) { conditions.push('product_id = ?'); params.push(filter.productId) }
   if (filter.projectId) { conditions.push('project_id = ?'); params.push(filter.projectId) }
+  applyDocStatusFilter(conditions, params, filter.docStatus)
   const limit = filter.limit ?? 100
   const offset = filter.offset ?? 0
   const sql = `SELECT * FROM biz_purchases WHERE ${conditions.join(' AND ')} ORDER BY date DESC, created_at DESC LIMIT ? OFFSET ?`
@@ -320,8 +333,8 @@ export function createSale(input: CreateSaleInput): BizSale {
   const id = ulid()
   const ts = now()
   db.prepare(`
-    INSERT INTO biz_sales (id, tenant_id, date, order_no, customer_id, supplier_id, product_id, bundle_count, tonnage, unit_price, total_amount, cost_price, cost_amount, profit, project_id, logistics_provider, invoice_status, collection_status, notes, bubble_id, raw_input, created_by, created_at, updated_at)
-    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    INSERT INTO biz_sales (id, tenant_id, date, order_no, customer_id, supplier_id, product_id, bundle_count, tonnage, unit_price, total_amount, cost_price, cost_amount, profit, project_id, logistics_provider, invoice_status, collection_status, notes, bubble_id, raw_input, created_by, doc_status, created_at, updated_at)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'draft', ?, ?)
   `).run(id, TENANT, input.date, input.orderNo ?? null, input.customerId, input.supplierId ?? null, input.productId, input.bundleCount ?? null, input.tonnage, input.unitPrice, input.totalAmount, input.costPrice ?? null, input.costAmount ?? null, input.profit ?? null, input.projectId ?? null, input.logisticsProvider ?? null, input.invoiceStatus ?? 'none', input.collectionStatus ?? 'uncollected', input.notes ?? null, input.bubbleId ?? null, input.rawInput ?? null, input.createdBy ?? null, ts, ts)
   return toCamel<BizSale>(db.prepare('SELECT * FROM biz_sales WHERE id = ?').get(id) as Record<string, unknown>)
 }
@@ -336,6 +349,7 @@ export function getSales(filter: BizQueryFilter = {}): BizSale[] {
   if (filter.supplierId) { conditions.push('supplier_id = ?'); params.push(filter.supplierId) }
   if (filter.productId) { conditions.push('product_id = ?'); params.push(filter.productId) }
   if (filter.projectId) { conditions.push('project_id = ?'); params.push(filter.projectId) }
+  applyDocStatusFilter(conditions, params, filter.docStatus)
   const limit = filter.limit ?? 100
   const offset = filter.offset ?? 0
   const sql = `SELECT * FROM biz_sales WHERE ${conditions.join(' AND ')} ORDER BY date DESC, created_at DESC LIMIT ? OFFSET ?`
@@ -401,8 +415,8 @@ export function createLogistics(input: CreateLogisticsInput): BizLogisticsRecord
   const liftingFee = input.liftingFee ?? 0
   const totalFee = input.totalFee ?? (freight + liftingFee)
   db.prepare(`
-    INSERT INTO biz_logistics (id, tenant_id, date, waybill_no, carrier_id, project_id, destination, tonnage, freight, lifting_fee, total_fee, driver, driver_phone, license_plate, settlement_status, notes, bubble_id, raw_input, created_by, created_at, updated_at)
-    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    INSERT INTO biz_logistics (id, tenant_id, date, waybill_no, carrier_id, project_id, destination, tonnage, freight, lifting_fee, total_fee, driver, driver_phone, license_plate, settlement_status, notes, bubble_id, raw_input, created_by, doc_status, created_at, updated_at)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'draft', ?, ?)
   `).run(id, TENANT, input.date, input.waybillNo ?? null, input.carrierId ?? null, input.projectId ?? null, input.destination ?? null, input.tonnage ?? null, freight, liftingFee, totalFee, input.driver ?? null, input.driverPhone ?? null, input.licensePlate ?? null, input.settlementStatus ?? 'unpaid', input.notes ?? null, input.bubbleId ?? null, input.rawInput ?? null, input.createdBy ?? null, ts, ts)
   return toCamel<BizLogisticsRecord>(db.prepare('SELECT * FROM biz_logistics WHERE id = ?').get(id) as Record<string, unknown>)
 }
@@ -415,6 +429,7 @@ export function getLogistics(filter: BizQueryFilter = {}): BizLogisticsRecord[] 
   if (filter.dateTo) { conditions.push('date <= ?'); params.push(filter.dateTo) }
   if (filter.counterpartyId) { conditions.push('carrier_id = ?'); params.push(filter.counterpartyId) }
   if (filter.projectId) { conditions.push('project_id = ?'); params.push(filter.projectId) }
+  applyDocStatusFilter(conditions, params, filter.docStatus)
   const limit = filter.limit ?? 100
   const offset = filter.offset ?? 0
   const sql = `SELECT * FROM biz_logistics WHERE ${conditions.join(' AND ')} ORDER BY date DESC, created_at DESC LIMIT ? OFFSET ?`
@@ -449,8 +464,8 @@ export function createPayment(input: CreatePaymentInput): BizPayment {
   const id = ulid()
   const ts = now()
   db.prepare(`
-    INSERT INTO biz_payments (id, tenant_id, date, doc_no, direction, counterparty_id, project_id, amount, method, reference_no, notes, bubble_id, raw_input, created_by, created_at, updated_at)
-    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    INSERT INTO biz_payments (id, tenant_id, date, doc_no, direction, counterparty_id, project_id, amount, method, reference_no, notes, bubble_id, raw_input, created_by, doc_status, created_at, updated_at)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'draft', ?, ?)
   `).run(id, TENANT, input.date, input.docNo ?? null, input.direction, input.counterpartyId, input.projectId ?? null, input.amount, input.method ?? null, input.referenceNo ?? null, input.notes ?? null, input.bubbleId ?? null, input.rawInput ?? null, input.createdBy ?? null, ts, ts)
   return toCamel<BizPayment>(db.prepare('SELECT * FROM biz_payments WHERE id = ?').get(id) as Record<string, unknown>)
 }
@@ -463,7 +478,11 @@ export function getPayments(filter: BizQueryFilter = {}): BizPayment[] {
   if (filter.dateTo) { conditions.push('date <= ?'); params.push(filter.dateTo) }
   if (filter.counterpartyId) { conditions.push('counterparty_id = ?'); params.push(filter.counterpartyId) }
   if (filter.projectId) { conditions.push('project_id = ?'); params.push(filter.projectId) }
-  if (filter.status) { conditions.push('direction = ?'); params.push(filter.status) }
+  if (filter.status) {
+    conditions.push('direction = ?')
+    params.push(filter.status)
+  }
+  applyDocStatusFilter(conditions, params, filter.docStatus)
   const limit = filter.limit ?? 100
   const offset = filter.offset ?? 0
   const sql = `SELECT * FROM biz_payments WHERE ${conditions.join(' AND ')} ORDER BY date DESC, created_at DESC LIMIT ? OFFSET ?`
@@ -502,8 +521,8 @@ export function createInvoice(input: CreateInvoiceInput): BizInvoice {
   const taxAmount = input.taxAmount ?? Math.round(input.amount * taxRate * 100) / 100
   const totalAmount = input.totalAmount ?? Math.round((input.amount + taxAmount) * 100) / 100
   db.prepare(`
-    INSERT INTO biz_invoices (id, tenant_id, date, direction, invoice_no, counterparty_id, amount, tax_rate, tax_amount, total_amount, related_ids, status, notes, bubble_id, created_by, created_at, updated_at)
-    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    INSERT INTO biz_invoices (id, tenant_id, date, direction, invoice_no, counterparty_id, amount, tax_rate, tax_amount, total_amount, related_ids, status, notes, bubble_id, created_by, doc_status, created_at, updated_at)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'draft', ?, ?)
   `).run(id, TENANT, input.date, input.direction, input.invoiceNo ?? null, input.counterpartyId, input.amount, taxRate, taxAmount, totalAmount, JSON.stringify(input.relatedIds ?? []), input.status ?? 'registered', input.notes ?? null, input.bubbleId ?? null, input.createdBy ?? null, ts, ts)
   return toCamel<BizInvoice>(db.prepare('SELECT * FROM biz_invoices WHERE id = ?').get(id) as Record<string, unknown>)
 }
@@ -514,7 +533,11 @@ export function getInvoices(filter: BizQueryFilter = {}): BizInvoice[] {
   const params: unknown[] = [TENANT]
   if (filter.dateFrom) { conditions.push('date >= ?'); params.push(filter.dateFrom) }
   if (filter.dateTo) { conditions.push('date <= ?'); params.push(filter.dateTo) }
-  if (filter.counterpartyId) { conditions.push('counterparty_id = ?'); params.push(filter.counterpartyId) }
+  if (filter.counterpartyId) {
+    conditions.push('counterparty_id = ?')
+    params.push(filter.counterpartyId)
+  }
+  applyDocStatusFilter(conditions, params, filter.docStatus)
   const limit = filter.limit ?? 100
   const offset = filter.offset ?? 0
   const sql = `SELECT * FROM biz_invoices WHERE ${conditions.join(' AND ')} ORDER BY date DESC, created_at DESC LIMIT ? OFFSET ?`
@@ -528,6 +551,9 @@ export function deleteInvoice(id: string): void {
 }
 
 // ── Computed Views ──────────────────────────────────────────────────
+// IMPORTANT: Only confirmed + completed documents count in computed views.
+// Drafts and cancelled documents are excluded from stock/AR/AP calculations.
+const ACTIVE_STATUS = "doc_status IN ('confirmed','completed')"
 
 export function getInventory(): InventoryItem[] {
   const db = getDatabase()
@@ -539,10 +565,10 @@ export function getInventory(): InventoryItem[] {
       COALESCE(pur.tons, 0) - COALESCE(sal.tons, 0) as stock_tons
     FROM biz_products p
     LEFT JOIN (
-      SELECT product_id, SUM(tonnage) as tons FROM biz_purchases WHERE tenant_id = ? AND deleted_at IS NULL GROUP BY product_id
+      SELECT product_id, SUM(tonnage) as tons FROM biz_purchases WHERE tenant_id = ? AND deleted_at IS NULL AND ${ACTIVE_STATUS} GROUP BY product_id
     ) pur ON pur.product_id = p.id
     LEFT JOIN (
-      SELECT product_id, SUM(tonnage) as tons FROM biz_sales WHERE tenant_id = ? AND deleted_at IS NULL GROUP BY product_id
+      SELECT product_id, SUM(tonnage) as tons FROM biz_sales WHERE tenant_id = ? AND deleted_at IS NULL AND ${ACTIVE_STATUS} GROUP BY product_id
     ) sal ON sal.product_id = p.id
     WHERE p.tenant_id = ?
     ORDER BY p.brand, p.spec
@@ -560,10 +586,10 @@ export function getReceivables(): ReceivableItem[] {
       COALESCE(s.total, 0) - COALESCE(pay.received, 0) as outstanding
     FROM biz_counterparties c
     LEFT JOIN (
-      SELECT customer_id, SUM(total_amount) as total FROM biz_sales WHERE tenant_id = ? AND deleted_at IS NULL GROUP BY customer_id
+      SELECT customer_id, SUM(total_amount) as total FROM biz_sales WHERE tenant_id = ? AND deleted_at IS NULL AND ${ACTIVE_STATUS} GROUP BY customer_id
     ) s ON s.customer_id = c.id
     LEFT JOIN (
-      SELECT counterparty_id, SUM(amount) as received FROM biz_payments WHERE tenant_id = ? AND direction = 'in' AND deleted_at IS NULL GROUP BY counterparty_id
+      SELECT counterparty_id, SUM(amount) as received FROM biz_payments WHERE tenant_id = ? AND direction = 'in' AND deleted_at IS NULL AND ${ACTIVE_STATUS} GROUP BY counterparty_id
     ) pay ON pay.counterparty_id = c.id
     WHERE c.tenant_id = ? AND c.type IN ('customer', 'both')
     AND (COALESCE(s.total, 0) > 0 OR COALESCE(pay.received, 0) > 0)
@@ -582,10 +608,10 @@ export function getPayables(): PayableItem[] {
       COALESCE(p.total, 0) - COALESCE(pay.paid, 0) as outstanding
     FROM biz_counterparties c
     LEFT JOIN (
-      SELECT supplier_id, SUM(total_amount) as total FROM biz_purchases WHERE tenant_id = ? AND deleted_at IS NULL GROUP BY supplier_id
+      SELECT supplier_id, SUM(total_amount) as total FROM biz_purchases WHERE tenant_id = ? AND deleted_at IS NULL AND ${ACTIVE_STATUS} GROUP BY supplier_id
     ) p ON p.supplier_id = c.id
     LEFT JOIN (
-      SELECT counterparty_id, SUM(amount) as paid FROM biz_payments WHERE tenant_id = ? AND direction = 'out' AND deleted_at IS NULL GROUP BY counterparty_id
+      SELECT counterparty_id, SUM(amount) as paid FROM biz_payments WHERE tenant_id = ? AND direction = 'out' AND deleted_at IS NULL AND ${ACTIVE_STATUS} GROUP BY counterparty_id
     ) pay ON pay.counterparty_id = c.id
     WHERE c.tenant_id = ? AND c.type IN ('supplier', 'both')
     AND (COALESCE(p.total, 0) > 0 OR COALESCE(pay.paid, 0) > 0)
@@ -598,29 +624,31 @@ export function getDashboard(): DashboardData {
   const db = getDatabase()
   const today = new Date().toISOString().slice(0, 10)
 
+  // Today counts include all statuses (drafts too — they represent today's activity)
   const todayPurchases = (db.prepare('SELECT COUNT(*) as cnt FROM biz_purchases WHERE tenant_id = ? AND date = ? AND deleted_at IS NULL').get(TENANT, today) as { cnt: number }).cnt
   const todaySales = (db.prepare('SELECT COUNT(*) as cnt FROM biz_sales WHERE tenant_id = ? AND date = ? AND deleted_at IS NULL').get(TENANT, today) as { cnt: number }).cnt
   const todayLogistics = (db.prepare('SELECT COUNT(*) as cnt FROM biz_logistics WHERE tenant_id = ? AND date = ? AND deleted_at IS NULL').get(TENANT, today) as { cnt: number }).cnt
 
+  // Stock/AR/AP only count confirmed + completed
   const stockRow = db.prepare(`
     SELECT
       COALESCE(SUM(pur.tons), 0) - COALESCE(SUM(sal.tons), 0) as total
     FROM (SELECT 1) dummy
-    LEFT JOIN (SELECT SUM(tonnage) as tons FROM biz_purchases WHERE tenant_id = ? AND deleted_at IS NULL) pur ON 1=1
-    LEFT JOIN (SELECT SUM(tonnage) as tons FROM biz_sales WHERE tenant_id = ? AND deleted_at IS NULL) sal ON 1=1
+    LEFT JOIN (SELECT SUM(tonnage) as tons FROM biz_purchases WHERE tenant_id = ? AND deleted_at IS NULL AND ${ACTIVE_STATUS}) pur ON 1=1
+    LEFT JOIN (SELECT SUM(tonnage) as tons FROM biz_sales WHERE tenant_id = ? AND deleted_at IS NULL AND ${ACTIVE_STATUS}) sal ON 1=1
   `).get(TENANT, TENANT) as { total: number }
 
   const recvRow = db.prepare(`
-    SELECT COALESCE(SUM(s.total_amount), 0) - COALESCE((SELECT SUM(amount) FROM biz_payments WHERE tenant_id = ? AND direction = 'in' AND deleted_at IS NULL), 0) as total
-    FROM biz_sales s WHERE s.tenant_id = ? AND s.deleted_at IS NULL
+    SELECT COALESCE(SUM(s.total_amount), 0) - COALESCE((SELECT SUM(amount) FROM biz_payments WHERE tenant_id = ? AND direction = 'in' AND deleted_at IS NULL AND ${ACTIVE_STATUS}), 0) as total
+    FROM biz_sales s WHERE s.tenant_id = ? AND s.deleted_at IS NULL AND s.${ACTIVE_STATUS}
   `).get(TENANT, TENANT) as { total: number }
 
   const payRow = db.prepare(`
-    SELECT COALESCE(SUM(p.total_amount), 0) - COALESCE((SELECT SUM(amount) FROM biz_payments WHERE tenant_id = ? AND direction = 'out' AND deleted_at IS NULL), 0) as total
-    FROM biz_purchases p WHERE p.tenant_id = ? AND p.deleted_at IS NULL
+    SELECT COALESCE(SUM(p.total_amount), 0) - COALESCE((SELECT SUM(amount) FROM biz_payments WHERE tenant_id = ? AND direction = 'out' AND deleted_at IS NULL AND ${ACTIVE_STATUS}), 0) as total
+    FROM biz_purchases p WHERE p.tenant_id = ? AND p.deleted_at IS NULL AND p.${ACTIVE_STATUS}
   `).get(TENANT, TENANT) as { total: number }
 
-  // Recent 5 transactions (union purchases + sales)
+  // Recent 5 transactions (all statuses — shows recent activity)
   const recent = db.prepare(`
     SELECT '采购' as type, date, supplier_id as cid, product_id as pid, total_amount as amount, created_at
     FROM biz_purchases WHERE tenant_id = ? AND deleted_at IS NULL
@@ -711,19 +739,110 @@ export function getProjectReconciliation(): ProjectReconciliationItem[] {
       COALESCE(s.total, 0) - COALESCE(pi.total, 0) as outstanding
     FROM biz_projects p
     LEFT JOIN (
-      SELECT project_id, SUM(total_amount) as total FROM biz_sales WHERE tenant_id = ? AND deleted_at IS NULL AND project_id IS NOT NULL GROUP BY project_id
+      SELECT project_id, SUM(total_amount) as total FROM biz_sales WHERE tenant_id = ? AND deleted_at IS NULL AND ${ACTIVE_STATUS} AND project_id IS NOT NULL GROUP BY project_id
     ) s ON s.project_id = p.id
     LEFT JOIN (
-      SELECT project_id, SUM(total_fee) as total FROM biz_logistics WHERE tenant_id = ? AND deleted_at IS NULL AND project_id IS NOT NULL GROUP BY project_id
+      SELECT project_id, SUM(total_fee) as total FROM biz_logistics WHERE tenant_id = ? AND deleted_at IS NULL AND ${ACTIVE_STATUS} AND project_id IS NOT NULL GROUP BY project_id
     ) l ON l.project_id = p.id
     LEFT JOIN (
-      SELECT project_id, SUM(amount) as total FROM biz_payments WHERE tenant_id = ? AND direction = 'in' AND deleted_at IS NULL AND project_id IS NOT NULL GROUP BY project_id
+      SELECT project_id, SUM(amount) as total FROM biz_payments WHERE tenant_id = ? AND direction = 'in' AND deleted_at IS NULL AND ${ACTIVE_STATUS} AND project_id IS NOT NULL GROUP BY project_id
     ) pi ON pi.project_id = p.id
     LEFT JOIN (
-      SELECT project_id, SUM(amount) as total FROM biz_payments WHERE tenant_id = ? AND direction = 'out' AND deleted_at IS NULL AND project_id IS NOT NULL GROUP BY project_id
+      SELECT project_id, SUM(amount) as total FROM biz_payments WHERE tenant_id = ? AND direction = 'out' AND deleted_at IS NULL AND ${ACTIVE_STATUS} AND project_id IS NOT NULL GROUP BY project_id
     ) po ON po.project_id = p.id
     WHERE p.tenant_id = ?
     ORDER BY outstanding DESC
   `).all(TENANT, TENANT, TENANT, TENANT, TENANT) as Record<string, unknown>[]
   return rows.map(r => toCamel<ProjectReconciliationItem>(r))
+}
+
+// ── Create-From helpers (v0.6 document linking) ─────────────────────
+
+export interface CreateFromResult<T> {
+  doc: T
+  link: DocLink
+}
+
+/** Create a logistics draft pre-filled from an existing sale */
+export function createLogisticsFromSale(saleId: string): CreateFromResult<BizLogisticsRecord> {
+  const db = getDatabase()
+  const row = db.prepare('SELECT * FROM biz_sales WHERE id = ? AND deleted_at IS NULL').get(saleId) as Record<string, unknown> | undefined
+  if (!row) throw new Error('销售单不存在')
+  const sale = toCamel<BizSale>(row)
+  if (sale.docStatus !== 'confirmed') throw new Error('只有已确认的销售单可以创建下游单据')
+
+  const doc = createLogistics({
+    date: sale.date,
+    projectId: sale.projectId,
+    tonnage: sale.tonnage,
+    notes: `由销售单创建`,
+  })
+
+  // Mark source on the newly created doc
+  db.prepare('UPDATE biz_logistics SET source_type = ?, source_id = ? WHERE id = ?').run('sale', saleId, doc.id)
+  doc.sourceType = 'sale'
+  doc.sourceId = saleId
+
+  const link = createDocLink('sale', saleId, 'logistics', doc.id)
+  logger.info(`CreateFrom: logistics/${doc.id} ← sale/${saleId}`)
+  return { doc, link }
+}
+
+/** Create an outgoing invoice draft pre-filled from an existing sale */
+export function createInvoiceFromSale(saleId: string): CreateFromResult<BizInvoice> {
+  const db = getDatabase()
+  const row = db.prepare('SELECT * FROM biz_sales WHERE id = ? AND deleted_at IS NULL').get(saleId) as Record<string, unknown> | undefined
+  if (!row) throw new Error('销售单不存在')
+  const sale = toCamel<BizSale>(row)
+  if (sale.docStatus !== 'confirmed') throw new Error('只有已确认的销售单可以创建下游单据')
+
+  const doc = createInvoice({
+    date: new Date().toISOString().slice(0, 10),
+    direction: 'out',
+    counterpartyId: sale.customerId,
+    amount: sale.totalAmount,
+    relatedIds: [saleId],
+    notes: `由销售单创建`,
+  })
+
+  db.prepare('UPDATE biz_invoices SET source_type = ?, source_id = ? WHERE id = ?').run('sale', saleId, doc.id)
+  doc.sourceType = 'sale'
+  doc.sourceId = saleId
+
+  const link = createDocLink('sale', saleId, 'invoice', doc.id)
+  logger.info(`CreateFrom: invoice/${doc.id} ← sale/${saleId}`)
+  return { doc, link }
+}
+
+/** Create an incoming invoice draft pre-filled from an existing purchase */
+export function createInvoiceFromPurchase(purchaseId: string): CreateFromResult<BizInvoice> {
+  const db = getDatabase()
+  const row = db.prepare('SELECT * FROM biz_purchases WHERE id = ? AND deleted_at IS NULL').get(purchaseId) as Record<string, unknown> | undefined
+  if (!row) throw new Error('采购单不存在')
+  const purchase = toCamel<BizPurchase>(row)
+  if (purchase.docStatus !== 'confirmed') throw new Error('只有已确认的采购单可以创建下游单据')
+
+  const doc = createInvoice({
+    date: new Date().toISOString().slice(0, 10),
+    direction: 'in',
+    counterpartyId: purchase.supplierId,
+    amount: purchase.totalAmount,
+    relatedIds: [purchaseId],
+    notes: `由采购单创建`,
+  })
+
+  db.prepare('UPDATE biz_invoices SET source_type = ?, source_id = ? WHERE id = ?').run('purchase', purchaseId, doc.id)
+  doc.sourceType = 'purchase'
+  doc.sourceId = purchaseId
+
+  const link = createDocLink('purchase', purchaseId, 'invoice', doc.id)
+  logger.info(`CreateFrom: invoice/${doc.id} ← purchase/${purchaseId}`)
+  return { doc, link }
+}
+
+/** Link an existing payment to an invoice (for reconciliation) */
+export function linkPaymentToInvoice(paymentId: string, invoiceId: string): DocLink {
+  const link = createDocLink('invoice', invoiceId, 'payment', paymentId)
+  logger.info(`DocLink: payment/${paymentId} → invoice/${invoiceId}`)
+  return link
 }

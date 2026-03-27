@@ -30,6 +30,8 @@ import { createAgent, getAgent, listAgents, updateAgent, deleteAgent } from '../
 import type { WeComConnector } from '../connector/wecom.js'
 import type { MessageRouter } from '../connector/router.js'
 import * as biz from '../connector/biz/structured-store.js'
+import * as docEngine from '../connector/biz/doc-engine.js'
+import * as reports from '../connector/biz/reports.js'
 
 const __dirname = dirname(fileURLToPath(import.meta.url))
 
@@ -1270,14 +1272,18 @@ export async function startServer(brain: Brain, memory: MemoryManager, port = 30
     return { data: biz.createPurchase(body) }
   })
 
-  app.put('/api/biz/purchases/:id', async (req) => {
+  app.put('/api/biz/purchases/:id', async (req, reply) => {
     const { id } = req.params as { id: string }
+    const guard = docEngine.assertDraft('purchase', id)
+    if (!guard.ok) return reply.code(400).send({ error: guard.error })
     biz.updatePurchase(id, req.body as any)
     return { ok: true }
   })
 
-  app.delete('/api/biz/purchases/:id', async (req) => {
+  app.delete('/api/biz/purchases/:id', async (req, reply) => {
     const { id } = req.params as { id: string }
+    const guard = docEngine.assertDraftForDelete('purchase', id)
+    if (!guard.ok) return reply.code(400).send({ error: guard.error })
     biz.deletePurchase(id)
     return { ok: true }
   })
@@ -1305,14 +1311,18 @@ export async function startServer(brain: Brain, memory: MemoryManager, port = 30
     return { data: biz.createSale(body) }
   })
 
-  app.put('/api/biz/sales/:id', async (req) => {
+  app.put('/api/biz/sales/:id', async (req, reply) => {
     const { id } = req.params as { id: string }
+    const guard = docEngine.assertDraft('sale', id)
+    if (!guard.ok) return reply.code(400).send({ error: guard.error })
     biz.updateSale(id, req.body as any)
     return { ok: true }
   })
 
-  app.delete('/api/biz/sales/:id', async (req) => {
+  app.delete('/api/biz/sales/:id', async (req, reply) => {
     const { id } = req.params as { id: string }
+    const guard = docEngine.assertDraftForDelete('sale', id)
+    if (!guard.ok) return reply.code(400).send({ error: guard.error })
     biz.deleteSale(id)
     return { ok: true }
   })
@@ -1330,8 +1340,10 @@ export async function startServer(brain: Brain, memory: MemoryManager, port = 30
     return { data: biz.createLogistics(body) }
   })
 
-  app.delete('/api/biz/logistics/:id', async (req) => {
+  app.delete('/api/biz/logistics/:id', async (req, reply) => {
     const { id } = req.params as { id: string }
+    const guard = docEngine.assertDraftForDelete('logistics', id)
+    if (!guard.ok) return reply.code(400).send({ error: guard.error })
     biz.deleteLogistics(id)
     return { ok: true }
   })
@@ -1351,8 +1363,10 @@ export async function startServer(brain: Brain, memory: MemoryManager, port = 30
     return { data: biz.createPayment(body) }
   })
 
-  app.delete('/api/biz/payments/:id', async (req) => {
+  app.delete('/api/biz/payments/:id', async (req, reply) => {
     const { id } = req.params as { id: string }
+    const guard = docEngine.assertDraftForDelete('payment', id)
+    if (!guard.ok) return reply.code(400).send({ error: guard.error })
     biz.deletePayment(id)
     return { ok: true }
   })
@@ -1372,10 +1386,76 @@ export async function startServer(brain: Brain, memory: MemoryManager, port = 30
     return { data: biz.createInvoice(body) }
   })
 
-  app.delete('/api/biz/invoices/:id', async (req) => {
+  app.delete('/api/biz/invoices/:id', async (req, reply) => {
     const { id } = req.params as { id: string }
+    const guard = docEngine.assertDraftForDelete('invoice', id)
+    if (!guard.ok) return reply.code(400).send({ error: guard.error })
     biz.deleteInvoice(id)
     return { ok: true }
+  })
+
+  // ── Document Lifecycle (v0.6) ──────────────────────────────────
+
+  // Status transition: draft→confirmed→completed→cancelled
+  app.post('/api/biz/doc/transition', async (req, reply) => {
+    const { docType, id, newStatus, cancelReason } = req.body as {
+      docType?: string; id?: string; newStatus?: string; cancelReason?: string
+    }
+    if (!docType || !id || !newStatus) {
+      return reply.code(400).send({ error: 'docType, id, newStatus 为必填项' })
+    }
+    const result = docEngine.transitionStatus(docType, id, newStatus as any, cancelReason)
+    if (!result.ok) return reply.code(400).send({ error: result.error })
+    return { ok: true }
+  })
+
+  // Get linked documents
+  app.get('/api/biz/doc/links/:docType/:id', async (req) => {
+    const { docType, id } = req.params as { docType: string; id: string }
+    return docEngine.getLinkedDocs(docType, id)
+  })
+
+  // Create-from: generate downstream document from parent
+  app.post('/api/biz/doc/create-from', async (req, reply) => {
+    const { action, sourceId } = req.body as { action?: string; sourceId?: string }
+    if (!action || !sourceId) {
+      return reply.code(400).send({ error: 'action, sourceId 为必填项' })
+    }
+    try {
+      switch (action) {
+        case 'logistics-from-sale':
+          return { data: biz.createLogisticsFromSale(sourceId) }
+        case 'invoice-from-sale':
+          return { data: biz.createInvoiceFromSale(sourceId) }
+        case 'invoice-from-purchase':
+          return { data: biz.createInvoiceFromPurchase(sourceId) }
+        default:
+          return reply.code(400).send({ error: `未知的 action: ${action}` })
+      }
+    } catch (err) {
+      return reply.code(400).send({ error: err instanceof Error ? err.message : String(err) })
+    }
+  })
+
+  // Link payment to invoice
+  app.post('/api/biz/doc/link-payment', async (req, reply) => {
+    const { paymentId, invoiceId } = req.body as { paymentId?: string; invoiceId?: string }
+    if (!paymentId || !invoiceId) {
+      return reply.code(400).send({ error: 'paymentId, invoiceId 为必填项' })
+    }
+    const link = biz.linkPaymentToInvoice(paymentId, invoiceId)
+    return { data: link }
+  })
+
+  // Amend a confirmed document (copy as new draft, cancel original)
+  app.post('/api/biz/doc/amend', async (req, reply) => {
+    const { docType, id } = req.body as { docType?: string; id?: string }
+    if (!docType || !id) {
+      return reply.code(400).send({ error: 'docType, id 为必填项' })
+    }
+    const result = docEngine.amendDocument(docType, id)
+    if (!result.ok) return reply.code(400).send({ error: result.error })
+    return { ok: true, newId: result.newId }
   })
 
   // ── Computed Views ────────────────────────────────────────────
@@ -1385,6 +1465,31 @@ export async function startServer(brain: Brain, memory: MemoryManager, port = 30
   app.get('/api/biz/payables', async () => ({ data: biz.getPayables() }))
   app.get('/api/biz/dashboard', async () => ({ data: biz.getDashboard() }))
   app.get('/api/biz/reconciliation', async () => ({ data: biz.getProjectReconciliation() }))
+
+  // ── Reports (v0.6 SaaS) ────────────────────────────────────────
+
+  // Profit report: monthly P&L
+  app.get('/api/biz/reports/profit', async (req) => {
+    const { dateFrom, dateTo } = req.query as { dateFrom?: string; dateTo?: string }
+    return { data: reports.getProfitReport(dateFrom, dateTo) }
+  })
+
+  // Counterparty statement (往来对账单)
+  app.get('/api/biz/reports/statement/:counterpartyId', async (req, reply) => {
+    const { counterpartyId } = req.params as { counterpartyId: string }
+    const { dateFrom, dateTo } = req.query as { dateFrom?: string; dateTo?: string }
+    try {
+      return { data: reports.getCounterpartyStatement(counterpartyId, dateFrom, dateTo) }
+    } catch (err) {
+      return reply.code(404).send({ error: err instanceof Error ? err.message : String(err) })
+    }
+  })
+
+  // Monthly overview (月度总览)
+  app.get('/api/biz/reports/monthly', async (req) => {
+    const { year } = req.query as { year?: string }
+    return { data: reports.getMonthlyOverview(year ? parseInt(year) : undefined) }
+  })
 
   // ── Lookup (VLOOKUP replacement) ──────────────────────────────
 

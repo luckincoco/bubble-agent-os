@@ -2,6 +2,7 @@ import { useState, useEffect } from 'react'
 import { useBizStore } from '../../stores/bizStore'
 import type {
   BizPurchase, BizSale, BizLogisticsRecord, BizPayment, BizInvoice,
+  DocStatus,
 } from '../../types'
 import s from './RecordList.module.css'
 
@@ -11,10 +12,41 @@ interface Props {
   type: RecordType
 }
 
+const STATUS_LABELS: Record<DocStatus, string> = {
+  draft: '草稿',
+  confirmed: '已确认',
+  completed: '已完成',
+  cancelled: '已取消',
+}
+
+const FILTER_OPTIONS: Array<{ value: string; label: string }> = [
+  { value: 'all', label: '全部' },
+  { value: 'draft', label: '草稿' },
+  { value: 'confirmed', label: '已确认' },
+  { value: 'completed', label: '已完成' },
+  { value: 'cancelled', label: '已取消' },
+]
+
+// "Create From" actions available per docType when status is confirmed
+const CREATE_FROM_ACTIONS: Record<RecordType, Array<{ action: string; label: string }>> = {
+  sale: [
+    { action: 'logistics-from-sale', label: '创建物流单' },
+    { action: 'invoice-from-sale', label: '创建销项发票' },
+  ],
+  purchase: [
+    { action: 'invoice-from-purchase', label: '创建进项发票' },
+  ],
+  logistics: [],
+  payment: [],
+  invoice: [],
+}
+
 export function RecordList({ type }: Props) {
   const store = useBizStore()
   const [expandedId, setExpandedId] = useState<string | null>(null)
-  const [deleting, setDeleting] = useState<string | null>(null)
+  const [busy, setBusy] = useState<string | null>(null)
+  const [statusFilter, setStatusFilter] = useState('all')
+  const [editingId, setEditingId] = useState<string | null>(null)
 
   useEffect(() => {
     const loaders: Record<RecordType, () => Promise<void>> = {
@@ -27,7 +59,11 @@ export function RecordList({ type }: Props) {
     loaders[type]()
   }, [type])
 
-  const records = getRecords(type, store)
+  const allRecords = getRecords(type, store)
+  const records = statusFilter === 'all'
+    ? allRecords
+    : allRecords.filter(r => (r as any).docStatus === statusFilter)
+
   const counterparties = store.counterparties
   const products = store.products
   const projects = store.projects
@@ -40,59 +76,132 @@ export function RecordList({ type }: Props) {
     return p ? `${p.brand} ${p.name} ${p.spec}`.trim() : pid
   }
 
-  const handleDelete = async (id: string, removeFn: (id: string) => Promise<void>) => {
-    if (!confirm('确认删除这条记录？')) return
-    setDeleting(id)
+  const handleAction = async (action: string, id: string) => {
+    setBusy(id)
     try {
-      await removeFn(id)
-    } catch {
-      alert('删除失败')
+      switch (action) {
+        case 'confirm':
+          await store.transitionDoc(type, id, 'confirmed')
+          break
+        case 'complete':
+          await store.transitionDoc(type, id, 'completed')
+          break
+        case 'cancel': {
+          const reason = prompt('请输入取消原因')
+          if (!reason) { setBusy(null); return }
+          await store.transitionDoc(type, id, 'cancelled', reason)
+          break
+        }
+        case 'delete': {
+          if (!confirm('确认删除这条草稿记录？')) { setBusy(null); return }
+          await getRemoveFn(type, store)(id)
+          break
+        }
+        case 'amend':
+          await store.amendDoc(type, id)
+          break
+        default:
+          // create-from actions
+          if (action.includes('-from-')) {
+            await store.createFrom(action, id)
+            alert('下游单据已创建为草稿')
+          }
+      }
+    } catch (err: any) {
+      alert(err.message || '操作失败')
     }
-    setDeleting(null)
+    setBusy(null)
   }
 
   if (store.loading && records.length === 0) {
     return <div className={s.empty}>加载中...</div>
   }
-  if (records.length === 0) {
-    return <div className={s.empty}>暂无记录</div>
-  }
 
   return (
-    <div className={s.list}>
-      {records.map(rec => {
-        const row = formatRow(type, rec, getName, getProductLabel)
-        const details = formatDetails(type, rec, getName, getProductLabel)
-        const expanded = expandedId === rec.id
-        return (
-          <div key={rec.id} className={s.card} data-expanded={expanded}>
-            <div className={s.row} onClick={() => setExpandedId(expanded ? null : rec.id)}>
-              <span className={s.date}>{row.date}</span>
-              <span className={s.main}>{row.main}</span>
-              <span className={s.amount}>{row.amount}</span>
-              <span className={s.arrow}>{expanded ? '\u25B2' : '\u25BC'}</span>
-            </div>
-            {expanded && (
-              <div className={s.detail}>
-                {details.map((d, i) => (
-                  <div key={i} className={s.detailRow}>
-                    <span className={s.detailLabel}>{d.label}</span>
-                    <span className={s.detailValue}>{d.value}</span>
+    <>
+      <div className={s.filterBar}>
+        {FILTER_OPTIONS.map(opt => (
+          <button
+            key={opt.value}
+            className={s.filterTab}
+            data-active={statusFilter === opt.value}
+            onClick={() => setStatusFilter(opt.value)}
+          >
+            {opt.label}
+          </button>
+        ))}
+      </div>
+      {records.length === 0 ? (
+        <div className={s.empty}>暂无记录</div>
+      ) : (
+        <div className={s.list}>
+          {records.map(rec => {
+            const row = formatRow(type, rec, getName, getProductLabel)
+            const details = formatDetails(type, rec, getName, getProductLabel)
+            const expanded = expandedId === rec.id
+            const docStatus = (rec as any).docStatus as DocStatus | undefined
+            const isBusy = busy === rec.id
+
+            return (
+              <div key={rec.id} className={s.card} data-expanded={expanded}>
+                <div className={s.row} onClick={() => setExpandedId(expanded ? null : rec.id)}>
+                  <span className={s.date}>{row.date}</span>
+                  {docStatus && (
+                    <span className={s.badge} data-status={docStatus}>
+                      {STATUS_LABELS[docStatus] ?? docStatus}
+                    </span>
+                  )}
+                  <span className={s.main}>{row.main}</span>
+                  <span className={s.amount}>{row.amount}</span>
+                  <span className={s.arrow}>{expanded ? '\u25B2' : '\u25BC'}</span>
+                </div>
+                {expanded && (
+                  <div className={s.detail}>
+                    {details.map((d, i) => (
+                      <div key={i} className={s.detailRow}>
+                        <span className={s.detailLabel}>{d.label}</span>
+                        <span className={s.detailValue}>{d.value}</span>
+                      </div>
+                    ))}
+                    {/* Action bar based on status */}
+                    <div className={s.actions}>
+                      {docStatus === 'draft' && (
+                        <>
+                          {(type === 'purchase' || type === 'sale') && (
+                            <button className={s.actionBtn} disabled={isBusy} onClick={() => setEditingId(editingId === rec.id ? null : rec.id)}>
+                              {editingId === rec.id ? '取消编辑' : '编辑'}
+                            </button>
+                          )}
+                          <button className={s.actionBtn} data-variant="confirm" disabled={isBusy} onClick={() => handleAction('confirm', rec.id)}>确认</button>
+                          <button className={s.actionBtn} data-variant="danger" disabled={isBusy} onClick={() => handleAction('delete', rec.id)}>删除</button>
+                        </>
+                      )}
+                      {docStatus === 'confirmed' && (
+                        <>
+                          <button className={s.actionBtn} data-variant="complete" disabled={isBusy} onClick={() => handleAction('complete', rec.id)}>完成</button>
+                          <button className={s.actionBtn} disabled={isBusy} onClick={() => handleAction('amend', rec.id)}>修正</button>
+                          <button className={s.actionBtn} data-variant="danger" disabled={isBusy} onClick={() => handleAction('cancel', rec.id)}>取消</button>
+                          {CREATE_FROM_ACTIONS[type]?.map(a => (
+                            <button key={a.action} className={s.actionBtn} disabled={isBusy} onClick={() => handleAction(a.action, rec.id)}>{a.label}</button>
+                          ))}
+                        </>
+                      )}
+                      {docStatus === 'completed' && (
+                        <button className={s.actionBtn} data-variant="danger" disabled={isBusy} onClick={() => handleAction('cancel', rec.id)}>取消</button>
+                      )}
+                    </div>
+                    {/* Inline edit form for drafts */}
+                    {editingId === rec.id && docStatus === 'draft' && (
+                      <InlineEditForm type={type} record={rec} onSaved={() => setEditingId(null)} />
+                    )}
                   </div>
-                ))}
-                <button
-                  className={s.deleteBtn}
-                  disabled={deleting === rec.id}
-                  onClick={() => handleDelete(rec.id, getRemoveFn(type, store))}
-                >
-                  {deleting === rec.id ? '删除中...' : '删除'}
-                </button>
+                )}
               </div>
-            )}
-          </div>
-        )
-      })}
-    </div>
+            )
+          })}
+        </div>
+      )}
+    </>
   )
 }
 
@@ -232,4 +341,115 @@ function formatDetails(type: RecordType, rec: AnyRecord, getName: NameFn, getPro
       ]
     }
   }
+}
+
+// ── Inline Edit Form (for draft purchases and sales) ─────────────
+
+function InlineEditForm({ type, record, onSaved }: { type: RecordType; record: AnyRecord; onSaved: () => void }) {
+  const store = useBizStore()
+  const [saving, setSaving] = useState(false)
+
+  if (type === 'purchase') {
+    const r = record as unknown as BizPurchase
+    return <PurchaseEditFields record={r} onSave={async (data) => {
+      setSaving(true)
+      try { await store.updatePurchase(r.id, data); onSaved() } catch (e: any) { alert(e.message) }
+      setSaving(false)
+    }} saving={saving} onCancel={onSaved} />
+  }
+
+  if (type === 'sale') {
+    const r = record as unknown as BizSale
+    return <SaleEditFields record={r} onSave={async (data) => {
+      setSaving(true)
+      try { await store.updateSale(r.id, data); onSaved() } catch (e: any) { alert(e.message) }
+      setSaving(false)
+    }} saving={saving} onCancel={onSaved} />
+  }
+
+  return null
+}
+
+function PurchaseEditFields({ record, onSave, saving, onCancel }: {
+  record: BizPurchase
+  onSave: (data: Partial<BizPurchase>) => void
+  saving: boolean
+  onCancel: () => void
+}) {
+  const [tonnage, setTonnage] = useState(String(record.tonnage))
+  const [unitPrice, setUnitPrice] = useState(String(record.unitPrice))
+  const [notes, setNotes] = useState(record.notes || '')
+
+  const qty = parseFloat(tonnage) || 0
+  const price = parseFloat(unitPrice) || 0
+  const total = Math.round(qty * price * 100) / 100
+
+  return (
+    <div className={s.editForm}>
+      <div className={s.editRow}>
+        <span className={s.editLabel}>数量</span>
+        <input className={s.editInput} type="number" step="0.001" value={tonnage} onChange={e => setTonnage(e.target.value)} />
+      </div>
+      <div className={s.editRow}>
+        <span className={s.editLabel}>单价</span>
+        <input className={s.editInput} type="number" step="1" value={unitPrice} onChange={e => setUnitPrice(e.target.value)} />
+      </div>
+      <div className={s.editRow}>
+        <span className={s.editLabel}>合计</span>
+        <span className={s.editInput} style={{ background: 'transparent', border: 'none' }}>&yen;{total.toLocaleString('zh-CN', { minimumFractionDigits: 2 })}</span>
+      </div>
+      <div className={s.editRow}>
+        <span className={s.editLabel}>备注</span>
+        <input className={s.editInput} value={notes} onChange={e => setNotes(e.target.value)} placeholder="可选" />
+      </div>
+      <div className={s.editActions}>
+        <button className={s.editSave} disabled={saving} onClick={() => onSave({ tonnage: qty, unitPrice: price, totalAmount: total, notes: notes || undefined })}>
+          {saving ? '保存中...' : '保存'}
+        </button>
+        <button className={s.editCancel} onClick={onCancel}>取消</button>
+      </div>
+    </div>
+  )
+}
+
+function SaleEditFields({ record, onSave, saving, onCancel }: {
+  record: BizSale
+  onSave: (data: Partial<BizSale>) => void
+  saving: boolean
+  onCancel: () => void
+}) {
+  const [tonnage, setTonnage] = useState(String(record.tonnage))
+  const [unitPrice, setUnitPrice] = useState(String(record.unitPrice))
+  const [notes, setNotes] = useState(record.notes || '')
+
+  const qty = parseFloat(tonnage) || 0
+  const price = parseFloat(unitPrice) || 0
+  const total = Math.round(qty * price * 100) / 100
+
+  return (
+    <div className={s.editForm}>
+      <div className={s.editRow}>
+        <span className={s.editLabel}>数量</span>
+        <input className={s.editInput} type="number" step="0.001" value={tonnage} onChange={e => setTonnage(e.target.value)} />
+      </div>
+      <div className={s.editRow}>
+        <span className={s.editLabel}>单价</span>
+        <input className={s.editInput} type="number" step="1" value={unitPrice} onChange={e => setUnitPrice(e.target.value)} />
+      </div>
+      <div className={s.editRow}>
+        <span className={s.editLabel}>合计</span>
+        <span className={s.editInput} style={{ background: 'transparent', border: 'none' }}>&yen;{total.toLocaleString('zh-CN', { minimumFractionDigits: 2 })}</span>
+      </div>
+      <div className={s.editRow}>
+        <span className={s.editLabel}>备注</span>
+        <input className={s.editInput} value={notes} onChange={e => setNotes(e.target.value)} placeholder="可选" />
+      </div>
+      <div className={s.editActions}>
+        <button className={s.editSave} disabled={saving} onClick={() => onSave({ tonnage: qty, unitPrice: price, totalAmount: total, notes: notes || undefined })}>
+          {saving ? '保存中...' : '保存'}
+        </button>
+        <button className={s.editCancel} onClick={onCancel}>取消</button>
+      </div>
+    </div>
+  )
 }

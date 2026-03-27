@@ -3,6 +3,7 @@ import type {
   BizProduct, BizCounterparty, BizProject,
   BizPurchase, BizSale, BizLogisticsRecord, BizPayment, BizInvoice,
   InventoryItem, ReceivableItem, PayableItem, BizDashboardData, ProjectReconciliationItem,
+  DocStatus, DocLink,
 } from '../types'
 import {
   fetchProducts, fetchCounterparties, fetchProjects,
@@ -13,7 +14,9 @@ import {
   createProjectApi, updateProjectApi, deleteProjectApi,
   createPurchaseApi, createSaleApi, createLogisticsApi, createPaymentApi,
   deletePurchaseApi, deleteSaleApi, deleteLogisticsApi, deletePaymentApi,
+  updatePurchaseApi, updateSaleApi,
   fetchInvoices, createInvoiceApi, deleteInvoiceApi,
+  transitionDocStatus, fetchDocLinks, createFromDoc, amendDocApi,
 } from '../services/api'
 
 interface BizState {
@@ -57,10 +60,10 @@ interface BizState {
   addProduct: (data: Partial<BizProduct>) => Promise<void>
   editProduct: (id: string, data: Partial<BizProduct>) => Promise<void>
   removeProduct: (id: string) => Promise<void>
-  addCounterparty: (data: Partial<BizCounterparty>) => Promise<void>
+  addCounterparty: (data: Partial<BizCounterparty>) => Promise<BizCounterparty>
   editCounterparty: (id: string, data: Partial<BizCounterparty>) => Promise<void>
   removeCounterparty: (id: string) => Promise<void>
-  addProject: (data: Partial<BizProject>) => Promise<void>
+  addProject: (data: Partial<BizProject>) => Promise<BizProject>
   editProject: (id: string, data: Partial<BizProject>) => Promise<void>
   removeProject: (id: string) => Promise<void>
 
@@ -75,6 +78,14 @@ interface BizState {
   removeLogistic: (id: string) => Promise<void>
   removePayment: (id: string) => Promise<void>
   removeInvoice: (id: string) => Promise<void>
+
+  // Document lifecycle (v0.6)
+  transitionDoc: (docType: string, id: string, newStatus: DocStatus, cancelReason?: string) => Promise<void>
+  updatePurchase: (id: string, data: Partial<BizPurchase>) => Promise<void>
+  updateSale: (id: string, data: Partial<BizSale>) => Promise<void>
+  createFrom: (action: string, sourceId: string) => Promise<{ doc: unknown; link: DocLink }>
+  amendDoc: (docType: string, id: string) => Promise<string>
+  getDocLinks: (docType: string, id: string) => Promise<{ children: DocLink[]; parents: DocLink[] }>
 }
 
 export const useBizStore = create<BizState>((set, get) => ({
@@ -223,6 +234,7 @@ export const useBizStore = create<BizState>((set, get) => ({
   addCounterparty: async (data) => {
     const c = await createCounterpartyApi(data)
     set({ counterparties: [...get().counterparties, c] })
+    return c
   },
   editCounterparty: async (id, data) => {
     await updateCounterpartyApi(id, data)
@@ -235,6 +247,7 @@ export const useBizStore = create<BizState>((set, get) => ({
   addProject: async (data) => {
     const p = await createProjectApi(data)
     set({ projects: [...get().projects, p] })
+    return p
   },
   editProject: async (id, data) => {
     await updateProjectApi(id, data)
@@ -298,5 +311,54 @@ export const useBizStore = create<BizState>((set, get) => ({
   removeInvoice: async (id) => {
     await deleteInvoiceApi(id)
     set({ invoices: get().invoices.filter(p => p.id !== id) })
+  },
+
+  // Document lifecycle (v0.6)
+  transitionDoc: async (docType, id, newStatus, cancelReason) => {
+    await transitionDocStatus(docType, id, newStatus, cancelReason)
+    // Update local state: find the record and update its docStatus
+    const updateStatus = <T extends { id: string; docStatus: DocStatus }>(items: T[]): T[] =>
+      items.map(item => item.id === id ? { ...item, docStatus: newStatus } : item)
+    set({
+      purchases: updateStatus(get().purchases),
+      sales: updateStatus(get().sales),
+      logistics: updateStatus(get().logistics),
+      payments: updateStatus(get().payments),
+      invoices: updateStatus(get().invoices),
+    })
+  },
+
+  updatePurchase: async (id, data) => {
+    await updatePurchaseApi(id, data)
+    set({ purchases: get().purchases.map(p => p.id === id ? { ...p, ...data } as BizPurchase : p) })
+  },
+
+  updateSale: async (id, data) => {
+    await updateSaleApi(id, data)
+    set({ sales: get().sales.map(s => s.id === id ? { ...s, ...data } as BizSale : s) })
+  },
+
+  createFrom: async (action, sourceId) => {
+    const result = await createFromDoc(action, sourceId)
+    // Reload the relevant list to pick up the new doc
+    if (action.startsWith('logistics')) await get().loadLogistics()
+    if (action.startsWith('invoice')) await get().loadInvoices()
+    return result
+  },
+
+  amendDoc: async (docType, id) => {
+    const newId = await amendDocApi(docType, id)
+    // Reload the relevant list to reflect the amendment (original cancelled, new draft created)
+    const loaders: Record<string, () => Promise<void>> = {
+      purchase: get().loadPurchases, sale: get().loadSales,
+      logistics: get().loadLogistics, payment: get().loadPayments,
+      invoice: get().loadInvoices,
+    }
+    await loaders[docType]?.()
+    return newId
+  },
+
+  getDocLinks: async (docType, id) => {
+    return fetchDocLinks(docType, id)
   },
 }))

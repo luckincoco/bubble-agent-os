@@ -1,0 +1,205 @@
+.container {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+  padding: 4px 0;
+}
+
+/* ── Tab bar ─────────────────────────────────────────────────────── */
+.tabs {
+  display: flex;
+  gap: 4px;
+  background: rgba(255, 255, 255, 0.04);
+  border-radius: 10px;
+  padding: 3px;
+}
+
+.tab {
+  flex: 1;
+  padding: 8px 0;
+  font-size: 13px;
+  font-weight: 500;
+  border: none;
+  border-radius: 8px;
+  background: transparent;
+  color: rgba(255, 255, 255, 0.5);
+  cursor: pointer;
+  transition: all 0.2s;
+}
+
+.tab[data-active='true'] {
+  background: rgba(255, 255, 255, 0.1);
+  color: var(--teal, #2dd4bf);
+}
+
+/* ── Filter row ──────────────────────────────────────────────────── */
+.filterRow {
+  display: flex;
+  gap: 8px;
+  align-items: flex-end;
+}
+
+.filterField {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  flex: 1;
+}
+
+.filterLabel {
+  font-size: 11px;
+  color: rgba(255, 255, 255, 0.5);
+}
+
+.filterInput {
+  padding: 6px 8px;
+  border-radius: 6px;
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  background: rgba(255, 255, 255, 0.05);
+  color: white;
+  font-size: 13px;
+}
+
+.filterBtn {
+  padding: 6px 14px;
+  border-radius: 6px;
+  border: none;
+  background: var(--teal, #2dd4bf);
+  color: #111;
+  font-size: 13px;
+  font-weight: 600;
+  cursor: pointer;
+  white-space: nowrap;
+}
+
+/* ── Table ────────────────────────────────────────────────────────── */
+.table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 12px;
+}
+
+.table th {
+  text-align: left;
+  padding: 8px 6px;
+  font-weight: 600;
+  color: rgba(255, 255, 255, 0.6);
+  border-bottom: 1px solid rgba(255, 255, 255, 0.1);
+  white-space: nowrap;
+}
+
+.table td {
+  padding: 7px 6px;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.04);
+  color: rgba(255, 255, 255, 0.85);
+}
+
+.table tr:hover td {
+  background: rgba(255, 255, 255, 0.03);
+}
+
+.numCell {
+  text-align: right;
+  font-variant-numeric: tabular-nums;
+}
+
+.positive {
+  color: #4ade80;
+}
+
+.negative {
+  color: #f87171;
+}
+
+/* ── Summary cards ────────────────────────────────────────────────── */
+.summaryRow {
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.summaryCard {
+  flex: 1;
+  min-width: 100px;
+  padding: 10px 12px;
+  border-radius: 10px;
+  background: rgba(255, 255, 255, 0.04);
+  border: 1px solid rgba(255, 255, 255, 0.06);
+}
+
+.summaryLabel {
+  display: block;
+  font-size: 11px;
+  color: rgba(255, 255, 255, 0.5);
+  margin-bottom: 4px;
+}
+
+.summaryValue {
+  display: block;
+  font-size: 16px;
+  font-weight: 700;
+  font-variant-numeric: tabular-nums;
+  color: white;
+}
+
+/* ── Statement ────────────────────────────────────────────────────── */
+.statementHeader {
+  padding: 12px;
+  border-radius: 10px;
+  background: rgba(255, 255, 255, 0.04);
+  border: 1px solid rgba(255, 255, 255, 0.06);
+}
+
+.statementTitle {
+  font-size: 15px;
+  font-weight: 600;
+  color: white;
+  margin-bottom: 4px;
+}
+
+.statementSub {
+  font-size: 12px;
+  color: rgba(255, 255, 255, 0.5);
+}
+
+.typeBadge {
+  display: inline-block;
+  padding: 1px 6px;
+  border-radius: 4px;
+  font-size: 11px;
+  font-weight: 500;
+}
+
+.typeBadge[data-type='sale'] { background: rgba(45, 212, 191, 0.15); color: #2dd4bf; }
+.typeBadge[data-type='purchase'] { background: rgba(168, 85, 247, 0.15); color: #a855f7; }
+.typeBadge[data-type='payment_in'] { background: rgba(74, 222, 128, 0.15); color: #4ade80; }
+.typeBadge[data-type='payment_out'] { background: rgba(248, 113, 113, 0.15); color: #f87171; }
+.typeBadge[data-type='invoice_in'] { background: rgba(251, 146, 60, 0.15); color: #fb923c; }
+.typeBadge[data-type='invoice_out'] { background: rgba(96, 165, 250, 0.15); color: #60a5fa; }
+
+/* ── Loading & Empty ──────────────────────────────────────────────── */
+.loading {
+  text-align: center;
+  padding: 32px;
+  color: rgba(255, 255, 255, 0.4);
+  font-size: 13px;
+}
+
+.empty {
+  text-align: center;
+  padding: 32px;
+  color: rgba(255, 255, 255, 0.3);
+  font-size: 13px;
+}
+
+.tableWrap {
+  overflow-x: auto;
+  -webkit-overflow-scrolling: touch;
+}
+
+/* ── Footer totals ────────────────────────────────────────────────── */
+.table tfoot td {
+  font-weight: 700;
+  border-top: 2px solid rgba(255, 255, 255, 0.15);
+  padding-top: 8px;
+}

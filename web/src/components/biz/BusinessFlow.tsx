@@ -1,13 +1,15 @@
-import { useState, type ReactNode } from 'react'
+import { useState, useEffect, type ReactNode } from 'react'
 import { BizBubble } from './BizBubble'
 import { PurchaseForm, SaleForm, LogisticsForm, PaymentForm } from './EntryView'
 import { InvoiceForm } from './InvoiceForm'
 import { RecordList } from './RecordList'
 import { QueryView } from './QueryView'
 import { DashboardView } from './DashboardView'
+import { ReportView } from './ReportView'
+import { useBizStore } from '../../stores/bizStore'
 import s from './BusinessFlow.module.css'
 
-type BubbleId = 'purchase' | 'sale' | 'logistics' | 'payment' | 'invoice' | 'query' | 'dashboard'
+type BubbleId = 'purchase' | 'sale' | 'logistics' | 'payment' | 'invoice' | 'query' | 'report' | 'dashboard'
 
 interface BubbleDef {
   id: BubbleId
@@ -44,6 +46,10 @@ const BUBBLES: BubbleDef[] = [
     icon: 'M18 20V10M12 20V4M6 20v-6',
   },
   {
+    id: 'report', label: '报表', color: '#8B5CF6',
+    icon: 'M9 5H7a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2V7a2 2 0 00-2-2h-2M9 5a2 2 0 002 2h2a2 2 0 002-2M9 5a2 2 0 012-2h2a2 2 0 012 2M9 14l2 2 4-4',
+  },
+  {
     id: 'dashboard', label: '经营概览', color: '#22C55E',
     icon: 'M22 12h-4l-3 9L9 3l-3 9H2',
   },
@@ -59,6 +65,7 @@ const FORM_MAP: Partial<Record<BubbleId, () => ReactNode>> = {
 
 const CONTENT_MAP: Partial<Record<BubbleId, () => ReactNode>> = {
   query: () => <QueryView />,
+  report: () => <ReportView />,
   dashboard: () => <DashboardView />,
 }
 
@@ -133,6 +140,7 @@ export function BusinessFlow() {
 
   return (
     <div className={s.container}>
+      <KpiBanner />
       <div className={s.grid}>
         {BUBBLES.map((b, i) => (
           <div key={b.id} className={s.cell} style={{ animationDelay: `${i * 60}ms` }}>
@@ -144,6 +152,41 @@ export function BusinessFlow() {
             />
           </div>
         ))}
+      </div>
+    </div>
+  )
+}
+
+// ── KPI Banner ──────────────────────────────────────────────────────
+
+function fmtMoney(n: number): string {
+  if (Math.abs(n) >= 10000) return (n / 10000).toFixed(1) + '万'
+  return n.toLocaleString('zh-CN', { maximumFractionDigits: 0 })
+}
+
+function KpiBanner() {
+  const { dashboard, loadDashboard } = useBizStore()
+  useEffect(() => { loadDashboard() }, [loadDashboard])
+
+  if (!dashboard) return <div className={s.kpiLoading}>加载指标...</div>
+
+  return (
+    <div className={s.kpiBanner}>
+      <div className={s.kpiCard}>
+        <span className={s.kpiLabel}>库存</span>
+        <span className={s.kpiValue}>{dashboard.totalStockTons.toFixed(1)}吨</span>
+      </div>
+      <div className={s.kpiCard}>
+        <span className={s.kpiLabel}>应收</span>
+        <span className={s.kpiValue}>&yen;{fmtMoney(dashboard.totalReceivable)}</span>
+      </div>
+      <div className={s.kpiCard}>
+        <span className={s.kpiLabel}>应付</span>
+        <span className={s.kpiValue}>&yen;{fmtMoney(dashboard.totalPayable)}</span>
+      </div>
+      <div className={s.kpiCard}>
+        <span className={s.kpiLabel}>今日</span>
+        <span className={s.kpiValue}>{dashboard.todayPurchases + dashboard.todaySales + dashboard.todayLogistics}笔</span>
       </div>
     </div>
   )

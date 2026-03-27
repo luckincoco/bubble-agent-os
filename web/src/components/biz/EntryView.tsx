@@ -96,7 +96,7 @@ async function findOrCreateProduct(
 // ── Purchase Form ───────────────────────────────────────────────
 
 export function PurchaseForm() {
-  const { products, counterparties, projects, createPurchase, addProduct } = useBizStore()
+  const { products, counterparties, projects, createPurchase, addProduct, addCounterparty, addProject } = useBizStore()
   const suppliers = counterparties.filter(c => c.type === 'supplier' || c.type === 'both')
   const projectOpts = projects.map(p => ({ id: p.id, label: p.name }))
   const { brands, names, specs } = useProductSuggestions(products)
@@ -150,7 +150,8 @@ export function PurchaseForm() {
     <div className={s.form}>
       <Input label="日期" value={date} onChange={setDate} type="date" />
       <SearchSelect label="供应商" value={supplierId} onChange={setSupplierId}
-        options={suppliers.map(c => ({ id: c.id, label: c.name }))} placeholder="搜索供应商..." />
+        options={suppliers.map(c => ({ id: c.id, label: c.name }))} placeholder="搜索供应商..."
+        onQuickCreate={async (name) => (await addCounterparty({ name, type: 'supplier' })).id} />
       <div className={s.row}>
         <Input label="品牌" value={brand} onChange={setBrand} placeholder="如: 沙钢" listId="dl-brand" />
         <Input label="材质" value={productName} onChange={setProductName} placeholder="如: 螺纹钢" listId="dl-name" />
@@ -173,7 +174,8 @@ export function PurchaseForm() {
         <Input label={`单价(${PRICE_LABELS[unit]})`} value={unitPrice} onChange={setUnitPrice} type="number" step="1" placeholder="0" />
       </div>
       <div className={s.computed}>合计: &yen;{totalAmount.toLocaleString('zh-CN', { minimumFractionDigits: 2 })}</div>
-      <SearchSelect label="项目" value={projectId} onChange={setProjectId} options={projectOpts} placeholder="搜索项目..." />
+      <SearchSelect label="项目" value={projectId} onChange={setProjectId} options={projectOpts} placeholder="搜索项目..."
+        onQuickCreate={async (name) => (await addProject({ name })).id} />
       <Input label="备注" value={notes} onChange={setNotes} placeholder="可选" />
       <button className={s.submit} onClick={handleSubmit} disabled={saving}>
         {saving ? '保存中...' : '保存采购'}
@@ -186,7 +188,7 @@ export function PurchaseForm() {
 // ── Sale Form ───────────────────────────────────────────────────
 
 export function SaleForm() {
-  const { products, counterparties, projects, createSale, addProduct } = useBizStore()
+  const { products, counterparties, projects, createSale, addProduct, addCounterparty, addProject } = useBizStore()
   const customers = counterparties.filter(c => c.type === 'customer' || c.type === 'both')
   const projectOpts = projects.map(p => ({ id: p.id, label: p.name }))
   const { brands, names, specs } = useProductSuggestions(products)
@@ -239,7 +241,8 @@ export function SaleForm() {
     <div className={s.form}>
       <Input label="日期" value={date} onChange={setDate} type="date" />
       <SearchSelect label="客户" value={customerId} onChange={setCustomerId}
-        options={customers.map(c => ({ id: c.id, label: c.name }))} placeholder="搜索客户..." />
+        options={customers.map(c => ({ id: c.id, label: c.name }))} placeholder="搜索客户..."
+        onQuickCreate={async (name) => (await addCounterparty({ name, type: 'customer' })).id} />
       <div className={s.row}>
         <Input label="品牌" value={brand} onChange={setBrand} placeholder="如: 沙钢" listId="dl-brand-s" />
         <Input label="材质" value={productName} onChange={setProductName} placeholder="如: 螺纹钢" listId="dl-name-s" />
@@ -262,7 +265,8 @@ export function SaleForm() {
         <Input label={`单价(${PRICE_LABELS[unit]})`} value={unitPrice} onChange={setUnitPrice} type="number" step="1" placeholder="0" />
       </div>
       <div className={s.computed}>合计: &yen;{totalAmount.toLocaleString('zh-CN', { minimumFractionDigits: 2 })}</div>
-      <SearchSelect label="项目" value={projectId} onChange={setProjectId} options={projectOpts} placeholder="搜索项目..." />
+      <SearchSelect label="项目" value={projectId} onChange={setProjectId} options={projectOpts} placeholder="搜索项目..."
+        onQuickCreate={async (name) => (await addProject({ name })).id} />
       <Input label="备注" value={notes} onChange={setNotes} placeholder="可选" />
       <button className={s.submit} onClick={handleSubmit} disabled={saving}>
         {saving ? '保存中...' : '保存销售'}
@@ -275,7 +279,7 @@ export function SaleForm() {
 // ── Logistics Form ──────────────────────────────────────────────
 
 export function LogisticsForm() {
-  const { counterparties, projects, createLogistic } = useBizStore()
+  const { counterparties, projects, createLogistic, addCounterparty, addProject } = useBizStore()
   const carriers = counterparties.filter(c => c.type === 'logistics')
   const projectOpts = projects.map(p => ({ id: p.id, label: p.name }))
 
@@ -321,9 +325,11 @@ export function LogisticsForm() {
     <div className={s.form}>
       <Input label="日期" value={date} onChange={setDate} type="date" />
       <SearchSelect label="托运公司" value={carrierId} onChange={setCarrierId}
-        options={carriers.map(c => ({ id: c.id, label: c.name }))} placeholder="搜索托运公司..." />
+        options={carriers.map(c => ({ id: c.id, label: c.name }))} placeholder="搜索托运公司..."
+        onQuickCreate={async (name) => (await addCounterparty({ name, type: 'logistics' })).id} />
       <Input label="目的地" value={destination} onChange={setDestination} placeholder="项目/工地名" />
-      <SearchSelect label="项目" value={projectId} onChange={setProjectId} options={projectOpts} placeholder="搜索项目..." />
+      <SearchSelect label="项目" value={projectId} onChange={setProjectId} options={projectOpts} placeholder="搜索项目..."
+        onQuickCreate={async (name) => (await addProject({ name })).id} />
       <Input label="吨位" value={tonnage} onChange={setTonnage} type="number" step="0.1" placeholder="0.0" />
       <div className={s.row}>
         <Input label="运费" value={freight} onChange={setFreight} type="number" placeholder="0" />
@@ -345,7 +351,7 @@ export function LogisticsForm() {
 // ── Payment Form ────────────────────────────────────────────────
 
 export function PaymentForm() {
-  const { counterparties, projects, createPayment } = useBizStore()
+  const { counterparties, projects, createPayment, addCounterparty, addProject } = useBizStore()
   const projectOpts = projects.map(p => ({ id: p.id, label: p.name }))
 
   const [date, setDate] = useState(today())
@@ -389,10 +395,12 @@ export function PaymentForm() {
         </div>
       </div>
       <SearchSelect label="对象" value={counterpartyId} onChange={setCounterpartyId}
-        options={counterparties.map(c => ({ id: c.id, label: `${c.name} (${c.type === 'supplier' ? '供应商' : c.type === 'customer' ? '客户' : c.type})` }))} placeholder="搜索供应商/客户..." />
+        options={counterparties.map(c => ({ id: c.id, label: `${c.name} (${c.type === 'supplier' ? '供应商' : c.type === 'customer' ? '客户' : c.type})` }))} placeholder="搜索供应商/客户..."
+        onQuickCreate={async (name) => (await addCounterparty({ name, type: 'both' })).id} />
       <Input label="金额" value={amount} onChange={setAmount} type="number" step="0.01" placeholder="0.00" />
       <Input label="方式" value={method} onChange={setMethod} placeholder="转账/现金/承兑..." />
-      <SearchSelect label="项目" value={projectId} onChange={setProjectId} options={projectOpts} placeholder="搜索项目..." />
+      <SearchSelect label="项目" value={projectId} onChange={setProjectId} options={projectOpts} placeholder="搜索项目..."
+        onQuickCreate={async (name) => (await addProject({ name })).id} />
       <Input label="备注" value={notes} onChange={setNotes} placeholder="可选" />
       <button className={s.submit} onClick={handleSubmit} disabled={saving}>
         {saving ? '保存中...' : direction === 'in' ? '保存收款' : '保存付款'}

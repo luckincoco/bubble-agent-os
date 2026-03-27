@@ -5,6 +5,19 @@
 
 export type BizType = 'procurement' | 'sales' | 'payment' | 'logistics'
 
+/** Document lifecycle status (v0.6) */
+export type DocStatus = 'draft' | 'confirmed' | 'completed' | 'cancelled'
+
+/** Document link between two business records */
+export interface DocLink {
+  id: string
+  sourceType: string
+  sourceId: string
+  targetType: string
+  targetId: string
+  createdAt: number
+}
+
 export interface BizRecordBase {
   bizType: BizType
   date: string          // YYYY-MM-DD
@@ -140,6 +153,11 @@ export interface BizPurchase {
   bubbleId?: string
   rawInput?: string
   createdBy?: string
+  docStatus: DocStatus
+  sourceType?: string
+  sourceId?: string
+  cancelReason?: string
+  amendedFrom?: string
   createdAt: number
   updatedAt: number
   deletedAt?: number
@@ -169,6 +187,11 @@ export interface BizSale {
   bubbleId?: string
   rawInput?: string
   createdBy?: string
+  docStatus: DocStatus
+  sourceType?: string
+  sourceId?: string
+  cancelReason?: string
+  amendedFrom?: string
   createdAt: number
   updatedAt: number
   deletedAt?: number
@@ -195,6 +218,11 @@ export interface BizLogisticsRecord {
   bubbleId?: string
   rawInput?: string
   createdBy?: string
+  docStatus: DocStatus
+  sourceType?: string
+  sourceId?: string
+  cancelReason?: string
+  amendedFrom?: string
   createdAt: number
   updatedAt: number
   deletedAt?: number
@@ -216,6 +244,11 @@ export interface BizPayment {
   bubbleId?: string
   rawInput?: string
   createdBy?: string
+  docStatus: DocStatus
+  sourceType?: string
+  sourceId?: string
+  cancelReason?: string
+  amendedFrom?: string
   createdAt: number
   updatedAt: number
   deletedAt?: number
@@ -238,6 +271,11 @@ export interface BizInvoice {
   notes?: string
   bubbleId?: string
   createdBy?: string
+  docStatus: DocStatus
+  sourceType?: string
+  sourceId?: string
+  cancelReason?: string
+  amendedFrom?: string
   createdAt: number
   updatedAt: number
   deletedAt?: number

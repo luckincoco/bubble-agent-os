@@ -393,6 +393,40 @@ function runMigrations(database: Database.Database, defaultPassword: string) {
 
   logger.info('Migration: biz tables created/verified')
 
+  // ── v0.6: Document lifecycle + linking ──────────────────────────────
+
+  const purchaseCols = database.pragma('table_info(biz_purchases)') as Array<{ name: string }>
+  if (!purchaseCols.some(c => c.name === 'doc_status')) {
+    const txnTables = ['biz_purchases', 'biz_sales', 'biz_logistics', 'biz_payments', 'biz_invoices']
+    for (const table of txnTables) {
+      database.exec(`ALTER TABLE ${table} ADD COLUMN doc_status TEXT NOT NULL DEFAULT 'draft'`)
+      database.exec(`ALTER TABLE ${table} ADD COLUMN source_type TEXT`)
+      database.exec(`ALTER TABLE ${table} ADD COLUMN source_id TEXT`)
+      database.exec(`ALTER TABLE ${table} ADD COLUMN cancel_reason TEXT`)
+      database.exec(`ALTER TABLE ${table} ADD COLUMN amended_from TEXT`)
+      // Backfill: treat all existing records as confirmed
+      database.exec(`UPDATE ${table} SET doc_status = 'confirmed' WHERE deleted_at IS NULL`)
+      database.exec(`UPDATE ${table} SET doc_status = 'cancelled' WHERE deleted_at IS NOT NULL`)
+      // Performance index
+      database.exec(`CREATE INDEX IF NOT EXISTS idx_${table}_status ON ${table}(tenant_id, doc_status)`)
+    }
+    logger.info('Migration v0.6: added doc_status + linking columns to all transaction tables')
+  }
+
+  // Document linking table (many-to-many)
+  database.exec(`
+    CREATE TABLE IF NOT EXISTS biz_doc_links (
+      id TEXT PRIMARY KEY,
+      source_type TEXT NOT NULL,
+      source_id TEXT NOT NULL,
+      target_type TEXT NOT NULL,
+      target_id TEXT NOT NULL,
+      created_at INTEGER NOT NULL
+    )
+  `)
+  database.exec('CREATE INDEX IF NOT EXISTS idx_doc_links_source ON biz_doc_links(source_type, source_id)')
+  database.exec('CREATE INDEX IF NOT EXISTS idx_doc_links_target ON biz_doc_links(target_type, target_id)')
+
   // v0.4: Add preferences column to users table
   const userCols = database.pragma('table_info(users)') as Array<{ name: string }>
   if (!userCols.some(c => c.name === 'preferences')) {

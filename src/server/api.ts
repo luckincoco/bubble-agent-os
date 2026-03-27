@@ -498,7 +498,7 @@ export async function startServer(brain: Brain, memory: MemoryManager, port = 30
   })
 
   // Health check (public)
-  const pkgPath = resolve(dirname(fileURLToPath(import.meta.url)), '../../package.json')
+  const pkgPath = resolve(process.cwd(), 'package.json')
   const pkgVersion = JSON.parse(readFileSync(pkgPath, 'utf-8')).version as string
   app.get('/api/health', async () => ({ status: 'ok', version: pkgVersion }))
 

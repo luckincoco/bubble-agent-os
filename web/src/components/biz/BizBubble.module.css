@@ -4,7 +4,7 @@
   flex-direction: column;
   align-items: center;
   justify-content: center;
-  gap: 6px;
+  gap: 8px;
   width: 100%;
   aspect-ratio: 1;
   border: 1px solid rgba(255, 255, 255, 0.08);
@@ -26,6 +26,10 @@
   box-shadow: 0 4px 20px color-mix(in srgb, var(--bubble-color, var(--purple)) 25%, transparent);
 }
 
+.bubble:hover .icon {
+  filter: drop-shadow(0 0 6px var(--bubble-color, var(--glow-purple)));
+}
+
 .bubble:active {
   transform: scale(0.96);
 }
@@ -33,6 +37,10 @@
 .bubble[data-active='true'] {
   border-color: var(--bubble-color, var(--purple));
   box-shadow: 0 0 16px color-mix(in srgb, var(--bubble-color, var(--purple)) 35%, transparent);
+}
+
+.bubble[data-active='true'] .icon {
+  filter: drop-shadow(0 0 8px var(--bubble-color, var(--glow-purple)));
 }
 
 .glow {
@@ -47,10 +55,13 @@
   pointer-events: none;
 }
 
-.emoji {
-  font-size: 28px;
-  line-height: 1;
+.icon {
+  width: 30px;
+  height: 30px;
+  color: var(--bubble-color, var(--text-secondary));
   z-index: 1;
+  flex-shrink: 0;
+  transition: filter var(--duration-normal);
 }
 
 .label {

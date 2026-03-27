@@ -2,7 +2,7 @@ import type { ReactNode } from 'react'
 import s from './BizBubble.module.css'
 
 interface Props {
-  emoji: string
+  icon: string
   label: string
   color: string
   active?: boolean
@@ -10,7 +10,7 @@ interface Props {
   badge?: ReactNode
 }
 
-export function BizBubble({ emoji, label, color, active, onClick, badge }: Props) {
+export function BizBubble({ icon, label, color, active, onClick, badge }: Props) {
   return (
     <button
       className={s.bubble}
@@ -19,7 +19,17 @@ export function BizBubble({ emoji, label, color, active, onClick, badge }: Props
       onClick={onClick}
     >
       <span className={s.glow} />
-      <span className={s.emoji}>{emoji}</span>
+      <svg
+        className={s.icon}
+        viewBox="0 0 24 24"
+        fill="none"
+        stroke="currentColor"
+        strokeWidth="1.6"
+        strokeLinecap="round"
+        strokeLinejoin="round"
+      >
+        <path d={icon} />
+      </svg>
       <span className={s.label}>{label}</span>
       {badge && <span className={s.badge}>{badge}</span>}
     </button>

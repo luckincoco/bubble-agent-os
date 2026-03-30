@@ -14,7 +14,7 @@
 }
 
 .filterTab {
-  padding: 4px 10px;
+  padding: 8px 14px;
   border: 1px solid rgba(255, 255, 255, 0.08);
   border-radius: 12px;
   background: transparent;
@@ -28,6 +28,10 @@
 .filterTab:hover {
   border-color: rgba(255, 255, 255, 0.15);
   color: var(--text-secondary);
+}
+
+.filterTab:active {
+  transform: scale(0.96);
 }
 
 .filterTab[data-active='true'] {
@@ -61,7 +65,7 @@
   display: flex;
   align-items: center;
   gap: 8px;
-  padding: 12px;
+  padding: 14px;
   cursor: pointer;
   transition: background var(--duration-fast);
 }
@@ -135,7 +139,7 @@
 }
 
 .detail {
-  padding: 0 12px 12px;
+  padding: 0 14px 14px;
   border-top: 1px solid rgba(255, 255, 255, 0.04);
   animation: fadeIn var(--duration-fast) ease;
 }
@@ -143,7 +147,7 @@
 .detailRow {
   display: flex;
   justify-content: space-between;
-  padding: 6px 0;
+  padding: 10px 0;
   border-bottom: 1px solid rgba(255, 255, 255, 0.03);
 }
 
@@ -176,7 +180,7 @@
 .actionBtn {
   flex: 1;
   min-width: 60px;
-  padding: 7px 8px;
+  padding: 10px 12px;
   border: 1px solid rgba(255, 255, 255, 0.1);
   border-radius: var(--radius-button);
   background: transparent;
@@ -189,6 +193,10 @@
 .actionBtn:hover:not(:disabled) {
   background: rgba(255, 255, 255, 0.05);
   border-color: rgba(255, 255, 255, 0.2);
+}
+
+.actionBtn:active:not(:disabled) {
+  transform: scale(0.96);
 }
 
 .actionBtn:disabled {
@@ -226,7 +234,7 @@
 .deleteBtn {
   width: 100%;
   margin-top: 8px;
-  padding: 8px;
+  padding: 10px 12px;
   border: 1px solid rgba(248, 113, 113, 0.3);
   border-radius: var(--radius-button);
   background: transparent;
@@ -238,6 +246,10 @@
 
 .deleteBtn:hover:not(:disabled) {
   background: rgba(248, 113, 113, 0.1);
+}
+
+.deleteBtn:active:not(:disabled) {
+  transform: scale(0.96);
 }
 
 .deleteBtn:disabled {
@@ -273,7 +285,7 @@
 
 .editInput {
   flex: 1;
-  padding: 5px 8px;
+  padding: 9px 12px;
   border: 1px solid rgba(255, 255, 255, 0.1);
   border-radius: 6px;
   background: rgba(255, 255, 255, 0.04);
@@ -284,6 +296,7 @@
 .editInput:focus {
   outline: none;
   border-color: var(--teal);
+  box-shadow: 0 0 0 3px rgba(94, 234, 212, 0.15);
 }
 
 .editActions {
@@ -294,7 +307,7 @@
 
 .editSave {
   flex: 1;
-  padding: 7px;
+  padding: 10px;
   border: none;
   border-radius: 6px;
   background: var(--teal);
@@ -304,6 +317,10 @@
   cursor: pointer;
 }
 
+.editSave:active:not(:disabled) {
+  transform: scale(0.96);
+}
+
 .editSave:disabled {
   opacity: 0.5;
   cursor: not-allowed;
@@ -311,11 +328,123 @@
 
 .editCancel {
   flex: 1;
-  padding: 7px;
+  padding: 10px;
   border: 1px solid rgba(255, 255, 255, 0.1);
   border-radius: 6px;
   background: transparent;
   color: var(--text-dim);
   font-size: 12px;
   cursor: pointer;
+}
+
+.editCancel:active {
+  transform: scale(0.96);
+}
+
+/* ── Counterparty filter ──────────────────────────────── */
+
+.cpFilter {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 4px 16px 8px;
+}
+
+.cpCombobox {
+  flex: 1;
+  position: relative;
+}
+
+.cpInput {
+  width: 100%;
+  padding: 10px 12px;
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  border-radius: 8px;
+  background: rgba(255, 255, 255, 0.04);
+  color: var(--text-primary);
+  font-size: 12px;
+  box-sizing: border-box;
+}
+
+.cpInput::placeholder {
+  color: var(--text-dim);
+}
+
+.cpInput:focus {
+  outline: none;
+  border-color: var(--teal);
+  box-shadow: 0 0 0 3px rgba(94, 234, 212, 0.15);
+}
+
+.cpDropdown {
+  position: absolute;
+  top: calc(100% + 4px);
+  left: 0;
+  right: 0;
+  max-height: 180px;
+  overflow-y: auto;
+  background: #1a1a2e;
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  border-radius: 8px;
+  z-index: 10;
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.4);
+  animation: fadeSlideUp 0.15s ease;
+}
+
+@keyframes fadeSlideUp {
+  from { opacity: 0; transform: translateY(4px); }
+  to   { opacity: 1; transform: translateY(0); }
+}
+
+.cpOption {
+  padding: 12px 14px;
+  font-size: 12px;
+  color: var(--text-secondary);
+  cursor: pointer;
+  transition: background var(--duration-fast);
+}
+
+.cpOption:hover {
+  background: rgba(255, 255, 255, 0.06);
+  color: var(--text-primary);
+}
+
+.cpOption[data-active='true'] {
+  color: var(--teal);
+  background: rgba(94, 234, 212, 0.08);
+}
+
+.cpClear {
+  padding: 8px 14px;
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  border-radius: 12px;
+  background: transparent;
+  color: var(--text-dim);
+  font-size: 11px;
+  cursor: pointer;
+  white-space: nowrap;
+  transition: all var(--duration-fast);
+}
+
+.cpClear:hover {
+  border-color: rgba(248, 113, 113, 0.3);
+  color: #f87171;
+}
+
+.cpClear:active {
+  transform: scale(0.96);
+}
+
+/* Clickable counterparty name in detail view */
+.clickableCp {
+  cursor: pointer;
+  color: var(--teal) !important;
+  text-decoration: underline;
+  text-decoration-color: rgba(94, 234, 212, 0.3);
+  text-underline-offset: 2px;
+  transition: all var(--duration-fast);
+}
+
+.clickableCp:hover {
+  text-decoration-color: var(--teal);
 }

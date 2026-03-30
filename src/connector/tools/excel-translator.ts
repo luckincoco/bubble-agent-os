@@ -17,8 +17,11 @@ import { logger } from '../../shared/logger.js'
 /** Convert Excel serial number to ISO date string (YYYY-MM-DD) */
 export function excelDateToISO(serial: number | string): string {
   if (typeof serial === 'string') {
-    // Already a date string
-    if (/^\d{4}[-/]\d{1,2}[-/]\d{1,2}/.test(serial)) return serial.replace(/\//g, '-')
+    // Already a date string — normalize to zero-padded YYYY-MM-DD
+    if (/^\d{4}[-/]\d{1,2}[-/]\d{1,2}/.test(serial)) {
+      const parts = serial.split(/[-/]/)
+      return `${parts[0]}-${parts[1].padStart(2, '0')}-${parts[2].padStart(2, '0')}`
+    }
     // Try parsing as number
     const n = Number(serial)
     if (isNaN(n)) return serial
@@ -26,11 +29,12 @@ export function excelDateToISO(serial: number | string): string {
   }
   if (serial < 1 || serial > 100000) return String(serial) // Not a date serial
   // Excel epoch: 1900-01-01 = serial 1, but Excel wrongly counts 1900 as leap year
-  const epoch = new Date(1899, 11, 30) // Dec 30, 1899
-  const date = new Date(epoch.getTime() + serial * 86400000)
-  const y = date.getFullYear()
-  const m = String(date.getMonth() + 1).padStart(2, '0')
-  const d = String(date.getDate()).padStart(2, '0')
+  // Use UTC to avoid timezone-dependent date shifts (local time for 1899 may not be standard UTC+8)
+  const ms = Date.UTC(1899, 11, 30) + serial * 86400000
+  const date = new Date(ms)
+  const y = date.getUTCFullYear()
+  const m = String(date.getUTCMonth() + 1).padStart(2, '0')
+  const d = String(date.getUTCDate()).padStart(2, '0')
   return `${y}-${m}-${d}`
 }
 

@@ -12,7 +12,7 @@ import * as XLSX from 'xlsx'
 import type { Brain } from '../kernel/brain.js'
 import type { MemoryManager } from '../memory/manager.js'
 import type { BubbleType, UserContext, SpaceRole } from '../shared/types.js'
-import { createBubble } from '../bubble/model.js'
+import { createBubble, softDeleteBubble } from '../bubble/model.js'
 import { addLink } from '../bubble/links.js'
 import { getDatabase } from '../storage/database.js'
 import { logger } from '../shared/logger.js'
@@ -32,6 +32,7 @@ import type { MessageRouter } from '../connector/router.js'
 import * as biz from '../connector/biz/structured-store.js'
 import * as docEngine from '../connector/biz/doc-engine.js'
 import * as reports from '../connector/biz/reports.js'
+import { bridgeExcelSheet, type BridgeResult } from '../connector/biz/excel-bridge.js'
 
 const __dirname = dirname(fileURLToPath(import.meta.url))
 
@@ -415,6 +416,17 @@ export async function startServer(brain: Brain, memory: MemoryManager, port = 30
     }
   }
 
+  // Helper: extract BizContext for structured business queries
+  function getBizCtx(req: any): biz.BizContext {
+    const ctx = getUserCtx(req)
+    const { spaceId } = (req.query || {}) as { spaceId?: string }
+    // Use requested spaceId if user has access, otherwise fall back to activeSpaceId
+    const effectiveSpace = spaceId && (ctx.spaceIds.length === 0 || ctx.spaceIds.includes(spaceId))
+      ? spaceId
+      : ctx.activeSpaceId
+    return { spaceId: effectiveSpace }
+  }
+
   // Helper: get user's role in a specific space
   function getSpaceRole(userId: string, spaceId: string, userRole: string): SpaceRole | null {
     if (userRole === 'admin') return 'owner'
@@ -589,6 +601,7 @@ export async function startServer(brain: Brain, memory: MemoryManager, port = 30
     let totalCreated = 0
     let knowledgeCardsCreated = 0
     let aggregationsCreated = 0
+    const bridgeResults: BridgeResult[] = []
     const sheetsProcessed: Array<{ sheet: string; rows: number; columns: string[]; category: string }> = []
 
     for (const sheetName of workbook.SheetNames) {
@@ -676,6 +689,16 @@ export async function startServer(brain: Brain, memory: MemoryManager, port = 30
           })
           newBubbleIds.push(bubble.id)
           totalCreated++
+        }
+      }
+
+      // --- Phase 2.5: Bridge to biz structured tables ---
+      if (isTranslatableSheet(category)) {
+        try {
+          const br = bridgeExcelSheet(rows, category, { confirmImmediately: true, createdBy: 'excel-import', spaceId: targetSpace })
+          bridgeResults.push(br)
+        } catch (err) {
+          logger.error(`ExcelBridge error for sheet "${sheetName}":`, err instanceof Error ? err.message : String(err))
         }
       }
 
@@ -831,7 +854,26 @@ export async function startServer(brain: Brain, memory: MemoryManager, port = 30
     if (!sheetsProcessed.length) return reply.code(400).send({ error: 'Excel中没有数据行' })
 
     logger.info(`Excel import complete: ${totalCreated} total (${knowledgeCardsCreated} knowledge cards, ${aggregationsCreated} aggregations) across ${sheetsProcessed.length} sheets from "${file.filename}"`)
-    return { created: totalCreated, knowledgeCards: knowledgeCardsCreated, aggregations: aggregationsCreated, sheets: sheetsProcessed }
+
+    // Aggregate bridge results
+    const bizBridge = {
+      created: { purchases: 0, sales: 0, logistics: 0, payments: 0 },
+      skipped: { purchases: 0, sales: 0, logistics: 0, payments: 0 },
+      errors: [] as Array<{ rowIndex: number; message: string }>,
+    }
+    for (const br of bridgeResults) {
+      for (const k of ['purchases', 'sales', 'logistics', 'payments'] as const) {
+        bizBridge.created[k] += br.created[k]
+        bizBridge.skipped[k] += br.skipped[k]
+      }
+      bizBridge.errors.push(...br.errors)
+    }
+    const bizTotal = bizBridge.created.purchases + bizBridge.created.sales + bizBridge.created.logistics + bizBridge.created.payments
+    if (bizTotal > 0) {
+      logger.info(`Excel biz bridge: ${bizTotal} structured records created`)
+    }
+
+    return { created: totalCreated, knowledgeCards: knowledgeCardsCreated, aggregations: aggregationsCreated, sheets: sheetsProcessed, bizBridge }
   })
 
   // Document import (PDF, Word, TXT)
@@ -1185,14 +1227,16 @@ export async function startServer(brain: Brain, memory: MemoryManager, port = 30
   // ── Products ──────────────────────────────────────────────────
 
   app.get('/api/biz/products', async (req) => {
+    const ctx = getBizCtx(req)
     const { q } = req.query as { q?: string }
-    return { data: biz.getProducts(q) }
+    return { data: biz.getProducts(ctx, q) }
   })
 
   app.post('/api/biz/products', async (req, reply) => {
+    const ctx = getBizCtx(req)
     const body = req.body as any
     if (!body.code || !body.name) return reply.code(400).send({ error: 'code 和 name 为必填项' })
-    return { data: biz.createProduct(body) }
+    return { data: biz.createProduct(ctx, body) }
   })
 
   app.put('/api/biz/products/:id', async (req, reply) => {
@@ -1211,14 +1255,16 @@ export async function startServer(brain: Brain, memory: MemoryManager, port = 30
   // ── Counterparties ────────────────────────────────────────────
 
   app.get('/api/biz/counterparties', async (req) => {
+    const ctx = getBizCtx(req)
     const { type } = req.query as { type?: string }
-    return { data: biz.getCounterparties(type) }
+    return { data: biz.getCounterparties(ctx, type) }
   })
 
   app.post('/api/biz/counterparties', async (req, reply) => {
+    const ctx = getBizCtx(req)
     const body = req.body as any
     if (!body.name || !body.type) return reply.code(400).send({ error: 'name 和 type 为必填项' })
-    return { data: biz.createCounterparty(body) }
+    return { data: biz.createCounterparty(ctx, body) }
   })
 
   app.put('/api/biz/counterparties/:id', async (req) => {
@@ -1235,14 +1281,16 @@ export async function startServer(brain: Brain, memory: MemoryManager, port = 30
 
   // ── Projects ──────────────────────────────────────────────────
 
-  app.get('/api/biz/projects', async () => {
-    return { data: biz.getProjects() }
+  app.get('/api/biz/projects', async (req) => {
+    const ctx = getBizCtx(req)
+    return { data: biz.getProjects(ctx) }
   })
 
   app.post('/api/biz/projects', async (req, reply) => {
+    const ctx = getBizCtx(req)
     const body = req.body as any
     if (!body.name) return reply.code(400).send({ error: 'name 为必填项' })
-    return { data: biz.createProject(body) }
+    return { data: biz.createProject(ctx, body) }
   })
 
   app.put('/api/biz/projects/:id', async (req) => {
@@ -1260,15 +1308,18 @@ export async function startServer(brain: Brain, memory: MemoryManager, port = 30
   // ── Purchases ─────────────────────────────────────────────────
 
   app.get('/api/biz/purchases', async (req) => {
+    const ctx = getBizCtx(req)
     const filter = req.query as biz.BizQueryFilter
-    return { data: biz.getPurchases(filter) }
+    return { data: biz.getPurchases(ctx, filter) }
   })
 
   app.post('/api/biz/purchases', async (req, reply) => {
+    const ctx = getBizCtx(req)
     const body = req.body as any
     if (!body.date || !body.supplierId || !body.productId) {
       return reply.code(400).send({ error: 'date, supplierId, productId 为必填项' })
     }
+    body.spaceId = ctx.spaceId
     return { data: biz.createPurchase(body) }
   })
 
@@ -1291,23 +1342,26 @@ export async function startServer(brain: Brain, memory: MemoryManager, port = 30
   // ── Sales ─────────────────────────────────────────────────────
 
   app.get('/api/biz/sales', async (req) => {
+    const ctx = getBizCtx(req)
     const filter = req.query as biz.BizQueryFilter
-    return { data: biz.getSales(filter) }
+    return { data: biz.getSales(ctx, filter) }
   })
 
   app.post('/api/biz/sales', async (req, reply) => {
+    const ctx = getBizCtx(req)
     const body = req.body as any
     if (!body.date || !body.customerId || !body.productId) {
       return reply.code(400).send({ error: 'date, customerId, productId 为必填项' })
     }
     if (body.costPrice == null) {
-      const lastPrice = biz.getLastPurchasePrice(body.productId)
+      const lastPrice = biz.getLastPurchasePrice(ctx, body.productId)
       if (lastPrice != null) {
         body.costPrice = lastPrice
         body.costAmount = Math.round(body.tonnage * lastPrice * 100) / 100
         body.profit = Math.round((body.totalAmount - body.costAmount) * 100) / 100
       }
     }
+    body.spaceId = ctx.spaceId
     return { data: biz.createSale(body) }
   })
 
@@ -1330,13 +1384,16 @@ export async function startServer(brain: Brain, memory: MemoryManager, port = 30
   // ── Logistics ─────────────────────────────────────────────────
 
   app.get('/api/biz/logistics', async (req) => {
+    const ctx = getBizCtx(req)
     const filter = req.query as biz.BizQueryFilter
-    return { data: biz.getLogistics(filter) }
+    return { data: biz.getLogistics(ctx, filter) }
   })
 
   app.post('/api/biz/logistics', async (req, reply) => {
+    const ctx = getBizCtx(req)
     const body = req.body as any
     if (!body.date) return reply.code(400).send({ error: 'date 为必填项' })
+    body.spaceId = ctx.spaceId
     return { data: biz.createLogistics(body) }
   })
 
@@ -1351,15 +1408,18 @@ export async function startServer(brain: Brain, memory: MemoryManager, port = 30
   // ── Payments ──────────────────────────────────────────────────
 
   app.get('/api/biz/payments', async (req) => {
+    const ctx = getBizCtx(req)
     const filter = req.query as biz.BizQueryFilter
-    return { data: biz.getPayments(filter) }
+    return { data: biz.getPayments(ctx, filter) }
   })
 
   app.post('/api/biz/payments', async (req, reply) => {
+    const ctx = getBizCtx(req)
     const body = req.body as any
     if (!body.date || !body.direction || !body.counterpartyId || !body.amount) {
       return reply.code(400).send({ error: 'date, direction, counterpartyId, amount 为必填项' })
     }
+    body.spaceId = ctx.spaceId
     return { data: biz.createPayment(body) }
   })
 
@@ -1374,15 +1434,18 @@ export async function startServer(brain: Brain, memory: MemoryManager, port = 30
   // ── Invoices ──────────────────────────────────────────────────
 
   app.get('/api/biz/invoices', async (req) => {
+    const ctx = getBizCtx(req)
     const filter = req.query as biz.BizQueryFilter
-    return { data: biz.getInvoices(filter) }
+    return { data: biz.getInvoices(ctx, filter) }
   })
 
   app.post('/api/biz/invoices', async (req, reply) => {
+    const ctx = getBizCtx(req)
     const body = req.body as any
     if (!body.date || !body.direction || !body.counterpartyId || !body.amount) {
       return reply.code(400).send({ error: 'date, direction, counterpartyId, amount 为必填项' })
     }
+    body.spaceId = ctx.spaceId
     return { data: biz.createInvoice(body) }
   })
 
@@ -1460,26 +1523,30 @@ export async function startServer(brain: Brain, memory: MemoryManager, port = 30
 
   // ── Computed Views ────────────────────────────────────────────
 
-  app.get('/api/biz/inventory', async () => ({ data: biz.getInventory() }))
-  app.get('/api/biz/receivables', async () => ({ data: biz.getReceivables() }))
-  app.get('/api/biz/payables', async () => ({ data: biz.getPayables() }))
-  app.get('/api/biz/dashboard', async () => ({ data: biz.getDashboard() }))
-  app.get('/api/biz/reconciliation', async () => ({ data: biz.getProjectReconciliation() }))
+  app.get('/api/biz/inventory', async (req) => ({ data: biz.getInventory(getBizCtx(req)) }))
+  app.get('/api/biz/receivables', async (req) => ({ data: biz.getReceivables(getBizCtx(req)) }))
+  app.get('/api/biz/payables', async (req) => ({ data: biz.getPayables(getBizCtx(req)) }))
+  app.get('/api/biz/dashboard', async (req) => ({ data: biz.getDashboard(getBizCtx(req)) }))
+  app.get('/api/biz/reconciliation', async (req) => ({ data: biz.getProjectReconciliation(getBizCtx(req)) }))
 
   // ── Reports (v0.6 SaaS) ────────────────────────────────────────
 
   // Profit report: monthly P&L
   app.get('/api/biz/reports/profit', async (req) => {
-    const { dateFrom, dateTo } = req.query as { dateFrom?: string; dateTo?: string }
-    return { data: reports.getProfitReport(dateFrom, dateTo) }
+    const ctx = getBizCtx(req)
+    const { dateFrom, dateTo, customerId, supplierId } = req.query as {
+      dateFrom?: string; dateTo?: string; customerId?: string; supplierId?: string
+    }
+    return { data: reports.getProfitReport(ctx, { dateFrom, dateTo, customerId, supplierId }) }
   })
 
   // Counterparty statement (往来对账单)
   app.get('/api/biz/reports/statement/:counterpartyId', async (req, reply) => {
+    const ctx = getBizCtx(req)
     const { counterpartyId } = req.params as { counterpartyId: string }
     const { dateFrom, dateTo } = req.query as { dateFrom?: string; dateTo?: string }
     try {
-      return { data: reports.getCounterpartyStatement(counterpartyId, dateFrom, dateTo) }
+      return { data: reports.getCounterpartyStatement(ctx, counterpartyId, dateFrom, dateTo) }
     } catch (err) {
       return reply.code(404).send({ error: err instanceof Error ? err.message : String(err) })
     }
@@ -1487,8 +1554,97 @@ export async function startServer(brain: Brain, memory: MemoryManager, port = 30
 
   // Monthly overview (月度总览)
   app.get('/api/biz/reports/monthly', async (req) => {
+    const ctx = getBizCtx(req)
     const { year } = req.query as { year?: string }
-    return { data: reports.getMonthlyOverview(year ? parseInt(year) : undefined) }
+    return { data: reports.getMonthlyOverview(ctx, year ? parseInt(year) : undefined) }
+  })
+
+  // v0.7: Profit by order (按单号利润分析)
+  app.get('/api/biz/reports/profit-by-order', async (req) => {
+    const ctx = getBizCtx(req)
+    const { dateFrom, dateTo, customerId, supplierId } = req.query as {
+      dateFrom?: string; dateTo?: string; customerId?: string; supplierId?: string
+    }
+    return { data: reports.getProfitByOrder(ctx, { dateFrom, dateTo, customerId, supplierId }) }
+  })
+
+  // v0.7: Create purchase with line items (多行采购事件)
+  app.post('/api/biz/purchases-with-lines', async (req, reply) => {
+    try {
+      const ctx = getBizCtx(req)
+      const body = req.body as biz.CreatePurchaseWithLinesInput
+      body.spaceId = ctx.spaceId
+      const result = biz.createPurchaseWithLines(body)
+      return { data: result }
+    } catch (err) {
+      return reply.code(400).send({ error: err instanceof Error ? err.message : String(err) })
+    }
+  })
+
+  // v0.7: Get purchase line items
+  app.get('/api/biz/purchases/:purchaseId/lines', async (req) => {
+    const { purchaseId } = req.params as { purchaseId: string }
+    return { data: biz.getPurchaseLines(purchaseId) }
+  })
+
+  // v0.7: Update purchase line items
+  app.put('/api/biz/purchases/:purchaseId/lines', async (req, reply) => {
+    try {
+      const { purchaseId } = req.params as { purchaseId: string }
+      const { lines } = req.body as { lines: biz.CreatePurchaseLineInput[] }
+      biz.updatePurchaseLines(purchaseId, lines)
+      return { success: true }
+    } catch (err) {
+      return reply.code(400).send({ error: err instanceof Error ? err.message : String(err) })
+    }
+  })
+
+  // v0.7: Create sale with line items (多行销售事件)
+  app.post('/api/biz/sales-with-lines', async (req, reply) => {
+    try {
+      const ctx = getBizCtx(req)
+      const body = req.body as biz.CreateSaleWithLinesInput
+      body.spaceId = ctx.spaceId
+      const result = biz.createSaleWithLines(body)
+      return { data: result }
+    } catch (err) {
+      return reply.code(400).send({ error: err instanceof Error ? err.message : String(err) })
+    }
+  })
+
+  // v0.7: Get sale line items
+  app.get('/api/biz/sales/:saleId/lines', async (req) => {
+    const { saleId } = req.params as { saleId: string }
+    return { data: biz.getSaleLines(saleId) }
+  })
+
+  // v0.7: Update sale line items
+  app.put('/api/biz/sales/:saleId/lines', async (req, reply) => {
+    try {
+      const { saleId } = req.params as { saleId: string }
+      const { lines } = req.body as { lines: biz.CreatePurchaseLineInput[] }
+      biz.updateSaleLines(saleId, lines)
+      return { success: true }
+    } catch (err) {
+      return reply.code(400).send({ error: err instanceof Error ? err.message : String(err) })
+    }
+  })
+
+  // v0.7: Soft-delete bubble (记忆软删除)
+  app.delete('/api/bubbles/:id/soft', async (req, reply) => {
+    const { id } = req.params as { id: string }
+    const { reason } = req.body as { reason?: string }
+    const ok = softDeleteBubble(id, reason || '')
+    if (!ok) return reply.code(404).send({ error: '记忆不存在' })
+    return { success: true }
+  })
+
+  // v0.7: Get uninvoiced amount (未开票金额查询)
+  app.get('/api/biz/uninvoiced/:counterpartyId', async (req) => {
+    const ctx = getBizCtx(req)
+    const { counterpartyId } = req.params as { counterpartyId: string }
+    const { direction } = req.query as { direction?: 'in' | 'out' }
+    return { data: biz.getUninvoicedAmount(ctx, counterpartyId, direction || 'in') }
   })
 
   // ── Lookup (VLOOKUP replacement) ──────────────────────────────
@@ -1499,8 +1655,9 @@ export async function startServer(brain: Brain, memory: MemoryManager, port = 30
   })
 
   app.get('/api/biz/lookup/last-price', async (req) => {
+    const ctx = getBizCtx(req)
     const { productId } = req.query as { productId?: string }
-    return { data: productId ? biz.getLastPurchasePrice(productId) ?? null : null }
+    return { data: productId ? biz.getLastPurchasePrice(ctx, productId) ?? null : null }
   })
 
   // --- P2-1: OCR image import ---

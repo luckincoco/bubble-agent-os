@@ -9,10 +9,11 @@
   gap: 4px;
   padding-bottom: 8px;
   border-bottom: 1px solid rgba(255, 255, 255, 0.06);
+  overflow-x: auto;
 }
 
 .subTab {
-  padding: 6px 12px;
+  padding: 8px 14px;
   border: none;
   background: var(--bg-glass);
   color: var(--text-dim);
@@ -20,6 +21,11 @@
   border-radius: var(--radius-button);
   cursor: pointer;
   transition: all var(--duration-fast);
+  white-space: nowrap;
+}
+
+.subTab:active {
+  transform: scale(0.96);
 }
 
 .subTab[data-active="true"] {
@@ -41,7 +47,7 @@
 
 .search {
   flex: 1;
-  padding: 8px 12px;
+  padding: 10px 14px;
   background: var(--bg-glass);
   border: 1px solid rgba(255, 255, 255, 0.08);
   border-radius: var(--radius-button);
@@ -52,10 +58,11 @@
 
 .search:focus {
   border-color: var(--purple);
+  box-shadow: 0 0 0 3px rgba(124, 58, 237, 0.15);
 }
 
 .addBtn {
-  padding: 8px 14px;
+  padding: 10px 14px;
   border: none;
   background: var(--gradient-primary);
   color: #fff;
@@ -67,9 +74,13 @@
   flex-shrink: 0;
 }
 
+.addBtn:active {
+  transform: scale(0.96);
+}
+
 .formRow {
   display: flex;
-  flex-wrap: wrap;
+  flex-direction: column;
   gap: 6px;
   padding: 10px;
   background: var(--bg-glass);
@@ -77,10 +88,17 @@
   border-radius: var(--radius-button);
 }
 
+@media (min-width: 600px) {
+  .formRow {
+    flex-direction: row;
+    flex-wrap: wrap;
+  }
+}
+
 .fi {
   flex: 1;
   min-width: 80px;
-  padding: 8px 10px;
+  padding: 10px 12px;
   background: var(--bg-secondary);
   border: 1px solid rgba(255, 255, 255, 0.06);
   border-radius: var(--radius-button);
@@ -91,10 +109,11 @@
 
 .fi:focus {
   border-color: var(--purple);
+  box-shadow: 0 0 0 3px rgba(124, 58, 237, 0.15);
 }
 
 .saveBtn {
-  padding: 8px 14px;
+  padding: 10px 14px;
   border: none;
   background: var(--teal);
   color: #fff;
@@ -104,14 +123,22 @@
   cursor: pointer;
 }
 
+.saveBtn:active:not(:disabled) {
+  transform: scale(0.96);
+}
+
 .cancelBtn {
-  padding: 8px 14px;
+  padding: 10px 14px;
   border: 1px solid rgba(255, 255, 255, 0.1);
   background: none;
   color: var(--text-dim);
   font-size: 13px;
   border-radius: var(--radius-button);
   cursor: pointer;
+}
+
+.cancelBtn:active {
+  transform: scale(0.96);
 }
 
 .msg {
@@ -140,7 +167,7 @@
   display: flex;
   align-items: center;
   justify-content: space-between;
-  padding: 10px 12px;
+  padding: 12px 14px;
   background: var(--bg-glass);
   border-radius: var(--radius-button);
   transition: background var(--duration-fast);
@@ -202,7 +229,7 @@
 }
 
 .editBtn, .delBtn {
-  padding: 4px 10px;
+  padding: 8px 12px;
   border: 1px solid rgba(255, 255, 255, 0.1);
   background: none;
   color: var(--text-dim);
@@ -210,6 +237,10 @@
   border-radius: var(--radius-button);
   cursor: pointer;
   transition: all var(--duration-fast);
+}
+
+.editBtn:active, .delBtn:active {
+  transform: scale(0.96);
 }
 
 .editBtn:hover {
@@ -220,4 +251,22 @@
 .delBtn:hover {
   color: var(--text-error);
   border-color: var(--text-error);
+}
+
+/* ── Mobile responsive ──────────────────────────────────── */
+@media (max-width: 599px) {
+  .item {
+    flex-wrap: wrap;
+    gap: 8px;
+  }
+
+  .itemActions {
+    margin-left: 0;
+    width: 100%;
+    justify-content: flex-end;
+  }
+
+  .toolbar {
+    flex-wrap: wrap;
+  }
 }

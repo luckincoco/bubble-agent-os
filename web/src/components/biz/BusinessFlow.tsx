@@ -1,15 +1,15 @@
-import { useState, useEffect, type ReactNode } from 'react'
+import { useState, type ReactNode } from 'react'
 import { BizBubble } from './BizBubble'
-import { PurchaseForm, SaleForm, LogisticsForm, PaymentForm } from './EntryView'
+import { LogisticsForm, PaymentForm } from './EntryView'
+import { PurchaseEventForm } from './PurchaseEventForm'
+import { SaleEventForm } from './SaleEventForm'
 import { InvoiceForm } from './InvoiceForm'
 import { RecordList } from './RecordList'
 import { QueryView } from './QueryView'
-import { DashboardView } from './DashboardView'
 import { ReportView } from './ReportView'
-import { useBizStore } from '../../stores/bizStore'
 import s from './BusinessFlow.module.css'
 
-type BubbleId = 'purchase' | 'sale' | 'logistics' | 'payment' | 'invoice' | 'query' | 'report' | 'dashboard'
+type BubbleId = 'purchase' | 'sale' | 'logistics' | 'payment' | 'invoice' | 'query' | 'report'
 
 interface BubbleDef {
   id: BubbleId
@@ -22,11 +22,11 @@ interface BubbleDef {
 // Consistent stroke-style icons matching the NavTabs design language
 const BUBBLES: BubbleDef[] = [
   {
-    id: 'purchase', label: '采购', color: 'var(--purple)', hasRecords: true,
+    id: 'purchase', label: '采购事件', color: 'var(--purple)', hasRecords: true,
     icon: 'M20 12V8H6a2 2 0 01-2-2c0-1.1.9-2 2-2h12v4M20 12a2 2 0 010 4H6a2 2 0 01-2-2V6M4 18a2 2 0 002 2h12a2 2 0 002-2v-2',
   },
   {
-    id: 'sale', label: '销售', color: 'var(--teal)', hasRecords: true,
+    id: 'sale', label: '销售事件', color: 'var(--teal)', hasRecords: true,
     icon: 'M12 1v22M17 5H9.5a3.5 3.5 0 000 7h5a3.5 3.5 0 010 7H6',
   },
   {
@@ -42,22 +42,18 @@ const BUBBLES: BubbleDef[] = [
     icon: 'M14 2H6a2 2 0 00-2 2v16a2 2 0 002 2h12a2 2 0 002-2V8zM14 2v6h6M16 13H8M16 17H8M10 9H8',
   },
   {
-    id: 'query', label: '对账查询', color: '#EC4899',
+    id: 'query', label: '基础数据', color: '#EC4899',
     icon: 'M18 20V10M12 20V4M6 20v-6',
   },
   {
     id: 'report', label: '报表', color: '#8B5CF6',
     icon: 'M9 5H7a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2V7a2 2 0 00-2-2h-2M9 5a2 2 0 002 2h2a2 2 0 002-2M9 5a2 2 0 012-2h2a2 2 0 012 2M9 14l2 2 4-4',
   },
-  {
-    id: 'dashboard', label: '经营概览', color: '#22C55E',
-    icon: 'M22 12h-4l-3 9L9 3l-3 9H2',
-  },
 ]
 
 const FORM_MAP: Partial<Record<BubbleId, () => ReactNode>> = {
-  purchase: () => <PurchaseForm />,
-  sale: () => <SaleForm />,
+  purchase: () => <PurchaseEventForm />,
+  sale: () => <SaleEventForm />,
   logistics: () => <LogisticsForm />,
   payment: () => <PaymentForm />,
   invoice: () => <InvoiceForm />,
@@ -66,7 +62,6 @@ const FORM_MAP: Partial<Record<BubbleId, () => ReactNode>> = {
 const CONTENT_MAP: Partial<Record<BubbleId, () => ReactNode>> = {
   query: () => <QueryView />,
   report: () => <ReportView />,
-  dashboard: () => <DashboardView />,
 }
 
 type SubTab = 'entry' | 'records'
@@ -140,7 +135,6 @@ export function BusinessFlow() {
 
   return (
     <div className={s.container}>
-      <KpiBanner />
       <div className={s.grid}>
         {BUBBLES.map((b, i) => (
           <div key={b.id} className={s.cell} style={{ animationDelay: `${i * 60}ms` }}>
@@ -152,41 +146,6 @@ export function BusinessFlow() {
             />
           </div>
         ))}
-      </div>
-    </div>
-  )
-}
-
-// ── KPI Banner ──────────────────────────────────────────────────────
-
-function fmtMoney(n: number): string {
-  if (Math.abs(n) >= 10000) return (n / 10000).toFixed(1) + '万'
-  return n.toLocaleString('zh-CN', { maximumFractionDigits: 0 })
-}
-
-function KpiBanner() {
-  const { dashboard, loadDashboard } = useBizStore()
-  useEffect(() => { loadDashboard() }, [loadDashboard])
-
-  if (!dashboard) return <div className={s.kpiLoading}>加载指标...</div>
-
-  return (
-    <div className={s.kpiBanner}>
-      <div className={s.kpiCard}>
-        <span className={s.kpiLabel}>库存</span>
-        <span className={s.kpiValue}>{dashboard.totalStockTons.toFixed(1)}吨</span>
-      </div>
-      <div className={s.kpiCard}>
-        <span className={s.kpiLabel}>应收</span>
-        <span className={s.kpiValue}>&yen;{fmtMoney(dashboard.totalReceivable)}</span>
-      </div>
-      <div className={s.kpiCard}>
-        <span className={s.kpiLabel}>应付</span>
-        <span className={s.kpiValue}>&yen;{fmtMoney(dashboard.totalPayable)}</span>
-      </div>
-      <div className={s.kpiCard}>
-        <span className={s.kpiLabel}>今日</span>
-        <span className={s.kpiValue}>{dashboard.todayPurchases + dashboard.todaySales + dashboard.todayLogistics}笔</span>
       </div>
     </div>
   )

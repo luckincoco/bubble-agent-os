@@ -17,18 +17,19 @@
 .input {
   width: 100%;
   box-sizing: border-box;
-  padding: 10px 32px 10px 12px;
+  padding: 11px 32px 11px 14px;
   background: var(--bg-glass);
   border: 1px solid rgba(255, 255, 255, 0.08);
   border-radius: var(--radius-button);
   color: var(--text-primary);
   font-size: 14px;
   outline: none;
-  transition: border-color var(--duration-fast);
+  transition: border-color var(--duration-fast), box-shadow var(--duration-fast);
 }
 
 .input:focus {
   border-color: var(--purple);
+  box-shadow: 0 0 0 3px rgba(124, 58, 237, 0.15);
 }
 
 .clear {
@@ -41,7 +42,7 @@
   color: var(--text-dim);
   font-size: 18px;
   cursor: pointer;
-  padding: 0 4px;
+  padding: 4px 6px;
   line-height: 1;
 }
 
@@ -61,10 +62,17 @@
   border-radius: var(--radius-button);
   z-index: 100;
   box-shadow: 0 8px 32px rgba(0, 0, 0, 0.6);
+  animation: fadeSlideUp 0.15s ease;
+}
+
+@media (min-width: 1024px) {
+  .dropdown {
+    max-height: 260px;
+  }
 }
 
 .option {
-  padding: 8px 12px;
+  padding: 12px 14px;
   font-size: 13px;
   color: var(--text-secondary);
   cursor: pointer;
@@ -93,7 +101,7 @@
 }
 
 .quickCreate {
-  padding: 10px 12px;
+  padding: 14px;
   font-size: 13px;
   color: var(--teal);
   cursor: pointer;

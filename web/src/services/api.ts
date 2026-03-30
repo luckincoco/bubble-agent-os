@@ -29,6 +29,18 @@ export async function fetchMemories(spaceId?: string) {
   return res.json()
 }
 
+export async function softDeleteBubbleApi(id: string, reason: string): Promise<void> {
+  const res = await authFetch(`${BASE}/api/bubbles/${id}/soft`, {
+    method: 'DELETE',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ reason }),
+  })
+  if (!res.ok) {
+    const data = await res.json().catch(() => ({}))
+    throw new Error(data.error || `HTTP ${res.status}`)
+  }
+}
+
 export async function fetchHealth() {
   const res = await fetch(`${BASE}/api/health`)
   if (!res.ok) throw new Error(`HTTP ${res.status}`)
@@ -180,15 +192,21 @@ export async function activateAgent(agentId: string): Promise<void> {
 
 // ── Structured Business API (进销存 v0.5) ────────────────────────
 
+function bizUrl(path: string): string {
+  const spaceId = useAuthStore.getState().currentSpaceId
+  const sep = path.includes('?') ? '&' : '?'
+  return spaceId ? `${BASE}/api/biz${path}${sep}spaceId=${spaceId}` : `${BASE}/api/biz${path}`
+}
+
 async function bizGet<T>(path: string): Promise<T> {
-  const res = await authFetch(`${BASE}/api/biz${path}`)
+  const res = await authFetch(bizUrl(path))
   if (!res.ok) throw new Error(`HTTP ${res.status}`)
   const json = await res.json()
   return json.data
 }
 
 async function bizPost<T>(path: string, body: unknown): Promise<T> {
-  const res = await authFetch(`${BASE}/api/biz${path}`, {
+  const res = await authFetch(bizUrl(path), {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify(body),
@@ -202,7 +220,7 @@ async function bizPost<T>(path: string, body: unknown): Promise<T> {
 }
 
 async function bizPut(path: string, body: unknown): Promise<void> {
-  const res = await authFetch(`${BASE}/api/biz${path}`, {
+  const res = await authFetch(bizUrl(path), {
     method: 'PUT',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify(body),
@@ -214,7 +232,7 @@ async function bizPut(path: string, body: unknown): Promise<void> {
 }
 
 async function bizDel(path: string): Promise<void> {
-  const res = await authFetch(`${BASE}/api/biz${path}`, { method: 'DELETE' })
+  const res = await authFetch(bizUrl(path), { method: 'DELETE' })
   if (!res.ok) {
     const err = await res.json().catch(() => ({ error: `HTTP ${res.status}` }))
     throw new Error(err.error || `HTTP ${res.status}`)
@@ -280,13 +298,84 @@ export const fetchPayables = () => bizGet<PayableItem[]>('/payables')
 export const fetchBizDashboard = () => bizGet<BizDashboardData>('/dashboard')
 export const fetchReconciliation = () => bizGet<ProjectReconciliationItem[]>('/reconciliation')
 
-// Reports (v0.6 SaaS)
-export function fetchProfitReport(dateFrom?: string, dateTo?: string) {
+// v0.7: WithLines APIs (multi-line purchase/sale events)
+export interface BizLineInput {
+  productId: string
+  brand: string
+  material: string
+  spec: string
+  measureUnit: string
+  weighMode: '理计' | '过磅'
+  bundleCount?: number
+  weightPerPc?: number
+  quantity: number
+  unitPrice: number
+  taxInclusive: boolean
+  subtotal: number
+  notes?: string
+}
+
+export interface CreatePurchaseWithLinesPayload {
+  date: string
+  supplierId: string
+  location?: string
+  docNo?: string
+  projectId?: string
+  notes?: string
+  paidAmount?: number
+  paymentMethod?: string
+  paymentNotes?: string
+  lines: BizLineInput[]
+}
+
+export interface CreateSaleWithLinesPayload {
+  date: string
+  customerId: string
+  location?: string
+  docNo?: string
+  projectId?: string
+  notes?: string
+  paidAmount?: number
+  paymentMethod?: string
+  paymentNotes?: string
+  lines: BizLineInput[]
+}
+
+export const createPurchaseWithLinesApi = (data: CreatePurchaseWithLinesPayload) =>
+  bizPost<BizPurchase>('/purchases-with-lines', data)
+
+export const createSaleWithLinesApi = (data: CreateSaleWithLinesPayload) =>
+  bizPost<BizSale>('/sales-with-lines', data)
+
+// Reports (v0.6 SaaS + v0.7 enhancements)
+export interface ProfitReportFilter {
+  dateFrom?: string; dateTo?: string; customerId?: string; supplierId?: string
+}
+
+export function fetchProfitReport(filter: ProfitReportFilter = {}) {
   const params = new URLSearchParams()
-  if (dateFrom) params.set('dateFrom', dateFrom)
-  if (dateTo) params.set('dateTo', dateTo)
+  if (filter.dateFrom) params.set('dateFrom', filter.dateFrom)
+  if (filter.dateTo) params.set('dateTo', filter.dateTo)
+  if (filter.customerId) params.set('customerId', filter.customerId)
+  if (filter.supplierId) params.set('supplierId', filter.supplierId)
   const qs = params.toString()
   return bizGet<ProfitReportRow[]>(`/reports/profit${qs ? `?${qs}` : ''}`)
+}
+
+export interface ProfitByOrderRow {
+  docNo: string; date: string; supplierName: string; customerName: string
+  purchaseAmount: number; purchaseTons: number; salesAmount: number; salesTons: number
+  logisticsCost: number; grossProfit: number; margin: number
+}
+
+export function fetchProfitByOrder(filter: ProfitReportFilter = {}) {
+  const params = new URLSearchParams()
+  if (filter.dateFrom) params.set('dateFrom', filter.dateFrom)
+  if (filter.dateTo) params.set('dateTo', filter.dateTo)
+  if (filter.customerId) params.set('customerId', filter.customerId)
+  if (filter.supplierId) params.set('supplierId', filter.supplierId)
+  const qs = params.toString()
+  return bizGet<ProfitByOrderRow[]>(`/reports/profit-by-order${qs ? `?${qs}` : ''}`)
 }
 
 export function fetchCounterpartyStatement(counterpartyId: string, dateFrom?: string, dateTo?: string) {

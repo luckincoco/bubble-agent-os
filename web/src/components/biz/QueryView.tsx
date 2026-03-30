@@ -57,13 +57,13 @@ function InventoryList() {
         </div>
         {inventory.map(item => (
           <div key={item.productId} className={s.tr} data-warn={item.stockTons < 0}>
-            <span className={s.td} style={{ flex: 2 }}>
+            <span className={s.td} style={{ flex: 2 }} data-label="产品">
               <span className={s.brand}>{item.brand}</span>
               <span className={s.spec}>{item.name} {item.spec}</span>
             </span>
-            <span className={s.td}>{item.purchaseTons.toFixed(1)}</span>
-            <span className={s.td}>{item.salesTons.toFixed(1)}</span>
-            <span className={s.td} data-highlight={item.stockTons > 0}>{item.stockTons.toFixed(1)}</span>
+            <span className={s.td} data-label="采购">{item.purchaseTons.toFixed(1)}</span>
+            <span className={s.td} data-label="销售">{item.salesTons.toFixed(1)}</span>
+            <span className={s.td} data-label="库存" data-highlight={item.stockTons > 0}>{item.stockTons.toFixed(1)}</span>
           </div>
         ))}
       </div>
@@ -92,10 +92,10 @@ function ReceivableList() {
         </div>
         {receivables.map(item => (
           <div key={item.customerId} className={s.tr}>
-            <span className={s.td} style={{ flex: 2 }}>{item.name}</span>
-            <span className={s.td}>{fmtShort(item.totalSales)}</span>
-            <span className={s.td}>{fmtShort(item.received)}</span>
-            <span className={s.td} data-highlight={item.outstanding > 0}>{fmtShort(item.outstanding)}</span>
+            <span className={s.td} style={{ flex: 2 }} data-label="客户">{item.name}</span>
+            <span className={s.td} data-label="销售额">{fmtShort(item.totalSales)}</span>
+            <span className={s.td} data-label="已收">{fmtShort(item.received)}</span>
+            <span className={s.td} data-label="未收" data-highlight={item.outstanding > 0}>{fmtShort(item.outstanding)}</span>
           </div>
         ))}
       </div>
@@ -124,10 +124,10 @@ function PayableList() {
         </div>
         {payables.map(item => (
           <div key={item.supplierId} className={s.tr}>
-            <span className={s.td} style={{ flex: 2 }}>{item.name}</span>
-            <span className={s.td}>{fmtShort(item.totalPurchases)}</span>
-            <span className={s.td}>{fmtShort(item.paid)}</span>
-            <span className={s.td} data-highlight={item.outstanding > 0}>{fmtShort(item.outstanding)}</span>
+            <span className={s.td} style={{ flex: 2 }} data-label="供应商">{item.name}</span>
+            <span className={s.td} data-label="采购额">{fmtShort(item.totalPurchases)}</span>
+            <span className={s.td} data-label="已付">{fmtShort(item.paid)}</span>
+            <span className={s.td} data-label="未付" data-highlight={item.outstanding > 0}>{fmtShort(item.outstanding)}</span>
           </div>
         ))}
       </div>
@@ -166,14 +166,14 @@ function ReconciliationList() {
         </div>
         {reconciliation.map(item => (
           <div key={item.projectId} className={s.tr}>
-            <span className={s.td} style={{ flex: 2 }}>
+            <span className={s.td} style={{ flex: 2 }} data-label="项目">
               <span className={s.brand}>{item.status === 'active' ? '' : item.status === 'completed' ? '[完]' : '[停]'}</span>
               <span className={s.spec}>{item.projectName}</span>
             </span>
-            <span className={s.td}>{fmtShort(item.totalSales)}</span>
-            <span className={s.td}>{fmtShort(item.totalLogistics)}</span>
-            <span className={s.td}>{fmtShort(item.totalPaymentsIn)}</span>
-            <span className={s.td} data-highlight={item.outstanding > 0}>{fmtShort(item.outstanding)}</span>
+            <span className={s.td} data-label="销售额">{fmtShort(item.totalSales)}</span>
+            <span className={s.td} data-label="物流费">{fmtShort(item.totalLogistics)}</span>
+            <span className={s.td} data-label="已收">{fmtShort(item.totalPaymentsIn)}</span>
+            <span className={s.td} data-label="未收" data-highlight={item.outstanding > 0}>{fmtShort(item.outstanding)}</span>
           </div>
         ))}
       </div>

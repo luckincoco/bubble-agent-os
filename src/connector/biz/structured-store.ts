@@ -11,11 +11,18 @@ import { createDocLink } from './doc-engine.js'
 import type {
   BizProduct, BizCounterparty, BizProject,
   BizPurchase, BizSale, BizLogisticsRecord, BizPayment, BizInvoice,
+  BizPurchaseLine, BizSaleLine,
   InventoryItem, ReceivableItem, PayableItem, DashboardData, ProjectReconciliationItem,
   DocLink,
 } from './schema.js'
 
 const TENANT = 'default'
+
+// ── Context ─────────────────────────────────────────────────────────
+
+export interface BizContext {
+  spaceId: string
+}
 
 // ── Helpers ─────────────────────────────────────────────────────────
 
@@ -37,25 +44,25 @@ function toCamel<T>(row: Record<string, unknown>): T {
 
 // ── Products ────────────────────────────────────────────────────────
 
-export function createProduct(input: Omit<BizProduct, 'id' | 'tenantId' | 'createdAt' | 'updatedAt'>): BizProduct {
+export function createProduct(ctx: BizContext, input: Omit<BizProduct, 'id' | 'tenantId' | 'createdAt' | 'updatedAt'>): BizProduct {
   const db = getDatabase()
   const id = ulid()
   const ts = now()
   db.prepare(`
-    INSERT INTO biz_products (id, tenant_id, code, brand, name, spec, spec_display, category, measure_type, weight_per_bundle, pieces_per_bundle, lifting_fee, metadata, created_at, updated_at)
-    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-  `).run(id, TENANT, input.code, input.brand, input.name, input.spec, input.specDisplay ?? null, input.category ?? '螺纹钢', input.measureType ?? '理计', input.weightPerBundle ?? null, input.piecesPerBundle ?? null, input.liftingFee ?? null, JSON.stringify(input.metadata ?? {}), ts, ts)
+    INSERT INTO biz_products (id, tenant_id, space_id, code, brand, name, spec, spec_display, category, measure_type, weight_per_bundle, pieces_per_bundle, lifting_fee, metadata, created_at, updated_at)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+  `).run(id, TENANT, ctx.spaceId, input.code, input.brand, input.name, input.spec, input.specDisplay ?? null, input.category ?? '螺纹钢', input.measureType ?? '理计', input.weightPerBundle ?? null, input.piecesPerBundle ?? null, input.liftingFee ?? null, JSON.stringify(input.metadata ?? {}), ts, ts)
   return { id, tenantId: TENANT, createdAt: ts, updatedAt: ts, ...input } as BizProduct
 }
 
-export function getProducts(query?: string): BizProduct[] {
+export function getProducts(ctx: BizContext, query?: string): BizProduct[] {
   const db = getDatabase()
   let rows: unknown[]
   if (query) {
     const q = `%${query}%`
-    rows = db.prepare('SELECT * FROM biz_products WHERE tenant_id = ? AND (code LIKE ? OR brand LIKE ? OR name LIKE ? OR spec LIKE ?) ORDER BY code').all(TENANT, q, q, q, q)
+    rows = db.prepare('SELECT * FROM biz_products WHERE tenant_id = ? AND space_id = ? AND (code LIKE ? OR brand LIKE ? OR name LIKE ? OR spec LIKE ?) ORDER BY code').all(TENANT, ctx.spaceId, q, q, q, q)
   } else {
-    rows = db.prepare('SELECT * FROM biz_products WHERE tenant_id = ? ORDER BY code').all(TENANT)
+    rows = db.prepare('SELECT * FROM biz_products WHERE tenant_id = ? AND space_id = ? ORDER BY code').all(TENANT, ctx.spaceId)
   }
   return (rows as Record<string, unknown>[]).map(r => toCamel<BizProduct>(r))
 }
@@ -99,35 +106,35 @@ export function deleteProduct(id: string): void {
 
 // ── Counterparties ──────────────────────────────────────────────────
 
-export function createCounterparty(input: Omit<BizCounterparty, 'id' | 'tenantId' | 'createdAt' | 'updatedAt'>): BizCounterparty {
+export function createCounterparty(ctx: BizContext, input: Omit<BizCounterparty, 'id' | 'tenantId' | 'createdAt' | 'updatedAt'>): BizCounterparty {
   const db = getDatabase()
   const id = ulid()
   const ts = now()
   db.prepare(`
-    INSERT INTO biz_counterparties (id, tenant_id, name, type, contact, phone, address, bank_info, tax_id, metadata, created_at, updated_at)
-    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-  `).run(id, TENANT, input.name, input.type, input.contact ?? null, input.phone ?? null, input.address ?? null, input.bankInfo ?? null, input.taxId ?? null, JSON.stringify(input.metadata ?? {}), ts, ts)
+    INSERT INTO biz_counterparties (id, tenant_id, space_id, name, type, contact, phone, address, bank_info, tax_id, metadata, created_at, updated_at)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+  `).run(id, TENANT, ctx.spaceId, input.name, input.type, input.contact ?? null, input.phone ?? null, input.address ?? null, input.bankInfo ?? null, input.taxId ?? null, JSON.stringify(input.metadata ?? {}), ts, ts)
   return { id, tenantId: TENANT, createdAt: ts, updatedAt: ts, ...input } as BizCounterparty
 }
 
-export function getCounterparties(type?: string): BizCounterparty[] {
+export function getCounterparties(ctx: BizContext, type?: string): BizCounterparty[] {
   const db = getDatabase()
   let rows: unknown[]
   if (type) {
-    rows = db.prepare('SELECT * FROM biz_counterparties WHERE tenant_id = ? AND type = ? ORDER BY name').all(TENANT, type)
+    rows = db.prepare('SELECT * FROM biz_counterparties WHERE tenant_id = ? AND space_id = ? AND type = ? ORDER BY name').all(TENANT, ctx.spaceId, type)
   } else {
-    rows = db.prepare('SELECT * FROM biz_counterparties WHERE tenant_id = ? ORDER BY name').all(TENANT)
+    rows = db.prepare('SELECT * FROM biz_counterparties WHERE tenant_id = ? AND space_id = ? ORDER BY name').all(TENANT, ctx.spaceId)
   }
   return (rows as Record<string, unknown>[]).map(r => toCamel<BizCounterparty>(r))
 }
 
-export function findCounterpartyByName(name: string, type?: string): BizCounterparty | undefined {
+export function findCounterpartyByName(ctx: BizContext, name: string, type?: string): BizCounterparty | undefined {
   const db = getDatabase()
   let row: Record<string, unknown> | undefined
   if (type) {
-    row = db.prepare('SELECT * FROM biz_counterparties WHERE tenant_id = ? AND name = ? AND type = ?').get(TENANT, name, type) as Record<string, unknown> | undefined
+    row = db.prepare('SELECT * FROM biz_counterparties WHERE tenant_id = ? AND space_id = ? AND name = ? AND type = ?').get(TENANT, ctx.spaceId, name, type) as Record<string, unknown> | undefined
   } else {
-    row = db.prepare('SELECT * FROM biz_counterparties WHERE tenant_id = ? AND name = ?').get(TENANT, name) as Record<string, unknown> | undefined
+    row = db.prepare('SELECT * FROM biz_counterparties WHERE tenant_id = ? AND space_id = ? AND name = ?').get(TENANT, ctx.spaceId, name) as Record<string, unknown> | undefined
   }
   return row ? toCamel<BizCounterparty>(row) : undefined
 }
@@ -158,26 +165,26 @@ export function deleteCounterparty(id: string): void {
 
 // ── Projects ────────────────────────────────────────────────────────
 
-export function createProject(input: Omit<BizProject, 'id' | 'tenantId' | 'createdAt' | 'updatedAt'>): BizProject {
+export function createProject(ctx: BizContext, input: Omit<BizProject, 'id' | 'tenantId' | 'createdAt' | 'updatedAt'>): BizProject {
   const db = getDatabase()
   const id = ulid()
   const ts = now()
   db.prepare(`
-    INSERT INTO biz_projects (id, tenant_id, name, customer_id, contract_no, address, builder, developer, contact, phone, status, metadata, created_at, updated_at)
-    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-  `).run(id, TENANT, input.name, input.customerId ?? null, input.contractNo ?? null, input.address ?? null, input.builder ?? null, input.developer ?? null, input.contact ?? null, input.phone ?? null, input.status ?? 'active', JSON.stringify(input.metadata ?? {}), ts, ts)
+    INSERT INTO biz_projects (id, tenant_id, space_id, name, customer_id, contract_no, address, builder, developer, contact, phone, status, metadata, created_at, updated_at)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+  `).run(id, TENANT, ctx.spaceId, input.name, input.customerId ?? null, input.contractNo ?? null, input.address ?? null, input.builder ?? null, input.developer ?? null, input.contact ?? null, input.phone ?? null, input.status ?? 'active', JSON.stringify(input.metadata ?? {}), ts, ts)
   return { id, tenantId: TENANT, createdAt: ts, updatedAt: ts, ...input } as BizProject
 }
 
-export function getProjects(): BizProject[] {
+export function getProjects(ctx: BizContext): BizProject[] {
   const db = getDatabase()
-  const rows = db.prepare('SELECT * FROM biz_projects WHERE tenant_id = ? ORDER BY name').all(TENANT)
+  const rows = db.prepare('SELECT * FROM biz_projects WHERE tenant_id = ? AND space_id = ? ORDER BY name').all(TENANT, ctx.spaceId)
   return (rows as Record<string, unknown>[]).map(r => toCamel<BizProject>(r))
 }
 
-export function findProjectByName(name: string): BizProject | undefined {
+export function findProjectByName(ctx: BizContext, name: string): BizProject | undefined {
   const db = getDatabase()
-  const row = db.prepare('SELECT * FROM biz_projects WHERE tenant_id = ? AND name = ?').get(TENANT, name) as Record<string, unknown> | undefined
+  const row = db.prepare('SELECT * FROM biz_projects WHERE tenant_id = ? AND space_id = ? AND name = ?').get(TENANT, ctx.spaceId, name) as Record<string, unknown> | undefined
   return row ? toCamel<BizProject>(row) : undefined
 }
 
@@ -211,6 +218,7 @@ export function deleteProject(id: string): void {
 export interface CreatePurchaseInput {
   date: string
   orderNo?: string
+  docNo?: string
   supplierId: string
   productId: string
   bundleCount?: number
@@ -224,6 +232,7 @@ export interface CreatePurchaseInput {
   bubbleId?: string
   rawInput?: string
   createdBy?: string
+  spaceId?: string
 }
 
 export function createPurchase(input: CreatePurchaseInput): BizPurchase {
@@ -231,9 +240,9 @@ export function createPurchase(input: CreatePurchaseInput): BizPurchase {
   const id = ulid()
   const ts = now()
   db.prepare(`
-    INSERT INTO biz_purchases (id, tenant_id, date, order_no, supplier_id, product_id, bundle_count, tonnage, unit_price, total_amount, project_id, invoice_status, payment_status, notes, bubble_id, raw_input, created_by, doc_status, created_at, updated_at)
-    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'draft', ?, ?)
-  `).run(id, TENANT, input.date, input.orderNo ?? null, input.supplierId, input.productId, input.bundleCount ?? null, input.tonnage, input.unitPrice, input.totalAmount, input.projectId ?? null, input.invoiceStatus ?? 'none', input.paymentStatus ?? 'unpaid', input.notes ?? null, input.bubbleId ?? null, input.rawInput ?? null, input.createdBy ?? null, ts, ts)
+    INSERT INTO biz_purchases (id, tenant_id, space_id, date, order_no, doc_no, supplier_id, product_id, bundle_count, tonnage, unit_price, total_amount, project_id, invoice_status, payment_status, notes, bubble_id, raw_input, created_by, doc_status, created_at, updated_at)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'draft', ?, ?)
+  `).run(id, TENANT, input.spaceId ?? null, input.date, input.orderNo ?? null, input.docNo ?? input.orderNo ?? null, input.supplierId, input.productId, input.bundleCount ?? null, input.tonnage, input.unitPrice, input.totalAmount, input.projectId ?? null, input.invoiceStatus ?? 'none', input.paymentStatus ?? 'unpaid', input.notes ?? null, input.bubbleId ?? null, input.rawInput ?? null, input.createdBy ?? null, ts, ts)
   return toCamel<BizPurchase>(db.prepare('SELECT * FROM biz_purchases WHERE id = ?').get(id) as Record<string, unknown>)
 }
 
@@ -260,10 +269,10 @@ function applyDocStatusFilter(conditions: string[], params: unknown[], docStatus
   }
 }
 
-export function getPurchases(filter: BizQueryFilter = {}): BizPurchase[] {
+export function getPurchases(ctx: BizContext, filter: BizQueryFilter = {}): BizPurchase[] {
   const db = getDatabase()
-  const conditions = ['tenant_id = ?', 'deleted_at IS NULL']
-  const params: unknown[] = [TENANT]
+  const conditions = ['tenant_id = ?', 'space_id = ?', 'deleted_at IS NULL']
+  const params: unknown[] = [TENANT, ctx.spaceId]
   if (filter.dateFrom) { conditions.push('date >= ?'); params.push(filter.dateFrom) }
   if (filter.dateTo) { conditions.push('date <= ?'); params.push(filter.dateTo) }
   if (filter.supplierId) { conditions.push('supplier_id = ?'); params.push(filter.supplierId) }
@@ -308,6 +317,7 @@ export function deletePurchase(id: string): void {
 export interface CreateSaleInput {
   date: string
   orderNo?: string
+  docNo?: string
   customerId: string
   supplierId?: string
   productId: string
@@ -326,6 +336,7 @@ export interface CreateSaleInput {
   bubbleId?: string
   rawInput?: string
   createdBy?: string
+  spaceId?: string
 }
 
 export function createSale(input: CreateSaleInput): BizSale {
@@ -333,16 +344,16 @@ export function createSale(input: CreateSaleInput): BizSale {
   const id = ulid()
   const ts = now()
   db.prepare(`
-    INSERT INTO biz_sales (id, tenant_id, date, order_no, customer_id, supplier_id, product_id, bundle_count, tonnage, unit_price, total_amount, cost_price, cost_amount, profit, project_id, logistics_provider, invoice_status, collection_status, notes, bubble_id, raw_input, created_by, doc_status, created_at, updated_at)
-    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'draft', ?, ?)
-  `).run(id, TENANT, input.date, input.orderNo ?? null, input.customerId, input.supplierId ?? null, input.productId, input.bundleCount ?? null, input.tonnage, input.unitPrice, input.totalAmount, input.costPrice ?? null, input.costAmount ?? null, input.profit ?? null, input.projectId ?? null, input.logisticsProvider ?? null, input.invoiceStatus ?? 'none', input.collectionStatus ?? 'uncollected', input.notes ?? null, input.bubbleId ?? null, input.rawInput ?? null, input.createdBy ?? null, ts, ts)
+    INSERT INTO biz_sales (id, tenant_id, space_id, date, order_no, doc_no, customer_id, supplier_id, product_id, bundle_count, tonnage, unit_price, total_amount, cost_price, cost_amount, profit, project_id, logistics_provider, invoice_status, collection_status, notes, bubble_id, raw_input, created_by, doc_status, created_at, updated_at)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'draft', ?, ?)
+  `).run(id, TENANT, input.spaceId ?? null, input.date, input.orderNo ?? null, input.docNo ?? input.orderNo ?? null, input.customerId, input.supplierId ?? null, input.productId, input.bundleCount ?? null, input.tonnage, input.unitPrice, input.totalAmount, input.costPrice ?? null, input.costAmount ?? null, input.profit ?? null, input.projectId ?? null, input.logisticsProvider ?? null, input.invoiceStatus ?? 'none', input.collectionStatus ?? 'uncollected', input.notes ?? null, input.bubbleId ?? null, input.rawInput ?? null, input.createdBy ?? null, ts, ts)
   return toCamel<BizSale>(db.prepare('SELECT * FROM biz_sales WHERE id = ?').get(id) as Record<string, unknown>)
 }
 
-export function getSales(filter: BizQueryFilter = {}): BizSale[] {
+export function getSales(ctx: BizContext, filter: BizQueryFilter = {}): BizSale[] {
   const db = getDatabase()
-  const conditions = ['tenant_id = ?', 'deleted_at IS NULL']
-  const params: unknown[] = [TENANT]
+  const conditions = ['tenant_id = ?', 'space_id = ?', 'deleted_at IS NULL']
+  const params: unknown[] = [TENANT, ctx.spaceId]
   if (filter.dateFrom) { conditions.push('date >= ?'); params.push(filter.dateFrom) }
   if (filter.dateTo) { conditions.push('date <= ?'); params.push(filter.dateTo) }
   if (filter.customerId) { conditions.push('customer_id = ?'); params.push(filter.customerId) }
@@ -390,6 +401,7 @@ export function deleteSale(id: string): void {
 export interface CreateLogisticsInput {
   date: string
   waybillNo?: string
+  docNo?: string
   carrierId?: string
   projectId?: string
   destination?: string
@@ -405,6 +417,7 @@ export interface CreateLogisticsInput {
   bubbleId?: string
   rawInput?: string
   createdBy?: string
+  spaceId?: string
 }
 
 export function createLogistics(input: CreateLogisticsInput): BizLogisticsRecord {
@@ -415,16 +428,16 @@ export function createLogistics(input: CreateLogisticsInput): BizLogisticsRecord
   const liftingFee = input.liftingFee ?? 0
   const totalFee = input.totalFee ?? (freight + liftingFee)
   db.prepare(`
-    INSERT INTO biz_logistics (id, tenant_id, date, waybill_no, carrier_id, project_id, destination, tonnage, freight, lifting_fee, total_fee, driver, driver_phone, license_plate, settlement_status, notes, bubble_id, raw_input, created_by, doc_status, created_at, updated_at)
-    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'draft', ?, ?)
-  `).run(id, TENANT, input.date, input.waybillNo ?? null, input.carrierId ?? null, input.projectId ?? null, input.destination ?? null, input.tonnage ?? null, freight, liftingFee, totalFee, input.driver ?? null, input.driverPhone ?? null, input.licensePlate ?? null, input.settlementStatus ?? 'unpaid', input.notes ?? null, input.bubbleId ?? null, input.rawInput ?? null, input.createdBy ?? null, ts, ts)
+    INSERT INTO biz_logistics (id, tenant_id, space_id, date, waybill_no, doc_no, carrier_id, project_id, destination, tonnage, freight, lifting_fee, total_fee, driver, driver_phone, license_plate, settlement_status, notes, bubble_id, raw_input, created_by, doc_status, created_at, updated_at)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'draft', ?, ?)
+  `).run(id, TENANT, input.spaceId ?? null, input.date, input.waybillNo ?? null, input.docNo ?? input.waybillNo ?? null, input.carrierId ?? null, input.projectId ?? null, input.destination ?? null, input.tonnage ?? null, freight, liftingFee, totalFee, input.driver ?? null, input.driverPhone ?? null, input.licensePlate ?? null, input.settlementStatus ?? 'unpaid', input.notes ?? null, input.bubbleId ?? null, input.rawInput ?? null, input.createdBy ?? null, ts, ts)
   return toCamel<BizLogisticsRecord>(db.prepare('SELECT * FROM biz_logistics WHERE id = ?').get(id) as Record<string, unknown>)
 }
 
-export function getLogistics(filter: BizQueryFilter = {}): BizLogisticsRecord[] {
+export function getLogistics(ctx: BizContext, filter: BizQueryFilter = {}): BizLogisticsRecord[] {
   const db = getDatabase()
-  const conditions = ['tenant_id = ?', 'deleted_at IS NULL']
-  const params: unknown[] = [TENANT]
+  const conditions = ['tenant_id = ?', 'space_id = ?', 'deleted_at IS NULL']
+  const params: unknown[] = [TENANT, ctx.spaceId]
   if (filter.dateFrom) { conditions.push('date >= ?'); params.push(filter.dateFrom) }
   if (filter.dateTo) { conditions.push('date <= ?'); params.push(filter.dateTo) }
   if (filter.counterpartyId) { conditions.push('carrier_id = ?'); params.push(filter.counterpartyId) }
@@ -457,6 +470,7 @@ export interface CreatePaymentInput {
   bubbleId?: string
   rawInput?: string
   createdBy?: string
+  spaceId?: string
 }
 
 export function createPayment(input: CreatePaymentInput): BizPayment {
@@ -464,16 +478,16 @@ export function createPayment(input: CreatePaymentInput): BizPayment {
   const id = ulid()
   const ts = now()
   db.prepare(`
-    INSERT INTO biz_payments (id, tenant_id, date, doc_no, direction, counterparty_id, project_id, amount, method, reference_no, notes, bubble_id, raw_input, created_by, doc_status, created_at, updated_at)
-    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'draft', ?, ?)
-  `).run(id, TENANT, input.date, input.docNo ?? null, input.direction, input.counterpartyId, input.projectId ?? null, input.amount, input.method ?? null, input.referenceNo ?? null, input.notes ?? null, input.bubbleId ?? null, input.rawInput ?? null, input.createdBy ?? null, ts, ts)
+    INSERT INTO biz_payments (id, tenant_id, space_id, date, doc_no, direction, counterparty_id, project_id, amount, method, reference_no, notes, bubble_id, raw_input, created_by, doc_status, created_at, updated_at)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'draft', ?, ?)
+  `).run(id, TENANT, input.spaceId ?? null, input.date, input.docNo ?? null, input.direction, input.counterpartyId, input.projectId ?? null, input.amount, input.method ?? null, input.referenceNo ?? null, input.notes ?? null, input.bubbleId ?? null, input.rawInput ?? null, input.createdBy ?? null, ts, ts)
   return toCamel<BizPayment>(db.prepare('SELECT * FROM biz_payments WHERE id = ?').get(id) as Record<string, unknown>)
 }
 
-export function getPayments(filter: BizQueryFilter = {}): BizPayment[] {
+export function getPayments(ctx: BizContext, filter: BizQueryFilter = {}): BizPayment[] {
   const db = getDatabase()
-  const conditions = ['tenant_id = ?', 'deleted_at IS NULL']
-  const params: unknown[] = [TENANT]
+  const conditions = ['tenant_id = ?', 'space_id = ?', 'deleted_at IS NULL']
+  const params: unknown[] = [TENANT, ctx.spaceId]
   if (filter.dateFrom) { conditions.push('date >= ?'); params.push(filter.dateFrom) }
   if (filter.dateTo) { conditions.push('date <= ?'); params.push(filter.dateTo) }
   if (filter.counterpartyId) { conditions.push('counterparty_id = ?'); params.push(filter.counterpartyId) }
@@ -511,6 +525,7 @@ export interface CreateInvoiceInput {
   notes?: string
   bubbleId?: string
   createdBy?: string
+  spaceId?: string
 }
 
 export function createInvoice(input: CreateInvoiceInput): BizInvoice {
@@ -521,16 +536,16 @@ export function createInvoice(input: CreateInvoiceInput): BizInvoice {
   const taxAmount = input.taxAmount ?? Math.round(input.amount * taxRate * 100) / 100
   const totalAmount = input.totalAmount ?? Math.round((input.amount + taxAmount) * 100) / 100
   db.prepare(`
-    INSERT INTO biz_invoices (id, tenant_id, date, direction, invoice_no, counterparty_id, amount, tax_rate, tax_amount, total_amount, related_ids, status, notes, bubble_id, created_by, doc_status, created_at, updated_at)
-    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'draft', ?, ?)
-  `).run(id, TENANT, input.date, input.direction, input.invoiceNo ?? null, input.counterpartyId, input.amount, taxRate, taxAmount, totalAmount, JSON.stringify(input.relatedIds ?? []), input.status ?? 'registered', input.notes ?? null, input.bubbleId ?? null, input.createdBy ?? null, ts, ts)
+    INSERT INTO biz_invoices (id, tenant_id, space_id, date, direction, invoice_no, counterparty_id, amount, tax_rate, tax_amount, total_amount, related_ids, status, notes, bubble_id, created_by, doc_status, created_at, updated_at)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'draft', ?, ?)
+  `).run(id, TENANT, input.spaceId ?? null, input.date, input.direction, input.invoiceNo ?? null, input.counterpartyId, input.amount, taxRate, taxAmount, totalAmount, JSON.stringify(input.relatedIds ?? []), input.status ?? 'registered', input.notes ?? null, input.bubbleId ?? null, input.createdBy ?? null, ts, ts)
   return toCamel<BizInvoice>(db.prepare('SELECT * FROM biz_invoices WHERE id = ?').get(id) as Record<string, unknown>)
 }
 
-export function getInvoices(filter: BizQueryFilter = {}): BizInvoice[] {
+export function getInvoices(ctx: BizContext, filter: BizQueryFilter = {}): BizInvoice[] {
   const db = getDatabase()
-  const conditions = ['tenant_id = ?', 'deleted_at IS NULL']
-  const params: unknown[] = [TENANT]
+  const conditions = ['tenant_id = ?', 'space_id = ?', 'deleted_at IS NULL']
+  const params: unknown[] = [TENANT, ctx.spaceId]
   if (filter.dateFrom) { conditions.push('date >= ?'); params.push(filter.dateFrom) }
   if (filter.dateTo) { conditions.push('date <= ?'); params.push(filter.dateTo) }
   if (filter.counterpartyId) {
@@ -555,7 +570,7 @@ export function deleteInvoice(id: string): void {
 // Drafts and cancelled documents are excluded from stock/AR/AP calculations.
 const ACTIVE_STATUS = "doc_status IN ('confirmed','completed')"
 
-export function getInventory(): InventoryItem[] {
+export function getInventory(ctx: BizContext): InventoryItem[] {
   const db = getDatabase()
   const rows = db.prepare(`
     SELECT
@@ -565,18 +580,18 @@ export function getInventory(): InventoryItem[] {
       COALESCE(pur.tons, 0) - COALESCE(sal.tons, 0) as stock_tons
     FROM biz_products p
     LEFT JOIN (
-      SELECT product_id, SUM(tonnage) as tons FROM biz_purchases WHERE tenant_id = ? AND deleted_at IS NULL AND ${ACTIVE_STATUS} GROUP BY product_id
+      SELECT product_id, SUM(tonnage) as tons FROM biz_purchases WHERE tenant_id = ? AND space_id = ? AND deleted_at IS NULL AND ${ACTIVE_STATUS} GROUP BY product_id
     ) pur ON pur.product_id = p.id
     LEFT JOIN (
-      SELECT product_id, SUM(tonnage) as tons FROM biz_sales WHERE tenant_id = ? AND deleted_at IS NULL AND ${ACTIVE_STATUS} GROUP BY product_id
+      SELECT product_id, SUM(tonnage) as tons FROM biz_sales WHERE tenant_id = ? AND space_id = ? AND deleted_at IS NULL AND ${ACTIVE_STATUS} GROUP BY product_id
     ) sal ON sal.product_id = p.id
-    WHERE p.tenant_id = ?
+    WHERE p.tenant_id = ? AND p.space_id = ?
     ORDER BY p.brand, p.spec
-  `).all(TENANT, TENANT, TENANT) as Record<string, unknown>[]
+  `).all(TENANT, ctx.spaceId, TENANT, ctx.spaceId, TENANT, ctx.spaceId) as Record<string, unknown>[]
   return rows.map(r => toCamel<InventoryItem>(r))
 }
 
-export function getReceivables(): ReceivableItem[] {
+export function getReceivables(ctx: BizContext): ReceivableItem[] {
   const db = getDatabase()
   const rows = db.prepare(`
     SELECT
@@ -586,19 +601,19 @@ export function getReceivables(): ReceivableItem[] {
       COALESCE(s.total, 0) - COALESCE(pay.received, 0) as outstanding
     FROM biz_counterparties c
     LEFT JOIN (
-      SELECT customer_id, SUM(total_amount) as total FROM biz_sales WHERE tenant_id = ? AND deleted_at IS NULL AND ${ACTIVE_STATUS} GROUP BY customer_id
+      SELECT customer_id, SUM(total_amount) as total FROM biz_sales WHERE tenant_id = ? AND space_id = ? AND deleted_at IS NULL AND ${ACTIVE_STATUS} GROUP BY customer_id
     ) s ON s.customer_id = c.id
     LEFT JOIN (
-      SELECT counterparty_id, SUM(amount) as received FROM biz_payments WHERE tenant_id = ? AND direction = 'in' AND deleted_at IS NULL AND ${ACTIVE_STATUS} GROUP BY counterparty_id
+      SELECT counterparty_id, SUM(amount) as received FROM biz_payments WHERE tenant_id = ? AND space_id = ? AND direction = 'in' AND deleted_at IS NULL AND ${ACTIVE_STATUS} GROUP BY counterparty_id
     ) pay ON pay.counterparty_id = c.id
-    WHERE c.tenant_id = ? AND c.type IN ('customer', 'both')
+    WHERE c.tenant_id = ? AND c.space_id = ? AND c.type IN ('customer', 'both')
     AND (COALESCE(s.total, 0) > 0 OR COALESCE(pay.received, 0) > 0)
     ORDER BY outstanding DESC
-  `).all(TENANT, TENANT, TENANT) as Record<string, unknown>[]
+  `).all(TENANT, ctx.spaceId, TENANT, ctx.spaceId, TENANT, ctx.spaceId) as Record<string, unknown>[]
   return rows.map(r => toCamel<ReceivableItem>(r))
 }
 
-export function getPayables(): PayableItem[] {
+export function getPayables(ctx: BizContext): PayableItem[] {
   const db = getDatabase()
   const rows = db.prepare(`
     SELECT
@@ -608,55 +623,55 @@ export function getPayables(): PayableItem[] {
       COALESCE(p.total, 0) - COALESCE(pay.paid, 0) as outstanding
     FROM biz_counterparties c
     LEFT JOIN (
-      SELECT supplier_id, SUM(total_amount) as total FROM biz_purchases WHERE tenant_id = ? AND deleted_at IS NULL AND ${ACTIVE_STATUS} GROUP BY supplier_id
+      SELECT supplier_id, SUM(total_amount) as total FROM biz_purchases WHERE tenant_id = ? AND space_id = ? AND deleted_at IS NULL AND ${ACTIVE_STATUS} GROUP BY supplier_id
     ) p ON p.supplier_id = c.id
     LEFT JOIN (
-      SELECT counterparty_id, SUM(amount) as paid FROM biz_payments WHERE tenant_id = ? AND direction = 'out' AND deleted_at IS NULL AND ${ACTIVE_STATUS} GROUP BY counterparty_id
+      SELECT counterparty_id, SUM(amount) as paid FROM biz_payments WHERE tenant_id = ? AND space_id = ? AND direction = 'out' AND deleted_at IS NULL AND ${ACTIVE_STATUS} GROUP BY counterparty_id
     ) pay ON pay.counterparty_id = c.id
-    WHERE c.tenant_id = ? AND c.type IN ('supplier', 'both')
+    WHERE c.tenant_id = ? AND c.space_id = ? AND c.type IN ('supplier', 'both')
     AND (COALESCE(p.total, 0) > 0 OR COALESCE(pay.paid, 0) > 0)
     ORDER BY outstanding DESC
-  `).all(TENANT, TENANT, TENANT) as Record<string, unknown>[]
+  `).all(TENANT, ctx.spaceId, TENANT, ctx.spaceId, TENANT, ctx.spaceId) as Record<string, unknown>[]
   return rows.map(r => toCamel<PayableItem>(r))
 }
 
-export function getDashboard(): DashboardData {
+export function getDashboard(ctx: BizContext): DashboardData {
   const db = getDatabase()
   const today = new Date().toISOString().slice(0, 10)
 
   // Today counts include all statuses (drafts too — they represent today's activity)
-  const todayPurchases = (db.prepare('SELECT COUNT(*) as cnt FROM biz_purchases WHERE tenant_id = ? AND date = ? AND deleted_at IS NULL').get(TENANT, today) as { cnt: number }).cnt
-  const todaySales = (db.prepare('SELECT COUNT(*) as cnt FROM biz_sales WHERE tenant_id = ? AND date = ? AND deleted_at IS NULL').get(TENANT, today) as { cnt: number }).cnt
-  const todayLogistics = (db.prepare('SELECT COUNT(*) as cnt FROM biz_logistics WHERE tenant_id = ? AND date = ? AND deleted_at IS NULL').get(TENANT, today) as { cnt: number }).cnt
+  const todayPurchases = (db.prepare('SELECT COUNT(*) as cnt FROM biz_purchases WHERE tenant_id = ? AND space_id = ? AND date = ? AND deleted_at IS NULL').get(TENANT, ctx.spaceId, today) as { cnt: number }).cnt
+  const todaySales = (db.prepare('SELECT COUNT(*) as cnt FROM biz_sales WHERE tenant_id = ? AND space_id = ? AND date = ? AND deleted_at IS NULL').get(TENANT, ctx.spaceId, today) as { cnt: number }).cnt
+  const todayLogistics = (db.prepare('SELECT COUNT(*) as cnt FROM biz_logistics WHERE tenant_id = ? AND space_id = ? AND date = ? AND deleted_at IS NULL').get(TENANT, ctx.spaceId, today) as { cnt: number }).cnt
 
   // Stock/AR/AP only count confirmed + completed
   const stockRow = db.prepare(`
     SELECT
       COALESCE(SUM(pur.tons), 0) - COALESCE(SUM(sal.tons), 0) as total
     FROM (SELECT 1) dummy
-    LEFT JOIN (SELECT SUM(tonnage) as tons FROM biz_purchases WHERE tenant_id = ? AND deleted_at IS NULL AND ${ACTIVE_STATUS}) pur ON 1=1
-    LEFT JOIN (SELECT SUM(tonnage) as tons FROM biz_sales WHERE tenant_id = ? AND deleted_at IS NULL AND ${ACTIVE_STATUS}) sal ON 1=1
-  `).get(TENANT, TENANT) as { total: number }
+    LEFT JOIN (SELECT SUM(tonnage) as tons FROM biz_purchases WHERE tenant_id = ? AND space_id = ? AND deleted_at IS NULL AND ${ACTIVE_STATUS}) pur ON 1=1
+    LEFT JOIN (SELECT SUM(tonnage) as tons FROM biz_sales WHERE tenant_id = ? AND space_id = ? AND deleted_at IS NULL AND ${ACTIVE_STATUS}) sal ON 1=1
+  `).get(TENANT, ctx.spaceId, TENANT, ctx.spaceId) as { total: number }
 
   const recvRow = db.prepare(`
-    SELECT COALESCE(SUM(s.total_amount), 0) - COALESCE((SELECT SUM(amount) FROM biz_payments WHERE tenant_id = ? AND direction = 'in' AND deleted_at IS NULL AND ${ACTIVE_STATUS}), 0) as total
-    FROM biz_sales s WHERE s.tenant_id = ? AND s.deleted_at IS NULL AND s.${ACTIVE_STATUS}
-  `).get(TENANT, TENANT) as { total: number }
+    SELECT COALESCE(SUM(s.total_amount), 0) - COALESCE((SELECT SUM(amount) FROM biz_payments WHERE tenant_id = ? AND space_id = ? AND direction = 'in' AND deleted_at IS NULL AND ${ACTIVE_STATUS}), 0) as total
+    FROM biz_sales s WHERE s.tenant_id = ? AND s.space_id = ? AND s.deleted_at IS NULL AND s.${ACTIVE_STATUS}
+  `).get(TENANT, ctx.spaceId, TENANT, ctx.spaceId) as { total: number }
 
   const payRow = db.prepare(`
-    SELECT COALESCE(SUM(p.total_amount), 0) - COALESCE((SELECT SUM(amount) FROM biz_payments WHERE tenant_id = ? AND direction = 'out' AND deleted_at IS NULL AND ${ACTIVE_STATUS}), 0) as total
-    FROM biz_purchases p WHERE p.tenant_id = ? AND p.deleted_at IS NULL AND p.${ACTIVE_STATUS}
-  `).get(TENANT, TENANT) as { total: number }
+    SELECT COALESCE(SUM(p.total_amount), 0) - COALESCE((SELECT SUM(amount) FROM biz_payments WHERE tenant_id = ? AND space_id = ? AND direction = 'out' AND deleted_at IS NULL AND ${ACTIVE_STATUS}), 0) as total
+    FROM biz_purchases p WHERE p.tenant_id = ? AND p.space_id = ? AND p.deleted_at IS NULL AND p.${ACTIVE_STATUS}
+  `).get(TENANT, ctx.spaceId, TENANT, ctx.spaceId) as { total: number }
 
   // Recent 5 transactions (all statuses — shows recent activity)
   const recent = db.prepare(`
     SELECT '采购' as type, date, supplier_id as cid, product_id as pid, total_amount as amount, created_at
-    FROM biz_purchases WHERE tenant_id = ? AND deleted_at IS NULL
+    FROM biz_purchases WHERE tenant_id = ? AND space_id = ? AND deleted_at IS NULL
     UNION ALL
     SELECT '销售' as type, date, customer_id as cid, product_id as pid, total_amount as amount, created_at
-    FROM biz_sales WHERE tenant_id = ? AND deleted_at IS NULL
+    FROM biz_sales WHERE tenant_id = ? AND space_id = ? AND deleted_at IS NULL
     ORDER BY created_at DESC LIMIT 5
-  `).all(TENANT, TENANT) as Array<{ type: string; date: string; cid: string; pid: string; amount: number }>
+  `).all(TENANT, ctx.spaceId, TENANT, ctx.spaceId) as Array<{ type: string; date: string; cid: string; pid: string; amount: number }>
 
   const recentTransactions = recent.map(r => {
     const cp = r.cid ? (db.prepare('SELECT name FROM biz_counterparties WHERE id = ?').get(r.cid) as { name: string } | undefined) : undefined
@@ -688,46 +703,46 @@ export function lookupProduct(code: string): BizProduct | undefined {
 }
 
 /** Fuzzy find counterparty by partial name match */
-export function fuzzyFindCounterparty(name: string, type?: string): BizCounterparty | undefined {
+export function fuzzyFindCounterparty(ctx: BizContext, name: string, type?: string): BizCounterparty | undefined {
   const db = getDatabase()
   // Try exact match first
   let row: Record<string, unknown> | undefined
   if (type) {
-    row = db.prepare('SELECT * FROM biz_counterparties WHERE tenant_id = ? AND name = ? AND type = ?').get(TENANT, name, type) as Record<string, unknown> | undefined
+    row = db.prepare('SELECT * FROM biz_counterparties WHERE tenant_id = ? AND space_id = ? AND name = ? AND type = ?').get(TENANT, ctx.spaceId, name, type) as Record<string, unknown> | undefined
   } else {
-    row = db.prepare('SELECT * FROM biz_counterparties WHERE tenant_id = ? AND name = ?').get(TENANT, name) as Record<string, unknown> | undefined
+    row = db.prepare('SELECT * FROM biz_counterparties WHERE tenant_id = ? AND space_id = ? AND name = ?').get(TENANT, ctx.spaceId, name) as Record<string, unknown> | undefined
   }
   if (row) return toCamel<BizCounterparty>(row)
 
   // Try LIKE match
   const q = `%${name}%`
   if (type) {
-    row = db.prepare('SELECT * FROM biz_counterparties WHERE tenant_id = ? AND name LIKE ? AND type = ? LIMIT 1').get(TENANT, q, type) as Record<string, unknown> | undefined
+    row = db.prepare('SELECT * FROM biz_counterparties WHERE tenant_id = ? AND space_id = ? AND name LIKE ? AND type = ? LIMIT 1').get(TENANT, ctx.spaceId, q, type) as Record<string, unknown> | undefined
   } else {
-    row = db.prepare('SELECT * FROM biz_counterparties WHERE tenant_id = ? AND name LIKE ? LIMIT 1').get(TENANT, q) as Record<string, unknown> | undefined
+    row = db.prepare('SELECT * FROM biz_counterparties WHERE tenant_id = ? AND space_id = ? AND name LIKE ? LIMIT 1').get(TENANT, ctx.spaceId, q) as Record<string, unknown> | undefined
   }
   return row ? toCamel<BizCounterparty>(row) : undefined
 }
 
 /** Fuzzy find product by partial code, brand, or spec match */
-export function fuzzyFindProduct(query: string): BizProduct | undefined {
+export function fuzzyFindProduct(ctx: BizContext, query: string): BizProduct | undefined {
   const db = getDatabase()
   const q = `%${query}%`
-  const row = db.prepare('SELECT * FROM biz_products WHERE tenant_id = ? AND (code LIKE ? OR brand LIKE ? OR spec LIKE ?) LIMIT 1').get(TENANT, q, q, q) as Record<string, unknown> | undefined
+  const row = db.prepare('SELECT * FROM biz_products WHERE tenant_id = ? AND space_id = ? AND (code LIKE ? OR brand LIKE ? OR spec LIKE ?) LIMIT 1').get(TENANT, ctx.spaceId, q, q, q) as Record<string, unknown> | undefined
   return row ? toCamel<BizProduct>(row) : undefined
 }
 
 // ── Last purchase price (for cost price auto-fill) ──────────────────
 
-export function getLastPurchasePrice(productId: string): number | undefined {
+export function getLastPurchasePrice(ctx: BizContext, productId: string): number | undefined {
   const db = getDatabase()
-  const row = db.prepare('SELECT unit_price FROM biz_purchases WHERE tenant_id = ? AND product_id = ? AND deleted_at IS NULL ORDER BY date DESC, created_at DESC LIMIT 1').get(TENANT, productId) as { unit_price: number } | undefined
+  const row = db.prepare('SELECT unit_price FROM biz_purchases WHERE tenant_id = ? AND space_id = ? AND product_id = ? AND deleted_at IS NULL ORDER BY date DESC, created_at DESC LIMIT 1').get(TENANT, ctx.spaceId, productId) as { unit_price: number } | undefined
   return row?.unit_price
 }
 
 // ── Project Reconciliation (项目对账) ───────────────────────────────
 
-export function getProjectReconciliation(): ProjectReconciliationItem[] {
+export function getProjectReconciliation(ctx: BizContext): ProjectReconciliationItem[] {
   const db = getDatabase()
   const rows = db.prepare(`
     SELECT
@@ -739,20 +754,20 @@ export function getProjectReconciliation(): ProjectReconciliationItem[] {
       COALESCE(s.total, 0) - COALESCE(pi.total, 0) as outstanding
     FROM biz_projects p
     LEFT JOIN (
-      SELECT project_id, SUM(total_amount) as total FROM biz_sales WHERE tenant_id = ? AND deleted_at IS NULL AND ${ACTIVE_STATUS} AND project_id IS NOT NULL GROUP BY project_id
+      SELECT project_id, SUM(total_amount) as total FROM biz_sales WHERE tenant_id = ? AND space_id = ? AND deleted_at IS NULL AND ${ACTIVE_STATUS} AND project_id IS NOT NULL GROUP BY project_id
     ) s ON s.project_id = p.id
     LEFT JOIN (
-      SELECT project_id, SUM(total_fee) as total FROM biz_logistics WHERE tenant_id = ? AND deleted_at IS NULL AND ${ACTIVE_STATUS} AND project_id IS NOT NULL GROUP BY project_id
+      SELECT project_id, SUM(total_fee) as total FROM biz_logistics WHERE tenant_id = ? AND space_id = ? AND deleted_at IS NULL AND ${ACTIVE_STATUS} AND project_id IS NOT NULL GROUP BY project_id
     ) l ON l.project_id = p.id
     LEFT JOIN (
-      SELECT project_id, SUM(amount) as total FROM biz_payments WHERE tenant_id = ? AND direction = 'in' AND deleted_at IS NULL AND ${ACTIVE_STATUS} AND project_id IS NOT NULL GROUP BY project_id
+      SELECT project_id, SUM(amount) as total FROM biz_payments WHERE tenant_id = ? AND space_id = ? AND direction = 'in' AND deleted_at IS NULL AND ${ACTIVE_STATUS} AND project_id IS NOT NULL GROUP BY project_id
     ) pi ON pi.project_id = p.id
     LEFT JOIN (
-      SELECT project_id, SUM(amount) as total FROM biz_payments WHERE tenant_id = ? AND direction = 'out' AND deleted_at IS NULL AND ${ACTIVE_STATUS} AND project_id IS NOT NULL GROUP BY project_id
+      SELECT project_id, SUM(amount) as total FROM biz_payments WHERE tenant_id = ? AND space_id = ? AND direction = 'out' AND deleted_at IS NULL AND ${ACTIVE_STATUS} AND project_id IS NOT NULL GROUP BY project_id
     ) po ON po.project_id = p.id
-    WHERE p.tenant_id = ?
+    WHERE p.tenant_id = ? AND p.space_id = ?
     ORDER BY outstanding DESC
-  `).all(TENANT, TENANT, TENANT, TENANT, TENANT) as Record<string, unknown>[]
+  `).all(TENANT, ctx.spaceId, TENANT, ctx.spaceId, TENANT, ctx.spaceId, TENANT, ctx.spaceId, TENANT, ctx.spaceId) as Record<string, unknown>[]
   return rows.map(r => toCamel<ProjectReconciliationItem>(r))
 }
 
@@ -776,6 +791,7 @@ export function createLogisticsFromSale(saleId: string): CreateFromResult<BizLog
     projectId: sale.projectId,
     tonnage: sale.tonnage,
     notes: `由销售单创建`,
+    spaceId: row.space_id as string ?? undefined,
   })
 
   // Mark source on the newly created doc
@@ -803,6 +819,7 @@ export function createInvoiceFromSale(saleId: string): CreateFromResult<BizInvoi
     amount: sale.totalAmount,
     relatedIds: [saleId],
     notes: `由销售单创建`,
+    spaceId: row.space_id as string ?? undefined,
   })
 
   db.prepare('UPDATE biz_invoices SET source_type = ?, source_id = ? WHERE id = ?').run('sale', saleId, doc.id)
@@ -829,6 +846,7 @@ export function createInvoiceFromPurchase(purchaseId: string): CreateFromResult<
     amount: purchase.totalAmount,
     relatedIds: [purchaseId],
     notes: `由采购单创建`,
+    spaceId: row.space_id as string ?? undefined,
   })
 
   db.prepare('UPDATE biz_invoices SET source_type = ?, source_id = ? WHERE id = ?').run('purchase', purchaseId, doc.id)
@@ -845,4 +863,392 @@ export function linkPaymentToInvoice(paymentId: string, invoiceId: string): DocL
   const link = createDocLink('invoice', invoiceId, 'payment', paymentId)
   logger.info(`DocLink: payment/${paymentId} → invoice/${invoiceId}`)
   return link
+}
+
+// ── v0.7: Purchase with Line Items ──────────────────────────────────
+
+export interface CreatePurchaseLineInput {
+  productId?: string
+  brand?: string
+  material?: string
+  spec?: string
+  measureUnit?: string
+  weighMode?: '理计' | '过磅'
+  bundleCount?: number
+  weightPerPc?: number
+  quantity: number
+  unitPrice: number
+  taxInclusive?: boolean
+  subtotal: number
+  notes?: string
+}
+
+export interface CreatePurchaseWithLinesInput {
+  date: string
+  location?: string
+  supplierId: string
+  docNo?: string
+  projectId?: string
+  notes?: string
+  bubbleId?: string
+  rawInput?: string
+  createdBy?: string
+  lines: CreatePurchaseLineInput[]
+  payment?: {
+    amount: number
+    method?: string
+    notes?: string
+  }
+  spaceId?: string
+}
+
+export function createPurchaseWithLines(input: CreatePurchaseWithLinesInput): { purchase: BizPurchase; lines: BizPurchaseLine[]; paymentId?: string } {
+  const db = getDatabase()
+  const purchaseId = ulid()
+  const ts = now()
+
+  const totalTonnage = input.lines.reduce((sum, l) => sum + l.quantity, 0)
+  const totalAmount = input.lines.reduce((sum, l) => sum + l.subtotal, 0)
+  const avgUnitPrice = totalTonnage > 0 ? Math.round((totalAmount / totalTonnage) * 100) / 100 : 0
+
+  const paidAmount = input.payment?.amount ?? 0
+  const unpaidAmount = Math.round((totalAmount - paidAmount) * 100) / 100
+  const paymentStatus = paidAmount <= 0 ? 'unpaid' : (paidAmount >= totalAmount ? 'paid' : 'partial')
+
+  const result = db.transaction(() => {
+    db.prepare(`
+      INSERT INTO biz_purchases (id, tenant_id, space_id, date, order_no, supplier_id, product_id, bundle_count, tonnage, unit_price, total_amount, project_id, invoice_status, payment_status, notes, bubble_id, raw_input, created_by, doc_status, location, doc_no, paid_amount, unpaid_amount, payment_method, payment_notes, created_at, updated_at)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'none', ?, ?, ?, ?, ?, 'draft', ?, ?, ?, ?, ?, ?, ?, ?)
+    `).run(
+      purchaseId, TENANT, input.spaceId ?? null, input.date, null,
+      input.supplierId,
+      input.lines[0]?.productId ?? null,
+      null,
+      totalTonnage, avgUnitPrice, totalAmount,
+      input.projectId ?? null,
+      paymentStatus,
+      input.notes ?? null, input.bubbleId ?? null, input.rawInput ?? null, input.createdBy ?? null,
+      input.location ?? null, input.docNo ?? null,
+      paidAmount, unpaidAmount,
+      input.payment?.method ?? null, input.payment?.notes ?? null,
+      ts, ts,
+    )
+
+    const insertLine = db.prepare(`
+      INSERT INTO biz_purchase_lines (id, purchase_id, line_no, product_id, brand, material, spec, measure_unit, weigh_mode, bundle_count, weight_per_pc, quantity, unit_price, tax_inclusive, subtotal, notes, created_at, updated_at)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    `)
+
+    const lines: BizPurchaseLine[] = input.lines.map((line, i) => {
+      const lineId = ulid()
+      insertLine.run(
+        lineId, purchaseId, i + 1,
+        line.productId ?? null,
+        line.brand ?? null, line.material ?? null, line.spec ?? null,
+        line.measureUnit ?? '吨', line.weighMode ?? '理计',
+        line.bundleCount ?? null, line.weightPerPc ?? null,
+        line.quantity, line.unitPrice,
+        (line.taxInclusive ?? true) ? 1 : 0,
+        line.subtotal, line.notes ?? null,
+        ts, ts,
+      )
+      return {
+        id: lineId, purchaseId, lineNo: i + 1,
+        productId: line.productId, brand: line.brand, material: line.material, spec: line.spec,
+        measureUnit: line.measureUnit ?? '吨', weighMode: line.weighMode ?? '理计',
+        bundleCount: line.bundleCount, weightPerPc: line.weightPerPc,
+        quantity: line.quantity, unitPrice: line.unitPrice,
+        taxInclusive: line.taxInclusive ?? true,
+        subtotal: line.subtotal, notes: line.notes,
+        createdAt: ts, updatedAt: ts,
+      }
+    })
+
+    let paymentId: string | undefined
+    if (paidAmount > 0) {
+      const payment = createPayment({
+        date: input.date,
+        direction: 'out',
+        counterpartyId: input.supplierId,
+        projectId: input.projectId,
+        amount: paidAmount,
+        method: input.payment?.method,
+        notes: input.payment?.notes ?? '采购付款',
+        createdBy: input.createdBy,
+        spaceId: input.spaceId,
+      })
+      paymentId = payment.id
+      createDocLink('purchase', purchaseId, 'payment', payment.id)
+    }
+
+    const purchase = toCamel<BizPurchase>(
+      db.prepare('SELECT * FROM biz_purchases WHERE id = ?').get(purchaseId) as Record<string, unknown>
+    )
+    return { purchase, lines, paymentId }
+  })()
+
+  return result
+}
+
+export function getPurchaseLines(purchaseId: string): BizPurchaseLine[] {
+  const db = getDatabase()
+  const rows = db.prepare(
+    'SELECT * FROM biz_purchase_lines WHERE purchase_id = ? ORDER BY line_no'
+  ).all(purchaseId) as Record<string, unknown>[]
+  return rows.map(r => {
+    const line = toCamel<BizPurchaseLine>(r)
+    line.taxInclusive = (r.tax_inclusive as number) === 1
+    return line
+  })
+}
+
+export function updatePurchaseLines(purchaseId: string, lines: CreatePurchaseLineInput[]): BizPurchaseLine[] {
+  const db = getDatabase()
+  const ts = now()
+
+  return db.transaction(() => {
+    db.prepare('DELETE FROM biz_purchase_lines WHERE purchase_id = ?').run(purchaseId)
+
+    const insertLine = db.prepare(`
+      INSERT INTO biz_purchase_lines (id, purchase_id, line_no, product_id, brand, material, spec, measure_unit, weigh_mode, bundle_count, weight_per_pc, quantity, unit_price, tax_inclusive, subtotal, notes, created_at, updated_at)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    `)
+
+    const result: BizPurchaseLine[] = lines.map((line, i) => {
+      const lineId = ulid()
+      insertLine.run(
+        lineId, purchaseId, i + 1,
+        line.productId ?? null,
+        line.brand ?? null, line.material ?? null, line.spec ?? null,
+        line.measureUnit ?? '吨', line.weighMode ?? '理计',
+        line.bundleCount ?? null, line.weightPerPc ?? null,
+        line.quantity, line.unitPrice,
+        (line.taxInclusive ?? true) ? 1 : 0,
+        line.subtotal, line.notes ?? null,
+        ts, ts,
+      )
+      return {
+        id: lineId, purchaseId, lineNo: i + 1,
+        productId: line.productId, brand: line.brand, material: line.material, spec: line.spec,
+        measureUnit: line.measureUnit ?? '吨', weighMode: line.weighMode ?? '理计',
+        bundleCount: line.bundleCount, weightPerPc: line.weightPerPc,
+        quantity: line.quantity, unitPrice: line.unitPrice,
+        taxInclusive: line.taxInclusive ?? true,
+        subtotal: line.subtotal, notes: line.notes,
+        createdAt: ts, updatedAt: ts,
+      }
+    })
+
+    const totalTonnage = lines.reduce((sum, l) => sum + l.quantity, 0)
+    const totalAmount = lines.reduce((sum, l) => sum + l.subtotal, 0)
+    const avgUnitPrice = totalTonnage > 0 ? Math.round((totalAmount / totalTonnage) * 100) / 100 : 0
+    db.prepare(
+      'UPDATE biz_purchases SET tonnage = ?, unit_price = ?, total_amount = ?, product_id = ?, updated_at = ? WHERE id = ?'
+    ).run(totalTonnage, avgUnitPrice, totalAmount, lines[0]?.productId ?? null, ts, purchaseId)
+
+    return result
+  })()
+}
+
+// ── v0.7: Sale with Line Items ──────────────────────────────────────
+
+export interface CreateSaleWithLinesInput {
+  date: string
+  location?: string
+  customerId: string
+  supplierId?: string
+  docNo?: string
+  projectId?: string
+  logisticsProvider?: string
+  notes?: string
+  bubbleId?: string
+  rawInput?: string
+  createdBy?: string
+  lines: CreatePurchaseLineInput[]
+  payment?: {
+    amount: number
+    method?: string
+    notes?: string
+  }
+  spaceId?: string
+}
+
+export function createSaleWithLines(input: CreateSaleWithLinesInput): { sale: BizSale; lines: BizSaleLine[]; paymentId?: string } {
+  const db = getDatabase()
+  const saleId = ulid()
+  const ts = now()
+
+  const totalTonnage = input.lines.reduce((sum, l) => sum + l.quantity, 0)
+  const totalAmount = input.lines.reduce((sum, l) => sum + l.subtotal, 0)
+  const avgUnitPrice = totalTonnage > 0 ? Math.round((totalAmount / totalTonnage) * 100) / 100 : 0
+
+  const paidAmount = input.payment?.amount ?? 0
+  const unpaidAmount = Math.round((totalAmount - paidAmount) * 100) / 100
+  const collectionStatus = paidAmount <= 0 ? 'uncollected' : (paidAmount >= totalAmount ? 'collected' : 'partial')
+
+  const result = db.transaction(() => {
+    db.prepare(`
+      INSERT INTO biz_sales (id, tenant_id, space_id, date, order_no, customer_id, supplier_id, product_id, bundle_count, tonnage, unit_price, total_amount, cost_price, cost_amount, profit, project_id, logistics_provider, invoice_status, collection_status, notes, bubble_id, raw_input, created_by, doc_status, location, doc_no, paid_amount, unpaid_amount, payment_method, payment_notes, created_at, updated_at)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'none', ?, ?, ?, ?, ?, 'draft', ?, ?, ?, ?, ?, ?, ?, ?)
+    `).run(
+      saleId, TENANT, input.spaceId ?? null, input.date, null,
+      input.customerId, input.supplierId ?? null,
+      input.lines[0]?.productId ?? null, null,
+      totalTonnage, avgUnitPrice, totalAmount,
+      null, null, null,
+      input.projectId ?? null, input.logisticsProvider ?? null,
+      collectionStatus,
+      input.notes ?? null, input.bubbleId ?? null, input.rawInput ?? null, input.createdBy ?? null,
+      input.location ?? null, input.docNo ?? null,
+      paidAmount, unpaidAmount,
+      input.payment?.method ?? null, input.payment?.notes ?? null,
+      ts, ts,
+    )
+
+    const insertLine = db.prepare(`
+      INSERT INTO biz_sale_lines (id, sale_id, line_no, product_id, brand, material, spec, measure_unit, weigh_mode, bundle_count, weight_per_pc, quantity, unit_price, tax_inclusive, subtotal, notes, created_at, updated_at)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    `)
+
+    const lines: BizSaleLine[] = input.lines.map((line, i) => {
+      const lineId = ulid()
+      insertLine.run(
+        lineId, saleId, i + 1,
+        line.productId ?? null,
+        line.brand ?? null, line.material ?? null, line.spec ?? null,
+        line.measureUnit ?? '吨', line.weighMode ?? '理计',
+        line.bundleCount ?? null, line.weightPerPc ?? null,
+        line.quantity, line.unitPrice,
+        (line.taxInclusive ?? true) ? 1 : 0,
+        line.subtotal, line.notes ?? null,
+        ts, ts,
+      )
+      return {
+        id: lineId, saleId, lineNo: i + 1,
+        productId: line.productId, brand: line.brand, material: line.material, spec: line.spec,
+        measureUnit: line.measureUnit ?? '吨', weighMode: line.weighMode ?? '理计',
+        bundleCount: line.bundleCount, weightPerPc: line.weightPerPc,
+        quantity: line.quantity, unitPrice: line.unitPrice,
+        taxInclusive: line.taxInclusive ?? true,
+        subtotal: line.subtotal, notes: line.notes,
+        createdAt: ts, updatedAt: ts,
+      }
+    })
+
+    let paymentId: string | undefined
+    if (paidAmount > 0) {
+      const payment = createPayment({
+        date: input.date,
+        direction: 'in',
+        counterpartyId: input.customerId,
+        projectId: input.projectId,
+        amount: paidAmount,
+        method: input.payment?.method,
+        notes: input.payment?.notes ?? '销售收款',
+        createdBy: input.createdBy,
+        spaceId: input.spaceId,
+      })
+      paymentId = payment.id
+      createDocLink('sale', saleId, 'payment', payment.id)
+    }
+
+    const sale = toCamel<BizSale>(
+      db.prepare('SELECT * FROM biz_sales WHERE id = ?').get(saleId) as Record<string, unknown>
+    )
+    return { sale, lines, paymentId }
+  })()
+
+  return result
+}
+
+export function getSaleLines(saleId: string): BizSaleLine[] {
+  const db = getDatabase()
+  const rows = db.prepare(
+    'SELECT * FROM biz_sale_lines WHERE sale_id = ? ORDER BY line_no'
+  ).all(saleId) as Record<string, unknown>[]
+  return rows.map(r => {
+    const line = toCamel<BizSaleLine>(r)
+    line.taxInclusive = (r.tax_inclusive as number) === 1
+    return line
+  })
+}
+
+export function updateSaleLines(saleId: string, lines: CreatePurchaseLineInput[]): BizSaleLine[] {
+  const db = getDatabase()
+  const ts = now()
+
+  return db.transaction(() => {
+    db.prepare('DELETE FROM biz_sale_lines WHERE sale_id = ?').run(saleId)
+
+    const insertLine = db.prepare(`
+      INSERT INTO biz_sale_lines (id, sale_id, line_no, product_id, brand, material, spec, measure_unit, weigh_mode, bundle_count, weight_per_pc, quantity, unit_price, tax_inclusive, subtotal, notes, created_at, updated_at)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    `)
+
+    const result: BizSaleLine[] = lines.map((line, i) => {
+      const lineId = ulid()
+      insertLine.run(
+        lineId, saleId, i + 1,
+        line.productId ?? null,
+        line.brand ?? null, line.material ?? null, line.spec ?? null,
+        line.measureUnit ?? '吨', line.weighMode ?? '理计',
+        line.bundleCount ?? null, line.weightPerPc ?? null,
+        line.quantity, line.unitPrice,
+        (line.taxInclusive ?? true) ? 1 : 0,
+        line.subtotal, line.notes ?? null,
+        ts, ts,
+      )
+      return {
+        id: lineId, saleId, lineNo: i + 1,
+        productId: line.productId, brand: line.brand, material: line.material, spec: line.spec,
+        measureUnit: line.measureUnit ?? '吨', weighMode: line.weighMode ?? '理计',
+        bundleCount: line.bundleCount, weightPerPc: line.weightPerPc,
+        quantity: line.quantity, unitPrice: line.unitPrice,
+        taxInclusive: line.taxInclusive ?? true,
+        subtotal: line.subtotal, notes: line.notes,
+        createdAt: ts, updatedAt: ts,
+      }
+    })
+
+    const totalTonnage = lines.reduce((sum, l) => sum + l.quantity, 0)
+    const totalAmount = lines.reduce((sum, l) => sum + l.subtotal, 0)
+    const avgUnitPrice = totalTonnage > 0 ? Math.round((totalAmount / totalTonnage) * 100) / 100 : 0
+    db.prepare(
+      'UPDATE biz_sales SET tonnage = ?, unit_price = ?, total_amount = ?, product_id = ?, updated_at = ? WHERE id = ?'
+    ).run(totalTonnage, avgUnitPrice, totalAmount, lines[0]?.productId ?? null, ts, saleId)
+
+    return result
+  })()
+}
+
+// ── v0.7: Invoice hint (未开票金额查询) ─────────────────────────────
+
+export function getUninvoicedAmount(ctx: BizContext, counterpartyId: string, direction: 'in' | 'out'): { totalAmount: number; invoicedAmount: number; uninvoicedAmount: number } {
+  const db = getDatabase()
+
+  let totalAmount = 0
+  if (direction === 'out') {
+    const row = db.prepare(`
+      SELECT COALESCE(SUM(total_amount), 0) as total
+      FROM biz_sales WHERE tenant_id = ? AND space_id = ? AND customer_id = ? AND deleted_at IS NULL AND ${ACTIVE_STATUS}
+    `).get(TENANT, ctx.spaceId, counterpartyId) as { total: number }
+    totalAmount = row.total
+  } else {
+    const row = db.prepare(`
+      SELECT COALESCE(SUM(total_amount), 0) as total
+      FROM biz_purchases WHERE tenant_id = ? AND space_id = ? AND supplier_id = ? AND deleted_at IS NULL AND ${ACTIVE_STATUS}
+    `).get(TENANT, ctx.spaceId, counterpartyId) as { total: number }
+    totalAmount = row.total
+  }
+
+  const invoiceDir = direction === 'out' ? 'out' : 'in'
+  const invRow = db.prepare(`
+    SELECT COALESCE(SUM(total_amount), 0) as total
+    FROM biz_invoices WHERE tenant_id = ? AND space_id = ? AND counterparty_id = ? AND direction = ? AND deleted_at IS NULL AND ${ACTIVE_STATUS}
+  `).get(TENANT, ctx.spaceId, counterpartyId, invoiceDir) as { total: number }
+
+  const invoicedAmount = invRow.total
+  const uninvoicedAmount = Math.round((totalAmount - invoicedAmount) * 100) / 100
+
+  return { totalAmount, invoicedAmount, uninvoicedAmount }
 }

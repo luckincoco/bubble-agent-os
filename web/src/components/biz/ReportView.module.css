@@ -16,7 +16,7 @@
 
 .tab {
   flex: 1;
-  padding: 8px 0;
+  padding: 10px 0;
   font-size: 13px;
   font-weight: 500;
   border: none;
@@ -25,6 +25,10 @@
   color: rgba(255, 255, 255, 0.5);
   cursor: pointer;
   transition: all 0.2s;
+}
+
+.tab:active {
+  transform: scale(0.96);
 }
 
 .tab[data-active='true'] {
@@ -37,13 +41,15 @@
   display: flex;
   gap: 8px;
   align-items: flex-end;
+  flex-wrap: wrap;
 }
 
 .filterField {
   display: flex;
   flex-direction: column;
   gap: 4px;
-  flex: 1;
+  flex: 1 1 auto;
+  min-width: 100px;
 }
 
 .filterLabel {
@@ -52,7 +58,7 @@
 }
 
 .filterInput {
-  padding: 6px 8px;
+  padding: 10px 12px;
   border-radius: 6px;
   border: 1px solid rgba(255, 255, 255, 0.1);
   background: rgba(255, 255, 255, 0.05);
@@ -60,8 +66,14 @@
   font-size: 13px;
 }
 
+.filterInput:focus {
+  outline: none;
+  border-color: var(--teal, #2dd4bf);
+  box-shadow: 0 0 0 3px rgba(45, 212, 191, 0.15);
+}
+
 .filterBtn {
-  padding: 6px 14px;
+  padding: 10px 14px;
   border-radius: 6px;
   border: none;
   background: var(--teal, #2dd4bf);
@@ -70,6 +82,10 @@
   font-weight: 600;
   cursor: pointer;
   white-space: nowrap;
+}
+
+.filterBtn:active:not(:disabled) {
+  transform: scale(0.96);
 }
 
 /* ── Table ────────────────────────────────────────────────────────── */
@@ -197,9 +213,93 @@
   -webkit-overflow-scrolling: touch;
 }
 
+/* v0.7: Chart container */
+.chartWrap {
+  height: 220px;
+  padding: 8px;
+  background: var(--bg-glass);
+  border-radius: var(--radius-card);
+  border: 1px solid rgba(255, 255, 255, 0.06);
+}
+
 /* ── Footer totals ────────────────────────────────────────────────── */
 .table tfoot td {
   font-weight: 700;
   border-top: 2px solid rgba(255, 255, 255, 0.15);
   padding-top: 8px;
+}
+
+/* ── Mobile card layout ────────────────────────────────────────────── */
+@media (max-width: 599px) {
+  .table thead {
+    display: none;
+  }
+
+  .table tbody tr {
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+    padding: 12px 14px;
+    border-bottom: 1px solid rgba(255, 255, 255, 0.06);
+  }
+
+  .table tbody tr:hover td {
+    background: transparent;
+  }
+
+  .table td {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    padding: 2px 0;
+    border-bottom: none;
+    text-align: right;
+  }
+
+  .table td::before {
+    content: attr(data-label);
+    font-size: 11px;
+    color: rgba(255, 255, 255, 0.5);
+    text-align: left;
+    flex-shrink: 0;
+    margin-right: 12px;
+  }
+
+  .numCell {
+    text-align: right;
+  }
+
+  .table tfoot tr {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 4px;
+    padding: 12px 14px;
+  }
+
+  .table tfoot td {
+    flex: 1;
+    min-width: 45%;
+    border-top: none;
+    padding-top: 0;
+  }
+
+  .table tfoot td:first-child {
+    flex: 0 0 100%;
+    font-weight: 700;
+    border-top: 2px solid rgba(255, 255, 255, 0.15);
+    padding-top: 8px;
+    margin-bottom: 4px;
+  }
+
+  .filterRow {
+    gap: 6px;
+  }
+
+  .filterField {
+    min-width: 80px;
+  }
+
+  .summaryCard {
+    min-width: 80px;
+  }
 }

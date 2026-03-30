@@ -42,73 +42,75 @@ export function Header() {
   }
 
   return (
-    <header className={s.header}>
-      <div className={s.logo}>B</div>
-      <span className={s.title}>Bubble Agent</span>
-      <div className={s.spacer} />
-      {spaces.length > 1 && (
-        <select
-          className={s.spaceSelect}
-          value={currentSpaceId || ''}
-          onChange={(e) => switchSpace(e.target.value)}
-        >
-          {spaces.map((sp) => (
-            <option key={sp.id} value={sp.id}>{sp.name}</option>
-          ))}
-        </select>
-      )}
-      {spaces.length === 1 && currentSpace && (
-        <span className={s.spaceName}>{currentSpace.name}</span>
-      )}
-      <div className={s.dot} data-status={status} title={status} />
-      {user && (
-        <div className={s.userMenu}>
-          <button className={s.userBtn} onClick={() => setShowMenu(!showMenu)}>
-            {user.displayName}
-          </button>
-          {showMenu && (
-            <div className={s.pwdPanel}>
-              <button
-                className={s.menuItem}
-                onClick={() => { setShowModules(true); setShowMenu(false) }}
-              >
-                功能模块
-              </button>
-              <button
-                className={s.menuItem}
-                onClick={() => { setShowPwd(!showPwd) }}
-              >
-                修改密码
-              </button>
-              {showPwd && (
-                <>
-                  <input
-                    className={s.pwdInput}
-                    type="password"
-                    placeholder="旧密码"
-                    value={oldPwd}
-                    onChange={(e) => setOldPwd(e.target.value)}
-                  />
-                  <input
-                    className={s.pwdInput}
-                    type="password"
-                    placeholder="新密码 (至少6位)"
-                    value={newPwd}
-                    onChange={(e) => setNewPwd(e.target.value)}
-                  />
-                  <button className={s.pwdBtn} onClick={handleChangePwd} disabled={pwdLoading}>
-                    {pwdLoading ? '...' : '确认修改'}
-                  </button>
-                  {pwdMsg && <div className={s.pwdMsg}>{pwdMsg}</div>}
-                </>
-              )}
-              <div className={s.menuDivider} />
-              <button className={s.logoutLink} onClick={logout}>退出登录</button>
-            </div>
-          )}
-        </div>
-      )}
+    <>
+      <header className={s.header}>
+        <div className={s.logo}>B</div>
+        <span className={s.title}>Bubble Agent</span>
+        <div className={s.spacer} />
+        {spaces.length > 1 && (
+          <select
+            className={s.spaceSelect}
+            value={currentSpaceId || ''}
+            onChange={(e) => switchSpace(e.target.value)}
+          >
+            {spaces.map((sp) => (
+              <option key={sp.id} value={sp.id}>{sp.name}</option>
+            ))}
+          </select>
+        )}
+        {spaces.length === 1 && currentSpace && (
+          <span className={s.spaceName}>{currentSpace.name}</span>
+        )}
+        <div className={s.dot} data-status={status} title={status} />
+        {user && (
+          <div className={s.userMenu}>
+            <button className={s.userBtn} onClick={() => setShowMenu(!showMenu)}>
+              {user.displayName}
+            </button>
+            {showMenu && (
+              <div className={s.pwdPanel}>
+                <button
+                  className={s.menuItem}
+                  onClick={() => { setShowModules(true); setShowMenu(false) }}
+                >
+                  功能模块
+                </button>
+                <button
+                  className={s.menuItem}
+                  onClick={() => { setShowPwd(!showPwd) }}
+                >
+                  修改密码
+                </button>
+                {showPwd && (
+                  <>
+                    <input
+                      className={s.pwdInput}
+                      type="password"
+                      placeholder="旧密码"
+                      value={oldPwd}
+                      onChange={(e) => setOldPwd(e.target.value)}
+                    />
+                    <input
+                      className={s.pwdInput}
+                      type="password"
+                      placeholder="新密码 (至少6位)"
+                      value={newPwd}
+                      onChange={(e) => setNewPwd(e.target.value)}
+                    />
+                    <button className={s.pwdBtn} onClick={handleChangePwd} disabled={pwdLoading}>
+                      {pwdLoading ? '...' : '确认修改'}
+                    </button>
+                    {pwdMsg && <div className={s.pwdMsg}>{pwdMsg}</div>}
+                  </>
+                )}
+                <div className={s.menuDivider} />
+                <button className={s.logoutLink} onClick={logout}>退出登录</button>
+              </div>
+            )}
+          </div>
+        )}
+      </header>
       {showModules && <ModuleSettings onClose={() => setShowModules(false)} />}
-    </header>
+    </>
   )
 }

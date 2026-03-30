@@ -1,4 +1,5 @@
 .card {
+  position: relative;
   padding: 14px;
   background: var(--bg-glass);
   backdrop-filter: blur(12px);
@@ -84,4 +85,98 @@
   border-radius: 2px;
   background: var(--gradient-secondary);
   transition: width var(--duration-normal);
+}
+
+/* v0.7: Delete button & dialog */
+.deleteBtn {
+  background: none;
+  border: none;
+  color: var(--text-dim);
+  cursor: pointer;
+  padding: 2px;
+  border-radius: 4px;
+  opacity: 0;
+  transition: opacity var(--duration-normal), color var(--duration-normal);
+  flex-shrink: 0;
+}
+
+.card:hover .deleteBtn {
+  opacity: 0.7;
+}
+
+.deleteBtn:hover {
+  opacity: 1 !important;
+  color: #ef4444;
+}
+
+.deleteOverlay {
+  position: absolute;
+  inset: 0;
+  background: rgba(0, 0, 0, 0.6);
+  backdrop-filter: blur(4px);
+  border-radius: var(--radius-card);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 12px;
+  z-index: 10;
+}
+
+.deleteDialog {
+  width: 100%;
+}
+
+.deleteTitle {
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--text-primary);
+  margin-bottom: 8px;
+}
+
+.deleteReason {
+  width: 100%;
+  background: var(--bg-secondary);
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  border-radius: 6px;
+  color: var(--text-primary);
+  font-size: 12px;
+  padding: 6px 8px;
+  resize: none;
+  outline: none;
+  font-family: inherit;
+}
+
+.deleteReason:focus {
+  border-color: rgba(124, 58, 237, 0.5);
+}
+
+.deleteActions {
+  display: flex;
+  gap: 8px;
+  margin-top: 8px;
+  justify-content: flex-end;
+}
+
+.cancelBtn, .confirmDeleteBtn {
+  font-size: 12px;
+  padding: 4px 12px;
+  border-radius: 6px;
+  border: none;
+  cursor: pointer;
+  font-family: inherit;
+}
+
+.cancelBtn {
+  background: var(--bg-secondary);
+  color: var(--text-secondary);
+}
+
+.confirmDeleteBtn {
+  background: #ef4444;
+  color: #fff;
+}
+
+.confirmDeleteBtn:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
 }

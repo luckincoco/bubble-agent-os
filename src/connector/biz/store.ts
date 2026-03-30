@@ -14,6 +14,7 @@ import {
   createPurchase, createSale, createLogistics, createPayment,
   getLastPurchasePrice,
 } from './structured-store.js'
+import type { BizContext } from './structured-store.js'
 
 export interface StoreResult {
   bubbleId: string
@@ -180,6 +181,7 @@ export class BizStore {
   }
 
   async store(record: BizRecord, spaceId?: string): Promise<StoreResult> {
+    const ctx: BizContext = { spaceId: spaceId ?? '' }
     const counterparty = getCounterparty(record) ?? ''
     const mainAmount = getMainAmount(record)
 
@@ -237,7 +239,7 @@ export class BizStore {
     // ── Dual-write to structured biz_* table ──────────────────────
     let structuredId: string | undefined
     try {
-      structuredId = this.writeStructured(record, bubble.id)
+      structuredId = this.writeStructured(ctx, record, bubble.id)
     } catch (err) {
       logger.warn('BizStore: structured write failed (bubble saved OK):', err instanceof Error ? err.message : String(err))
     }
@@ -257,20 +259,20 @@ export class BizStore {
 
   // ── Resolve name → ID helpers (auto-create if missing) ─────────
 
-  private resolveCounterpartyId(name: string, type: 'supplier' | 'customer' | 'logistics' | 'both'): string {
-    const found = fuzzyFindCounterparty(name, type)
+  private resolveCounterpartyId(ctx: BizContext, name: string, type: 'supplier' | 'customer' | 'logistics' | 'both'): string {
+    const found = fuzzyFindCounterparty(ctx, name, type)
     if (found) return found.id
-    const created = createCounterparty({ name, type })
+    const created = createCounterparty(ctx, { name, type })
     logger.info(`BizStore: auto-created ${type} counterparty "${name}" → ${created.id}`)
     return created.id
   }
 
-  private resolveProductId(name: string, spec?: string): string {
+  private resolveProductId(ctx: BizContext, name: string, spec?: string): string {
     const query = spec ? `${name} ${spec}` : name
-    const found = fuzzyFindProduct(query)
+    const found = fuzzyFindProduct(ctx, query)
     if (found) return found.id
     const code = spec ? `${name}-${spec}` : name
-    const created = createProduct({
+    const created = createProduct(ctx, {
       code, brand: '', name, spec: spec ?? '',
       category: '螺纹钢', measureType: '理计',
     })
@@ -278,23 +280,23 @@ export class BizStore {
     return created.id
   }
 
-  private resolveProjectId(name: string): string {
-    const found = findProjectByName(name)
+  private resolveProjectId(ctx: BizContext, name: string): string {
+    const found = findProjectByName(ctx, name)
     if (found) return found.id
-    const created = createProject({ name, status: 'active' })
+    const created = createProject(ctx, { name, status: 'active' })
     logger.info(`BizStore: auto-created project "${name}" → ${created.id}`)
     return created.id
   }
 
   // ── Write to structured biz_* table ───────────────────────────
 
-  private writeStructured(record: BizRecord, bubbleId: string): string | undefined {
-    const projectId = record.project ? this.resolveProjectId(record.project) : undefined
+  private writeStructured(ctx: BizContext, record: BizRecord, bubbleId: string): string | undefined {
+    const projectId = record.project ? this.resolveProjectId(ctx, record.project) : undefined
 
     switch (record.bizType) {
       case 'procurement': {
-        const supplierId = this.resolveCounterpartyId(record.supplier, 'supplier')
-        const productId = this.resolveProductId(record.product, record.spec)
+        const supplierId = this.resolveCounterpartyId(ctx, record.supplier, 'supplier')
+        const productId = this.resolveProductId(ctx, record.product, record.spec)
         const totalAmount = record.totalAmount ?? record.quantity * record.unitPrice
         return createPurchase({
           date: record.date, supplierId, productId,
@@ -302,13 +304,14 @@ export class BizStore {
           projectId, invoiceStatus: record.invoiceStatus ?? 'none',
           paymentStatus: record.paymentStatus ?? 'unpaid',
           bubbleId, rawInput: record.rawInput,
+          spaceId: ctx.spaceId,
         }).id
       }
       case 'sales': {
-        const customerId = this.resolveCounterpartyId(record.customer, 'customer')
-        const productId = this.resolveProductId(record.product, record.spec)
+        const customerId = this.resolveCounterpartyId(ctx, record.customer, 'customer')
+        const productId = this.resolveProductId(ctx, record.product, record.spec)
         const totalAmount = record.totalAmount ?? record.quantity * record.unitPrice
-        const costPrice = getLastPurchasePrice(productId)
+        const costPrice = getLastPurchasePrice(ctx, productId)
         const costAmount = costPrice != null ? Math.round(record.quantity * costPrice * 100) / 100 : undefined
         const profit = costAmount != null ? Math.round((totalAmount - costAmount) * 100) / 100 : undefined
         return createSale({
@@ -318,24 +321,27 @@ export class BizStore {
           projectId, invoiceStatus: record.invoiceStatus ?? 'none',
           collectionStatus: record.collectionStatus ?? 'uncollected',
           bubbleId, rawInput: record.rawInput,
+          spaceId: ctx.spaceId,
         }).id
       }
       case 'payment': {
-        const counterpartyId = this.resolveCounterpartyId(record.counterparty, 'both')
+        const counterpartyId = this.resolveCounterpartyId(ctx, record.counterparty, 'both')
         const direction: 'in' | 'out' = record.direction === '收' ? 'in' : 'out'
         return createPayment({
           date: record.date, direction, counterpartyId, projectId,
           amount: record.amount, method: record.method,
           bubbleId, rawInput: record.rawInput,
+          spaceId: ctx.spaceId,
         }).id
       }
       case 'logistics': {
-        const carrierId = record.carrier ? this.resolveCounterpartyId(record.carrier, 'logistics') : undefined
+        const carrierId = record.carrier ? this.resolveCounterpartyId(ctx, record.carrier, 'logistics') : undefined
         return createLogistics({
           date: record.date, carrierId, projectId,
           destination: record.destination, tonnage: record.tonnage,
           freight: record.freight, liftingFee: record.liftingFee,
           bubbleId, rawInput: record.rawInput,
+          spaceId: ctx.spaceId,
         }).id
       }
     }

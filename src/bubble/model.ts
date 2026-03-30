@@ -82,7 +82,7 @@ function generateSummary(title: string, content: string): string {
 
 export function getBubble(id: string, spaceIds?: string[]): Bubble | null {
   const db = getDatabase()
-  let sql = 'SELECT * FROM bubbles WHERE id = ?'
+  let sql = 'SELECT * FROM bubbles WHERE id = ? AND deleted_at IS NULL'
   const params: unknown[] = [id]
 
   if (spaceIds?.length) {
@@ -100,7 +100,7 @@ export function getBubble(id: string, spaceIds?: string[]): Bubble | null {
 
 export function findBubblesByType(type: BubbleType, limit = 50, spaceIds?: string[]): Bubble[] {
   const db = getDatabase()
-  let sql = 'SELECT * FROM bubbles WHERE type = ?'
+  let sql = 'SELECT * FROM bubbles WHERE type = ? AND deleted_at IS NULL'
   const params: unknown[] = [type]
 
   if (spaceIds?.length) {
@@ -157,7 +157,7 @@ export function searchBubbles(query: string, limit = 20, spaceIds?: string[]): B
     const pattern = `%${query}%`
     const rows = db.prepare(`
       SELECT * FROM bubbles
-      WHERE (content LIKE ? OR title LIKE ? OR tags LIKE ?)${spaceFilter}
+      WHERE deleted_at IS NULL AND (content LIKE ? OR title LIKE ? OR tags LIKE ?)${spaceFilter}
       ORDER BY accessed_at DESC LIMIT ?
     `).all(pattern, pattern, pattern, ...spaceParams, limit) as any[]
     return rows.map(rowToBubble)
@@ -173,7 +173,7 @@ export function searchBubbles(query: string, limit = 20, spaceIds?: string[]): B
 
   const rows = db.prepare(`
     SELECT * FROM bubbles
-    WHERE (${conditions})${spaceFilter}
+    WHERE deleted_at IS NULL AND (${conditions})${spaceFilter}
     ORDER BY accessed_at DESC LIMIT ?
   `).all(...params, ...spaceParams, limit) as any[]
   return rows.map(rowToBubble)
@@ -181,7 +181,7 @@ export function searchBubbles(query: string, limit = 20, spaceIds?: string[]): B
 
 export function getAllMemoryBubbles(spaceIds?: string[]): Bubble[] {
   const db = getDatabase()
-  let sql = "SELECT * FROM bubbles WHERE type = 'memory'"
+  let sql = "SELECT * FROM bubbles WHERE type = 'memory' AND deleted_at IS NULL"
   const params: unknown[] = []
 
   if (spaceIds?.length) {
@@ -198,6 +198,15 @@ export function getAllMemoryBubbles(spaceIds?: string[]): Bubble[] {
 export function deleteBubble(id: string): boolean {
   const db = getDatabase()
   const result = db.prepare('DELETE FROM bubbles WHERE id = ?').run(id)
+  return result.changes > 0
+}
+
+/** Soft-delete a bubble: mark as deleted with a reason (v0.7) */
+export function softDeleteBubble(id: string, reason: string): boolean {
+  const db = getDatabase()
+  const result = db.prepare(
+    'UPDATE bubbles SET deleted_at = ?, delete_reason = ?, updated_at = ? WHERE id = ? AND deleted_at IS NULL'
+  ).run(Date.now(), reason, Date.now(), id)
   return result.changes > 0
 }
 

@@ -1,0 +1,233 @@
+.form {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  padding: 0 0 calc(16px + var(--safe-bottom, 0px));
+}
+
+.field {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.label {
+  font-size: 12px;
+  color: var(--text-dim);
+  font-weight: 500;
+}
+
+.input {
+  padding: 11px 14px;
+  background: var(--bg-glass);
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  border-radius: var(--radius-button);
+  color: var(--text-primary);
+  font-size: 14px;
+  outline: none;
+  transition: border-color var(--duration-fast), box-shadow var(--duration-fast);
+  width: 100%;
+  box-sizing: border-box;
+}
+
+.input:focus {
+  border-color: var(--purple);
+  box-shadow: 0 0 0 3px rgba(124, 58, 237, 0.15);
+}
+
+.row {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.row > * {
+  flex: 1;
+  min-width: 0;
+}
+
+@media (min-width: 600px) {
+  .row {
+    flex-direction: row;
+  }
+}
+
+/* 3-column row (理计: 件数/件重/理计重量) */
+.row3 {
+  display: flex;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+
+.row3 > * {
+  flex: 1 1 100%;
+  min-width: 80px;
+}
+
+@media (min-width: 600px) {
+  .row3 > * {
+    flex: 1 1 calc(33% - 8px);
+  }
+}
+
+.toggleRow {
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.toggle {
+  flex: 1;
+  padding: 10px 6px;
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  background: var(--bg-secondary);
+  color: var(--text-dim);
+  font-size: 13px;
+  border-radius: var(--radius-button);
+  cursor: pointer;
+  transition: all var(--duration-fast);
+  white-space: nowrap;
+  min-width: 0;
+}
+
+.toggle:active {
+  transform: scale(0.96);
+}
+
+.toggle[data-active="true"] {
+  background: var(--gradient-primary);
+  color: #fff;
+  border-color: transparent;
+}
+
+/* Section dividers */
+.section {
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--text-secondary);
+  padding: 8px 0 4px;
+  border-top: 1px solid rgba(255, 255, 255, 0.06);
+  margin-top: 4px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+
+/* Line item card */
+.lineCard {
+  background: var(--bg-glass);
+  border: 1px solid rgba(255, 255, 255, 0.06);
+  border-radius: var(--radius-card);
+  padding: 12px;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  transition: border-color var(--duration-fast);
+}
+
+@media (min-width: 1024px) {
+  .lineCard {
+    padding: 16px;
+  }
+  .lineCard:hover {
+    border-color: rgba(255, 255, 255, 0.12);
+  }
+}
+
+.lineHeader {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+
+.lineNo {
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--text-dim);
+}
+
+.removeBtn {
+  background: none;
+  border: none;
+  color: var(--text-dim);
+  cursor: pointer;
+  padding: 4px;
+  border-radius: 4px;
+  transition: color var(--duration-fast);
+}
+
+.removeBtn:hover {
+  color: #ef4444;
+}
+
+.lineSubtotal {
+  font-size: 14px;
+  font-weight: 600;
+  color: var(--teal);
+  text-align: right;
+}
+
+/* Add line button */
+.addLineBtn {
+  padding: 10px;
+  border: 1px dashed rgba(255, 255, 255, 0.15);
+  background: transparent;
+  color: var(--text-dim);
+  font-size: 13px;
+  border-radius: var(--radius-card);
+  cursor: pointer;
+  transition: all var(--duration-fast);
+}
+
+.addLineBtn:hover {
+  border-color: var(--purple);
+  color: var(--text-primary);
+}
+
+/* Grand total */
+.grandTotal {
+  font-size: 18px;
+  font-weight: 700;
+  color: var(--teal);
+  text-align: right;
+  padding: 8px 0;
+}
+
+.submit {
+  padding: 12px;
+  border: none;
+  border-radius: var(--radius-button);
+  background: var(--gradient-primary);
+  color: #fff;
+  font-size: 15px;
+  font-weight: 600;
+  cursor: pointer;
+  transition: opacity var(--duration-fast);
+  margin-top: 4px;
+}
+
+.submit:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.submit:hover:not(:disabled) {
+  opacity: 0.9;
+}
+
+.msg {
+  font-size: 13px;
+  text-align: center;
+  color: var(--teal);
+  padding: 8px;
+}
+
+.msg[data-error="true"] {
+  color: var(--text-error);
+}
+
+.computed {
+  font-size: 13px;
+  color: var(--text-dim);
+  text-align: right;
+}

@@ -14,7 +14,7 @@
 
 .tab {
   flex: 1;
-  padding: 8px 0;
+  padding: 10px 0;
   border: none;
   background: var(--bg-secondary);
   color: var(--text-dim);
@@ -23,6 +23,10 @@
   border-radius: var(--radius-button);
   cursor: pointer;
   transition: all var(--duration-fast);
+}
+
+.tab:active {
+  transform: scale(0.96);
 }
 
 .tab[data-active="true"] {
@@ -124,4 +128,53 @@
 
 .spec {
   color: var(--text-primary);
+}
+
+/* ── Mobile card layout ────────────────────────────────── */
+@media (max-width: 599px) {
+  .thead {
+    display: none;
+  }
+
+  .tr {
+    flex-direction: column;
+    align-items: stretch;
+    gap: 6px;
+    padding: 12px 14px;
+    margin-bottom: 4px;
+  }
+
+  .td {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    text-align: right;
+    white-space: normal;
+  }
+
+  .td::before {
+    content: attr(data-label);
+    font-size: 11px;
+    color: var(--text-dim);
+    text-align: left;
+    flex-shrink: 0;
+    margin-right: 12px;
+  }
+
+  .td:first-child {
+    text-align: right;
+    font-weight: 600;
+    color: var(--text-primary);
+    padding-bottom: 2px;
+    border-bottom: 1px solid rgba(255, 255, 255, 0.04);
+  }
+
+  .tabs {
+    padding: 12px 12px 8px;
+    overflow-x: auto;
+  }
+
+  .content {
+    padding: 0 12px 16px;
+  }
 }

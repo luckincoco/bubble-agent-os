@@ -2,17 +2,27 @@ import { useState, useEffect } from 'react'
 import { useBizStore } from '../../stores/bizStore'
 import { SearchSelect } from './SearchSelect'
 import {
-  fetchProfitReport, fetchCounterpartyStatement, fetchMonthlyOverview,
+  fetchProfitReport, fetchCounterpartyStatement, fetchMonthlyOverview, fetchProfitByOrder,
+  type ProfitByOrderRow,
 } from '../../services/api'
 import type {
   ProfitReportRow, CounterpartyStatementResult, MonthlyOverviewRow,
 } from '../../types'
+import {
+  Chart as ChartJS,
+  CategoryScale, LinearScale, BarElement, LineElement, PointElement,
+  Title, Tooltip, Legend, Filler,
+} from 'chart.js'
+import { Bar } from 'react-chartjs-2'
 import s from './ReportView.module.css'
 
-type ReportTab = 'profit' | 'statement' | 'monthly'
+ChartJS.register(CategoryScale, LinearScale, BarElement, LineElement, PointElement, Title, Tooltip, Legend, Filler)
+
+type ReportTab = 'profit' | 'byorder' | 'statement' | 'monthly'
 
 const TABS: Array<{ key: ReportTab; label: string }> = [
   { key: 'profit', label: '利润' },
+  { key: 'byorder', label: '按单号' },
   { key: 'statement', label: '对账单' },
   { key: 'monthly', label: '月度总览' },
 ]
@@ -30,6 +40,7 @@ export function ReportView() {
         ))}
       </div>
       {tab === 'profit' && <ProfitReport />}
+      {tab === 'byorder' && <ByOrderReport />}
       {tab === 'statement' && <StatementReport />}
       {tab === 'monthly' && <MonthlyReport />}
     </div>
@@ -54,14 +65,28 @@ function today(): string { return new Date().toISOString().slice(0, 10) }
 // ── Profit Report ───────────────────────────────────────────────────
 
 function ProfitReport() {
+  const { counterparties, loadMasterData } = useBizStore()
   const [dateFrom, setDateFrom] = useState(firstOfYear())
   const [dateTo, setDateTo] = useState(today())
+  const [customerId, setCustomerId] = useState('')
+  const [supplierId, setSupplierId] = useState('')
   const [rows, setRows] = useState<ProfitReportRow[]>([])
   const [loading, setLoading] = useState(false)
 
+  useEffect(() => { loadMasterData() }, [loadMasterData])
+
+  const customers = counterparties.filter(c => c.type === 'customer' || c.type === 'both')
+  const suppliers = counterparties.filter(c => c.type === 'supplier' || c.type === 'both')
+
   const load = async () => {
     setLoading(true)
-    try { setRows(await fetchProfitReport(dateFrom, dateTo)) } catch { /* ignore */ }
+    try {
+      setRows(await fetchProfitReport({
+        dateFrom, dateTo,
+        customerId: customerId || undefined,
+        supplierId: supplierId || undefined,
+      }))
+    } catch { /* ignore */ }
     setLoading(false)
   }
 
@@ -78,6 +103,24 @@ function ProfitReport() {
 
   const totalMargin = totals.revenue > 0 ? Math.round(totals.profit / totals.revenue * 10000) / 100 : 0
 
+  const chartData = {
+    labels: rows.map(r => r.month),
+    datasets: [
+      { label: '销售额', data: rows.map(r => r.salesRevenue), backgroundColor: 'rgba(45, 212, 191, 0.6)' },
+      { label: '采购成本', data: rows.map(r => r.purchaseCost), backgroundColor: 'rgba(124, 58, 237, 0.6)' },
+      { label: '毛利润', data: rows.map(r => r.grossProfit), backgroundColor: rows.map(r => r.grossProfit >= 0 ? 'rgba(34, 197, 94, 0.6)' : 'rgba(239, 68, 68, 0.6)') },
+    ],
+  }
+
+  const chartOptions = {
+    responsive: true, maintainAspectRatio: false,
+    plugins: { legend: { labels: { color: 'rgba(255,255,255,0.7)', font: { size: 11 } } } },
+    scales: {
+      x: { ticks: { color: 'rgba(255,255,255,0.5)', font: { size: 10 } }, grid: { color: 'rgba(255,255,255,0.05)' } },
+      y: { ticks: { color: 'rgba(255,255,255,0.5)', font: { size: 10 } }, grid: { color: 'rgba(255,255,255,0.05)' } },
+    },
+  }
+
   return (
     <>
       <div className={s.filterRow}>
@@ -88,6 +131,18 @@ function ProfitReport() {
         <div className={s.filterField}>
           <span className={s.filterLabel}>结束日期</span>
           <input className={s.filterInput} type="date" value={dateTo} onChange={e => setDateTo(e.target.value)} />
+        </div>
+      </div>
+      <div className={s.filterRow}>
+        <div className={s.filterField} style={{ flex: 1 }}>
+          <span className={s.filterLabel}>客户</span>
+          <SearchSelect label="" value={customerId} onChange={setCustomerId}
+            options={[{ id: '', label: '全部' }, ...customers.map(c => ({ id: c.id, label: c.name }))]} placeholder="全部客户" />
+        </div>
+        <div className={s.filterField} style={{ flex: 1 }}>
+          <span className={s.filterLabel}>供应商</span>
+          <SearchSelect label="" value={supplierId} onChange={setSupplierId}
+            options={[{ id: '', label: '全部' }, ...suppliers.map(c => ({ id: c.id, label: c.name }))]} placeholder="全部供应商" />
         </div>
         <button className={s.filterBtn} onClick={load}>查询</button>
       </div>
@@ -111,6 +166,10 @@ function ProfitReport() {
         </div>
       </div>
 
+      {!loading && rows.length > 0 && (
+        <div className={s.chartWrap}><Bar data={chartData} options={chartOptions} /></div>
+      )}
+
       {loading ? (
         <div className={s.loading}>加载中...</div>
       ) : rows.length === 0 ? (
@@ -133,27 +192,27 @@ function ProfitReport() {
             <tbody>
               {rows.map(r => (
                 <tr key={r.month}>
-                  <td>{r.month}</td>
-                  <td className={s.numCell}>{fmtMoney(r.salesRevenue)}</td>
-                  <td className={s.numCell}>{fmtMoney(r.purchaseCost)}</td>
-                  <td className={s.numCell}>{fmtMoney(r.logisticsCost)}</td>
-                  <td className={`${s.numCell} ${r.grossProfit >= 0 ? s.positive : s.negative}`}>{fmtMoney(r.grossProfit)}</td>
-                  <td className={`${s.numCell} ${r.margin >= 0 ? s.positive : s.negative}`}>{r.margin}%</td>
-                  <td className={s.numCell}>{fmtTons(r.salesTons)}</td>
-                  <td className={s.numCell}>{fmtTons(r.purchaseTons)}</td>
+                  <td data-label="月份">{r.month}</td>
+                  <td className={s.numCell} data-label="销售额">{fmtMoney(r.salesRevenue)}</td>
+                  <td className={s.numCell} data-label="采购成本">{fmtMoney(r.purchaseCost)}</td>
+                  <td className={s.numCell} data-label="物流成本">{fmtMoney(r.logisticsCost)}</td>
+                  <td className={`${s.numCell} ${r.grossProfit >= 0 ? s.positive : s.negative}`} data-label="毛利润">{fmtMoney(r.grossProfit)}</td>
+                  <td className={`${s.numCell} ${r.margin >= 0 ? s.positive : s.negative}`} data-label="毛利率">{r.margin}%</td>
+                  <td className={s.numCell} data-label="销售吨">{fmtTons(r.salesTons)}</td>
+                  <td className={s.numCell} data-label="采购吨">{fmtTons(r.purchaseTons)}</td>
                 </tr>
               ))}
             </tbody>
             <tfoot>
               <tr>
-                <td>合计</td>
-                <td className={s.numCell}>{fmtMoney(totals.revenue)}</td>
-                <td className={s.numCell}>{fmtMoney(totals.cost)}</td>
-                <td className={s.numCell}>{fmtMoney(totals.logistics)}</td>
-                <td className={`${s.numCell} ${totals.profit >= 0 ? s.positive : s.negative}`}>{fmtMoney(totals.profit)}</td>
-                <td className={`${s.numCell} ${totalMargin >= 0 ? s.positive : s.negative}`}>{totalMargin}%</td>
-                <td className={s.numCell}>{fmtTons(totals.salesTons)}</td>
-                <td className={s.numCell}>{fmtTons(totals.purchaseTons)}</td>
+                <td data-label="">合计</td>
+                <td className={s.numCell} data-label="销售额">{fmtMoney(totals.revenue)}</td>
+                <td className={s.numCell} data-label="采购成本">{fmtMoney(totals.cost)}</td>
+                <td className={s.numCell} data-label="物流成本">{fmtMoney(totals.logistics)}</td>
+                <td className={`${s.numCell} ${totals.profit >= 0 ? s.positive : s.negative}`} data-label="毛利润">{fmtMoney(totals.profit)}</td>
+                <td className={`${s.numCell} ${totalMargin >= 0 ? s.positive : s.negative}`} data-label="毛利率">{totalMargin}%</td>
+                <td className={s.numCell} data-label="销售吨">{fmtTons(totals.salesTons)}</td>
+                <td className={s.numCell} data-label="采购吨">{fmtTons(totals.purchaseTons)}</td>
               </tr>
             </tfoot>
           </table>
@@ -257,21 +316,21 @@ function StatementReport() {
                 <tbody>
                   {result.rows.map((r, i) => (
                     <tr key={i}>
-                      <td>{r.date}</td>
-                      <td><span className={s.typeBadge} data-type={r.type}>{TYPE_LABELS[r.type] ?? r.type}</span></td>
-                      <td>{r.description}</td>
-                      <td className={s.numCell}>{r.debit > 0 ? fmtMoney(r.debit) : ''}</td>
-                      <td className={s.numCell}>{r.credit > 0 ? fmtMoney(r.credit) : ''}</td>
-                      <td className={`${s.numCell} ${r.balance >= 0 ? s.positive : s.negative}`}>{fmtMoney(r.balance)}</td>
+                      <td data-label="日期">{r.date}</td>
+                      <td data-label="类型"><span className={s.typeBadge} data-type={r.type}>{TYPE_LABELS[r.type] ?? r.type}</span></td>
+                      <td data-label="摘要">{r.description}</td>
+                      <td className={s.numCell} data-label="借方">{r.debit > 0 ? fmtMoney(r.debit) : ''}</td>
+                      <td className={s.numCell} data-label="贷方">{r.credit > 0 ? fmtMoney(r.credit) : ''}</td>
+                      <td className={`${s.numCell} ${r.balance >= 0 ? s.positive : s.negative}`} data-label="余额">{fmtMoney(r.balance)}</td>
                     </tr>
                   ))}
                 </tbody>
                 <tfoot>
                   <tr>
-                    <td colSpan={3}>合计</td>
-                    <td className={s.numCell}>{fmtMoney(result.totalDebit)}</td>
-                    <td className={s.numCell}>{fmtMoney(result.totalCredit)}</td>
-                    <td className={`${s.numCell} ${result.closingBalance >= 0 ? s.positive : s.negative}`}>{fmtMoney(result.closingBalance)}</td>
+                    <td colSpan={3} data-label="">合计</td>
+                    <td className={s.numCell} data-label="借方">{fmtMoney(result.totalDebit)}</td>
+                    <td className={s.numCell} data-label="贷方">{fmtMoney(result.totalCredit)}</td>
+                    <td className={`${s.numCell} ${result.closingBalance >= 0 ? s.positive : s.negative}`} data-label="余额">{fmtMoney(result.closingBalance)}</td>
                   </tr>
                 </tfoot>
               </table>
@@ -349,30 +408,125 @@ function MonthlyReport() {
                 const hasData = r.purchaseAmount || r.salesAmount || r.logisticsAmount || r.paymentsIn || r.paymentsOut
                 return (
                   <tr key={r.month} style={!hasData ? { opacity: 0.3 } : undefined}>
-                    <td>{r.month}</td>
-                    <td className={s.numCell}>{r.purchaseAmount ? fmtMoney(r.purchaseAmount) : '-'}</td>
-                    <td className={s.numCell}>{r.purchaseTons ? fmtTons(r.purchaseTons) : '-'}</td>
-                    <td className={s.numCell}>{r.salesAmount ? fmtMoney(r.salesAmount) : '-'}</td>
-                    <td className={s.numCell}>{r.salesTons ? fmtTons(r.salesTons) : '-'}</td>
-                    <td className={s.numCell}>{r.logisticsAmount ? fmtMoney(r.logisticsAmount) : '-'}</td>
-                    <td className={`${s.numCell} ${s.positive}`}>{r.paymentsIn ? fmtMoney(r.paymentsIn) : '-'}</td>
-                    <td className={`${s.numCell} ${s.negative}`}>{r.paymentsOut ? fmtMoney(r.paymentsOut) : '-'}</td>
+                    <td data-label="月份">{r.month}</td>
+                    <td className={s.numCell} data-label="采购额">{r.purchaseAmount ? fmtMoney(r.purchaseAmount) : '-'}</td>
+                    <td className={s.numCell} data-label="采购吨">{r.purchaseTons ? fmtTons(r.purchaseTons) : '-'}</td>
+                    <td className={s.numCell} data-label="销售额">{r.salesAmount ? fmtMoney(r.salesAmount) : '-'}</td>
+                    <td className={s.numCell} data-label="销售吨">{r.salesTons ? fmtTons(r.salesTons) : '-'}</td>
+                    <td className={s.numCell} data-label="物流费">{r.logisticsAmount ? fmtMoney(r.logisticsAmount) : '-'}</td>
+                    <td className={`${s.numCell} ${s.positive}`} data-label="收款">{r.paymentsIn ? fmtMoney(r.paymentsIn) : '-'}</td>
+                    <td className={`${s.numCell} ${s.negative}`} data-label="付款">{r.paymentsOut ? fmtMoney(r.paymentsOut) : '-'}</td>
                   </tr>
                 )
               })}
             </tbody>
             <tfoot>
               <tr>
-                <td>合计</td>
-                <td className={s.numCell}>{fmtMoney(sum(r => r.purchaseAmount))}</td>
-                <td className={s.numCell}>{fmtTons(sum(r => r.purchaseTons))}</td>
-                <td className={s.numCell}>{fmtMoney(sum(r => r.salesAmount))}</td>
-                <td className={s.numCell}>{fmtTons(sum(r => r.salesTons))}</td>
-                <td className={s.numCell}>{fmtMoney(sum(r => r.logisticsAmount))}</td>
-                <td className={`${s.numCell} ${s.positive}`}>{fmtMoney(sum(r => r.paymentsIn))}</td>
-                <td className={`${s.numCell} ${s.negative}`}>{fmtMoney(sum(r => r.paymentsOut))}</td>
+                <td data-label="">合计</td>
+                <td className={s.numCell} data-label="采购额">{fmtMoney(sum(r => r.purchaseAmount))}</td>
+                <td className={s.numCell} data-label="采购吨">{fmtTons(sum(r => r.purchaseTons))}</td>
+                <td className={s.numCell} data-label="销售额">{fmtMoney(sum(r => r.salesAmount))}</td>
+                <td className={s.numCell} data-label="销售吨">{fmtTons(sum(r => r.salesTons))}</td>
+                <td className={s.numCell} data-label="物流费">{fmtMoney(sum(r => r.logisticsAmount))}</td>
+                <td className={`${s.numCell} ${s.positive}`} data-label="收款">{fmtMoney(sum(r => r.paymentsIn))}</td>
+                <td className={`${s.numCell} ${s.negative}`} data-label="付款">{fmtMoney(sum(r => r.paymentsOut))}</td>
               </tr>
             </tfoot>
+          </table>
+        </div>
+      )}
+    </>
+  )
+}
+
+// ── By Order Report (按单号利润) v0.7 ───────────────────────────────
+
+function ByOrderReport() {
+  const [dateFrom, setDateFrom] = useState(firstOfYear())
+  const [dateTo, setDateTo] = useState(today())
+  const [rows, setRows] = useState<ProfitByOrderRow[]>([])
+  const [loading, setLoading] = useState(false)
+
+  const load = async () => {
+    setLoading(true)
+    try { setRows(await fetchProfitByOrder({ dateFrom, dateTo })) } catch { /* ignore */ }
+    setLoading(false)
+  }
+
+  useEffect(() => { load() }, [])
+
+  const totalProfit = rows.reduce((sum, r) => sum + r.grossProfit, 0)
+  const totalSales = rows.reduce((sum, r) => sum + r.salesAmount, 0)
+  const totalMargin = totalSales > 0 ? Math.round(totalProfit / totalSales * 10000) / 100 : 0
+
+  return (
+    <>
+      <div className={s.filterRow}>
+        <div className={s.filterField}>
+          <span className={s.filterLabel}>开始日期</span>
+          <input className={s.filterInput} type="date" value={dateFrom} onChange={e => setDateFrom(e.target.value)} />
+        </div>
+        <div className={s.filterField}>
+          <span className={s.filterLabel}>结束日期</span>
+          <input className={s.filterInput} type="date" value={dateTo} onChange={e => setDateTo(e.target.value)} />
+        </div>
+        <button className={s.filterBtn} onClick={load}>查询</button>
+      </div>
+
+      <div className={s.summaryRow}>
+        <div className={s.summaryCard}>
+          <span className={s.summaryLabel}>单据数</span>
+          <span className={s.summaryValue}>{rows.length}</span>
+        </div>
+        <div className={s.summaryCard}>
+          <span className={s.summaryLabel}>总毛利</span>
+          <span className={`${s.summaryValue} ${totalProfit >= 0 ? s.positive : s.negative}`}>
+            &yen;{fmtMoney(totalProfit)}
+          </span>
+        </div>
+        <div className={s.summaryCard}>
+          <span className={s.summaryLabel}>综合毛利率</span>
+          <span className={`${s.summaryValue} ${totalMargin >= 0 ? s.positive : s.negative}`}>
+            {totalMargin}%
+          </span>
+        </div>
+      </div>
+
+      {loading ? (
+        <div className={s.loading}>加载中...</div>
+      ) : rows.length === 0 ? (
+        <div className={s.empty}>暂无带单号的数据</div>
+      ) : (
+        <div className={s.tableWrap}>
+          <table className={s.table}>
+            <thead>
+              <tr>
+                <th>单号</th>
+                <th>日期</th>
+                <th>供应商</th>
+                <th>客户</th>
+                <th className={s.numCell}>采购额</th>
+                <th className={s.numCell}>销售额</th>
+                <th className={s.numCell}>物流</th>
+                <th className={s.numCell}>毛利</th>
+                <th className={s.numCell}>毛利率</th>
+              </tr>
+            </thead>
+            <tbody>
+              {rows.map(r => (
+                <tr key={r.docNo}>
+                  <td data-label="单号"><strong>{r.docNo}</strong></td>
+                  <td data-label="日期">{r.date}</td>
+                  <td data-label="供应商">{r.supplierName}</td>
+                  <td data-label="客户">{r.customerName}</td>
+                  <td className={s.numCell} data-label="采购额">{fmtMoney(r.purchaseAmount)}</td>
+                  <td className={s.numCell} data-label="销售额">{fmtMoney(r.salesAmount)}</td>
+                  <td className={s.numCell} data-label="物流">{fmtMoney(r.logisticsCost)}</td>
+                  <td className={`${s.numCell} ${r.grossProfit >= 0 ? s.positive : s.negative}`} data-label="毛利">{fmtMoney(r.grossProfit)}</td>
+                  <td className={`${s.numCell} ${r.margin >= 0 ? s.positive : s.negative}`} data-label="毛利率">{r.margin}%</td>
+                </tr>
+              ))}
+            </tbody>
           </table>
         </div>
       )}

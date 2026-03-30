@@ -24,6 +24,16 @@ input, textarea, button {
   color: inherit;
 }
 
+button {
+  transition: background var(--duration-fast), color var(--duration-fast),
+              border-color var(--duration-fast), transform var(--duration-fast);
+}
+
+::selection {
+  background: rgba(124, 58, 237, 0.3);
+  color: #fff;
+}
+
 a {
   color: inherit;
   text-decoration: none;

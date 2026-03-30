@@ -14,7 +14,7 @@
 
 .tab {
   flex: 1;
-  padding: 8px 0;
+  padding: 10px 0;
   border: none;
   background: var(--bg-secondary);
   color: var(--text-dim);
@@ -55,20 +55,21 @@
 }
 
 .input, .select {
-  padding: 10px 12px;
+  padding: 11px 14px;
   background: var(--bg-glass);
   border: 1px solid rgba(255, 255, 255, 0.08);
   border-radius: var(--radius-button);
   color: var(--text-primary);
   font-size: 14px;
   outline: none;
-  transition: border-color var(--duration-fast);
+  transition: border-color var(--duration-fast), box-shadow var(--duration-fast);
   width: 100%;
   box-sizing: border-box;
 }
 
 .input:focus, .select:focus {
   border-color: var(--purple);
+  box-shadow: 0 0 0 3px rgba(124, 58, 237, 0.15);
 }
 
 .select {
@@ -86,11 +87,18 @@
 
 .row {
   display: flex;
+  flex-direction: column;
   gap: 12px;
 }
 
 .row > * {
   flex: 1;
+}
+
+@media (min-width: 600px) {
+  .row {
+    flex-direction: row;
+  }
 }
 
 .computed {
@@ -141,7 +149,7 @@
 
 .toggle {
   flex: 1;
-  padding: 8px;
+  padding: 10px 8px;
   border: 1px solid rgba(255, 255, 255, 0.08);
   background: var(--bg-secondary);
   color: var(--text-dim);
@@ -149,6 +157,10 @@
   border-radius: var(--radius-button);
   cursor: pointer;
   transition: all var(--duration-fast);
+}
+
+.toggle:active {
+  transform: scale(0.96);
 }
 
 .toggle[data-active="true"] {

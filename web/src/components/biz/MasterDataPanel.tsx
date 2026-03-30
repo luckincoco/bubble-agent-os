@@ -1,14 +1,13 @@
 import { useState } from 'react'
 import { useBizStore } from '../../stores/bizStore'
-import type { BizProduct, BizCounterparty, BizProject } from '../../types'
+import type { BizProduct, BizCounterparty } from '../../types'
 import s from './MasterDataPanel.module.css'
 
-type MasterTab = 'products' | 'counterparties' | 'projects'
+type MasterTab = 'products' | 'counterparties'
 
 const TABS: Array<{ key: MasterTab; label: string }> = [
   { key: 'products', label: '产品' },
   { key: 'counterparties', label: '供应商/客户' },
-  { key: 'projects', label: '项目' },
 ]
 
 export function MasterDataPanel() {
@@ -25,7 +24,6 @@ export function MasterDataPanel() {
       </div>
       {tab === 'products' && <ProductManager />}
       {tab === 'counterparties' && <CounterpartyManager />}
-      {tab === 'projects' && <ProjectManager />}
     </div>
   )
 }
@@ -212,89 +210,3 @@ function CounterpartyManager() {
   )
 }
 
-// ── Project Manager ─────────────────────────────────────────────
-
-const STATUS_LABELS: Record<string, string> = { active: '进行中', completed: '已完成', suspended: '暂停' }
-
-function ProjectManager() {
-  const { projects, addProject, editProject, removeProject } = useBizStore()
-  const [editing, setEditing] = useState<string | null>(null)
-  const [adding, setAdding] = useState(false)
-  const [form, setForm] = useState({ name: '', address: '', contact: '', phone: '', status: 'active' as BizProject['status'] })
-  const [msg, setMsg] = useState('')
-
-  const startEdit = (p: BizProject) => {
-    setEditing(p.id)
-    setForm({ name: p.name, address: p.address || '', contact: p.contact || '', phone: p.phone || '', status: p.status })
-    setAdding(false)
-  }
-
-  const startAdd = () => {
-    setAdding(true)
-    setEditing(null)
-    setForm({ name: '', address: '', contact: '', phone: '', status: 'active' })
-  }
-
-  const handleSave = async () => {
-    if (!form.name) { setMsg('项目名不能为空'); return }
-    setMsg('')
-    try {
-      if (editing) {
-        await editProject(editing, form)
-        setEditing(null)
-      } else {
-        await addProject(form)
-        setAdding(false)
-      }
-      setForm({ name: '', address: '', contact: '', phone: '', status: 'active' })
-      setMsg('保存成功')
-    } catch (e: any) { setMsg('错误: ' + e.message) }
-  }
-
-  const handleDelete = async (id: string, name: string) => {
-    if (!confirm(`确定删除项目「${name}」？关联的交易记录不会被删除。`)) return
-    try {
-      await removeProject(id)
-    } catch (e: any) { setMsg('错误: ' + e.message) }
-  }
-
-  return (
-    <div className={s.manager}>
-      <div className={s.toolbar}>
-        <span className={s.count}>{projects.length} 个项目</span>
-        <button className={s.addBtn} onClick={startAdd}>+ 新增</button>
-      </div>
-      {(adding || editing) && (
-        <div className={s.formRow}>
-          <input className={s.fi} placeholder="项目名*" value={form.name} onChange={e => setForm({ ...form, name: e.target.value })} />
-          <input className={s.fi} placeholder="地址" value={form.address} onChange={e => setForm({ ...form, address: e.target.value })} />
-          <input className={s.fi} placeholder="联系人" value={form.contact} onChange={e => setForm({ ...form, contact: e.target.value })} />
-          <input className={s.fi} placeholder="电话" value={form.phone} onChange={e => setForm({ ...form, phone: e.target.value })} />
-          <select className={s.fi} value={form.status} onChange={e => setForm({ ...form, status: e.target.value as BizProject['status'] })}>
-            <option value="active">进行中</option>
-            <option value="completed">已完成</option>
-            <option value="suspended">暂停</option>
-          </select>
-          <button className={s.saveBtn} onClick={handleSave}>保存</button>
-          <button className={s.cancelBtn} onClick={() => { setAdding(false); setEditing(null) }}>取消</button>
-        </div>
-      )}
-      {msg && <div className={s.msg} data-error={msg.startsWith('错误')}>{msg}</div>}
-      <div className={s.list}>
-        {projects.map(p => (
-          <div key={p.id} className={s.item}>
-            <div className={s.itemMain}>
-              <span className={s.itemName}>{p.name}</span>
-              <span className={s.itemTag} data-status={p.status}>{STATUS_LABELS[p.status] || p.status}</span>
-              {p.address && <span className={s.itemCode}>{p.address}</span>}
-            </div>
-            <div className={s.itemActions}>
-              <button className={s.editBtn} onClick={() => startEdit(p)}>编辑</button>
-              <button className={s.delBtn} onClick={() => handleDelete(p.id, p.name)}>删除</button>
-            </div>
-          </div>
-        ))}
-      </div>
-    </div>
-  )
-}

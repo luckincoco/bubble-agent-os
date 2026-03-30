@@ -433,6 +433,197 @@ function runMigrations(database: Database.Database, defaultPassword: string) {
     database.exec("ALTER TABLE users ADD COLUMN preferences TEXT DEFAULT '{}'")
     logger.info('Migration: added preferences column to users')
   }
+
+  // ── v0.7: Event-centric model — line items + soft delete ──────────
+
+  // Bubbles: soft delete support
+  const bubbleCols7 = database.pragma('table_info(bubbles)') as Array<{ name: string }>
+  if (!bubbleCols7.some(c => c.name === 'deleted_at')) {
+    database.exec('ALTER TABLE bubbles ADD COLUMN deleted_at INTEGER')
+    database.exec('ALTER TABLE bubbles ADD COLUMN delete_reason TEXT')
+    logger.info('Migration v0.7: added deleted_at/delete_reason to bubbles')
+  }
+
+  // Purchases: new event fields
+  const purCols7 = database.pragma('table_info(biz_purchases)') as Array<{ name: string }>
+  if (!purCols7.some(c => c.name === 'location')) {
+    database.exec('ALTER TABLE biz_purchases ADD COLUMN location TEXT')
+    database.exec('ALTER TABLE biz_purchases ADD COLUMN doc_no TEXT')
+    database.exec('ALTER TABLE biz_purchases ADD COLUMN paid_amount REAL DEFAULT 0')
+    database.exec('ALTER TABLE biz_purchases ADD COLUMN unpaid_amount REAL DEFAULT 0')
+    database.exec('ALTER TABLE biz_purchases ADD COLUMN payment_method TEXT')
+    database.exec('ALTER TABLE biz_purchases ADD COLUMN payment_notes TEXT')
+    logger.info('Migration v0.7: added event fields to biz_purchases')
+  }
+
+  // Sales: new event fields
+  const salCols7 = database.pragma('table_info(biz_sales)') as Array<{ name: string }>
+  if (!salCols7.some(c => c.name === 'location')) {
+    database.exec('ALTER TABLE biz_sales ADD COLUMN location TEXT')
+    database.exec('ALTER TABLE biz_sales ADD COLUMN doc_no TEXT')
+    database.exec('ALTER TABLE biz_sales ADD COLUMN paid_amount REAL DEFAULT 0')
+    database.exec('ALTER TABLE biz_sales ADD COLUMN unpaid_amount REAL DEFAULT 0')
+    database.exec('ALTER TABLE biz_sales ADD COLUMN payment_method TEXT')
+    database.exec('ALTER TABLE biz_sales ADD COLUMN payment_notes TEXT')
+    logger.info('Migration v0.7: added event fields to biz_sales')
+  }
+
+  // Logistics: user doc_no
+  const logCols7 = database.pragma('table_info(biz_logistics)') as Array<{ name: string }>
+  if (!logCols7.some(c => c.name === 'doc_no')) {
+    database.exec('ALTER TABLE biz_logistics ADD COLUMN doc_no TEXT')
+    logger.info('Migration v0.7: added doc_no to biz_logistics')
+  }
+
+  // Purchase line items table
+  database.exec(`
+    CREATE TABLE IF NOT EXISTS biz_purchase_lines (
+      id TEXT PRIMARY KEY,
+      purchase_id TEXT NOT NULL REFERENCES biz_purchases(id) ON DELETE CASCADE,
+      line_no INTEGER NOT NULL,
+      product_id TEXT REFERENCES biz_products(id),
+      brand TEXT,
+      material TEXT,
+      spec TEXT,
+      measure_unit TEXT DEFAULT '吨',
+      weigh_mode TEXT DEFAULT '理计',
+      bundle_count INTEGER,
+      weight_per_pc REAL,
+      quantity REAL NOT NULL,
+      unit_price REAL NOT NULL,
+      tax_inclusive INTEGER DEFAULT 1,
+      subtotal REAL NOT NULL,
+      notes TEXT,
+      created_at INTEGER NOT NULL,
+      updated_at INTEGER NOT NULL
+    )
+  `)
+  database.exec('CREATE INDEX IF NOT EXISTS idx_purchase_lines_pid ON biz_purchase_lines(purchase_id)')
+
+  // Sale line items table
+  database.exec(`
+    CREATE TABLE IF NOT EXISTS biz_sale_lines (
+      id TEXT PRIMARY KEY,
+      sale_id TEXT NOT NULL REFERENCES biz_sales(id) ON DELETE CASCADE,
+      line_no INTEGER NOT NULL,
+      product_id TEXT REFERENCES biz_products(id),
+      brand TEXT,
+      material TEXT,
+      spec TEXT,
+      measure_unit TEXT DEFAULT '吨',
+      weigh_mode TEXT DEFAULT '理计',
+      bundle_count INTEGER,
+      weight_per_pc REAL,
+      quantity REAL NOT NULL,
+      unit_price REAL NOT NULL,
+      tax_inclusive INTEGER DEFAULT 1,
+      subtotal REAL NOT NULL,
+      notes TEXT,
+      created_at INTEGER NOT NULL,
+      updated_at INTEGER NOT NULL
+    )
+  `)
+  database.exec('CREATE INDEX IF NOT EXISTS idx_sale_lines_sid ON biz_sale_lines(sale_id)')
+
+  // Migrate existing single-row purchases to line items (one-time)
+  const existingPurchaseLines = (database.prepare('SELECT COUNT(*) as cnt FROM biz_purchase_lines').get() as { cnt: number }).cnt
+  if (existingPurchaseLines === 0) {
+    const purchases = database.prepare(`
+      SELECT id, product_id, bundle_count, tonnage, unit_price, total_amount, created_at, updated_at
+      FROM biz_purchases WHERE deleted_at IS NULL
+    `).all() as Array<{ id: string; product_id: string; bundle_count: number | null; tonnage: number; unit_price: number; total_amount: number; created_at: number; updated_at: number }>
+
+    if (purchases.length > 0) {
+      const insertLine = database.prepare(`
+        INSERT INTO biz_purchase_lines (id, purchase_id, line_no, product_id, quantity, unit_price, subtotal, bundle_count, created_at, updated_at)
+        VALUES (?, ?, 1, ?, ?, ?, ?, ?, ?, ?)
+      `)
+      const migrate = database.transaction(() => {
+        for (const p of purchases) {
+          insertLine.run(ulid(), p.id, p.product_id, p.tonnage, p.unit_price, p.total_amount, p.bundle_count, p.created_at, p.updated_at)
+        }
+      })
+      migrate()
+      logger.info(`Migration v0.7: migrated ${purchases.length} purchases to line items`)
+    }
+  }
+
+  // Migrate existing single-row sales to line items (one-time)
+  const existingSaleLines = (database.prepare('SELECT COUNT(*) as cnt FROM biz_sale_lines').get() as { cnt: number }).cnt
+  if (existingSaleLines === 0) {
+    const sales = database.prepare(`
+      SELECT id, product_id, bundle_count, tonnage, unit_price, total_amount, created_at, updated_at
+      FROM biz_sales WHERE deleted_at IS NULL
+    `).all() as Array<{ id: string; product_id: string; bundle_count: number | null; tonnage: number; unit_price: number; total_amount: number; created_at: number; updated_at: number }>
+
+    if (sales.length > 0) {
+      const insertLine = database.prepare(`
+        INSERT INTO biz_sale_lines (id, sale_id, line_no, product_id, quantity, unit_price, subtotal, bundle_count, created_at, updated_at)
+        VALUES (?, ?, 1, ?, ?, ?, ?, ?, ?, ?)
+      `)
+      const migrate = database.transaction(() => {
+        for (const s of sales) {
+          insertLine.run(ulid(), s.id, s.product_id, s.tonnage, s.unit_price, s.total_amount, s.bundle_count, s.created_at, s.updated_at)
+        }
+      })
+      migrate()
+      logger.info(`Migration v0.7: migrated ${sales.length} sales to line items`)
+    }
+  }
+
+  logger.info('Migration v0.7: event-centric tables ready')
+
+  // ── Migration v1.0: backfill doc_no from order_no/waybill_no ─────────
+  const needBackfill = (database.prepare(
+    "SELECT COUNT(*) as cnt FROM biz_purchases WHERE (doc_no IS NULL OR doc_no = '') AND order_no IS NOT NULL AND order_no != ''"
+  ).get() as { cnt: number }).cnt
+  if (needBackfill > 0) {
+    const r1 = database.prepare(
+      "UPDATE biz_purchases SET doc_no = order_no WHERE (doc_no IS NULL OR doc_no = '') AND order_no IS NOT NULL AND order_no != ''"
+    ).run()
+    const r2 = database.prepare(
+      "UPDATE biz_sales SET doc_no = order_no WHERE (doc_no IS NULL OR doc_no = '') AND order_no IS NOT NULL AND order_no != ''"
+    ).run()
+    const r3 = database.prepare(
+      "UPDATE biz_logistics SET doc_no = waybill_no WHERE (doc_no IS NULL OR doc_no = '') AND waybill_no IS NOT NULL AND waybill_no != ''"
+    ).run()
+    logger.info(`Migration v1.0: backfilled doc_no — purchases: ${r1.changes}, sales: ${r2.changes}, logistics: ${r3.changes}`)
+  }
+
+  // ── Migration v1.0: add space_id to all biz_* tables ─────────────
+  const bizPurCols10 = database.pragma('table_info(biz_purchases)') as Array<{ name: string }>
+  if (!bizPurCols10.some(c => c.name === 'space_id')) {
+    const bizTables = [
+      'biz_products', 'biz_counterparties', 'biz_projects',
+      'biz_purchases', 'biz_sales', 'biz_logistics',
+      'biz_payments', 'biz_invoices',
+      'biz_purchase_lines', 'biz_sale_lines', 'biz_doc_links',
+    ]
+    for (const t of bizTables) {
+      database.exec(`ALTER TABLE ${t} ADD COLUMN space_id TEXT`)
+    }
+
+    // Backfill: assign all existing records to the first space
+    const firstSpace = database.prepare('SELECT id FROM spaces ORDER BY created_at LIMIT 1').get() as { id: string } | undefined
+    if (firstSpace) {
+      let totalBackfilled = 0
+      for (const t of bizTables) {
+        const r = database.prepare(`UPDATE ${t} SET space_id = ? WHERE space_id IS NULL`).run(firstSpace.id)
+        totalBackfilled += r.changes
+      }
+      logger.info(`Migration v1.0: added space_id to biz tables, backfilled ${totalBackfilled} records to space ${firstSpace.id}`)
+    }
+
+    // Add indexes for space_id
+    const indexedTables = [
+      'biz_products', 'biz_counterparties',
+      'biz_purchases', 'biz_sales', 'biz_logistics',
+      'biz_payments', 'biz_invoices',
+    ]
+    for (const t of indexedTables) {
+      database.exec(`CREATE INDEX IF NOT EXISTS idx_${t}_space ON ${t}(space_id)`)
+    }
+  }
 }
 
 function seedData(database: Database.Database, defaultPassword: string) {

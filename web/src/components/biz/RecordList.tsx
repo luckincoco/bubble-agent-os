@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react'
+import { useState, useEffect, useMemo } from 'react'
 import { useBizStore } from '../../stores/bizStore'
 import type {
   BizPurchase, BizSale, BizLogisticsRecord, BizPayment, BizInvoice,
@@ -41,14 +41,35 @@ const CREATE_FROM_ACTIONS: Record<RecordType, Array<{ action: string; label: str
   invoice: [],
 }
 
+const CP_FIELD: Record<RecordType, string> = {
+  purchase: 'supplierId',
+  sale: 'customerId',
+  logistics: 'carrierId',
+  payment: 'counterpartyId',
+  invoice: 'counterpartyId',
+}
+
+const CP_LABEL: Record<RecordType, string> = {
+  purchase: '供应商',
+  sale: '客户',
+  logistics: '承运商',
+  payment: '对象',
+  invoice: '对象',
+}
+
 export function RecordList({ type }: Props) {
   const store = useBizStore()
   const [expandedId, setExpandedId] = useState<string | null>(null)
   const [busy, setBusy] = useState<string | null>(null)
   const [statusFilter, setStatusFilter] = useState('all')
   const [editingId, setEditingId] = useState<string | null>(null)
+  const [counterpartyFilter, setCounterpartyFilter] = useState('')
+  const [cpSearch, setCpSearch] = useState('')
+  const [cpDropdownOpen, setCpDropdownOpen] = useState(false)
 
   useEffect(() => {
+    setCounterpartyFilter('')
+    setCpSearch('')
     const loaders: Record<RecordType, () => Promise<void>> = {
       purchase: () => store.loadPurchases(),
       sale: () => store.loadSales(),
@@ -60,16 +81,46 @@ export function RecordList({ type }: Props) {
   }, [type])
 
   const allRecords = getRecords(type, store)
-  const records = statusFilter === 'all'
-    ? allRecords
-    : allRecords.filter(r => (r as any).docStatus === statusFilter)
-
   const counterparties = store.counterparties
   const products = store.products
   const projects = store.projects
 
   const getName = (id: string | undefined, list: Array<{ id: string; name: string }>) =>
     list.find(i => i.id === id)?.name || id || '-'
+
+  const cpField = CP_FIELD[type]
+  const cpOptions = useMemo(() => {
+    const ids = new Set<string>()
+    for (const r of allRecords) {
+      const id = (r as any)[cpField]
+      if (id) ids.add(id)
+    }
+    return Array.from(ids)
+      .map(id => ({ id, name: getName(id, counterparties) }))
+      .sort((a, b) => a.name.localeCompare(b.name))
+  }, [allRecords, counterparties, cpField])
+
+  const filteredCpOptions = cpSearch
+    ? cpOptions.filter(cp => cp.name.includes(cpSearch))
+    : cpOptions
+
+  let records = statusFilter === 'all'
+    ? allRecords
+    : allRecords.filter(r => (r as any).docStatus === statusFilter)
+  if (counterpartyFilter) {
+    records = records.filter(r => (r as any)[cpField] === counterpartyFilter)
+  }
+
+  const selectCp = (id: string, name: string) => {
+    setCounterpartyFilter(id)
+    setCpSearch(name)
+    setCpDropdownOpen(false)
+  }
+
+  const clearCp = () => {
+    setCounterpartyFilter('')
+    setCpSearch('')
+  }
 
   const getProductLabel = (pid: string) => {
     const p = products.find(i => i.id === pid)
@@ -131,6 +182,44 @@ export function RecordList({ type }: Props) {
           </button>
         ))}
       </div>
+      {cpOptions.length > 1 && (
+        <div className={s.cpFilter}>
+          <div className={s.cpCombobox}>
+            <input
+              className={s.cpInput}
+              placeholder={`搜索${CP_LABEL[type]}...`}
+              value={cpSearch}
+              onChange={e => {
+                const v = e.target.value
+                setCpSearch(v)
+                if (!v) setCounterpartyFilter('')
+                setCpDropdownOpen(true)
+              }}
+              onFocus={() => setCpDropdownOpen(true)}
+              onBlur={() => setTimeout(() => setCpDropdownOpen(false), 150)}
+            />
+            {cpDropdownOpen && filteredCpOptions.length > 0 && (
+              <div className={s.cpDropdown}>
+                {filteredCpOptions.map(cp => (
+                  <div
+                    key={cp.id}
+                    className={s.cpOption}
+                    data-active={counterpartyFilter === cp.id}
+                    onMouseDown={() => selectCp(cp.id, cp.name)}
+                  >
+                    {cp.name}
+                  </div>
+                ))}
+              </div>
+            )}
+          </div>
+          {counterpartyFilter && (
+            <button className={s.cpClear} onClick={clearCp}>
+              清除
+            </button>
+          )}
+        </div>
+      )}
       {records.length === 0 ? (
         <div className={s.empty}>暂无记录</div>
       ) : (
@@ -160,7 +249,16 @@ export function RecordList({ type }: Props) {
                     {details.map((d, i) => (
                       <div key={i} className={s.detailRow}>
                         <span className={s.detailLabel}>{d.label}</span>
-                        <span className={s.detailValue}>{d.value}</span>
+                        {d.cpId ? (
+                          <span
+                            className={`${s.detailValue} ${s.clickableCp}`}
+                            onClick={(e) => { e.stopPropagation(); selectCp(d.cpId!, d.value) }}
+                          >
+                            {d.value}
+                          </span>
+                        ) : (
+                          <span className={s.detailValue}>{d.value}</span>
+                        )}
                       </div>
                     ))}
                     {/* Action bar based on status */}
@@ -239,7 +337,7 @@ type NameFn = (id: string | undefined, list: Array<{ id: string; name: string }>
 type ProdFn = (id: string) => string
 
 interface RowSummary { date: string; main: string; amount: string }
-interface DetailItem { label: string; value: string }
+interface DetailItem { label: string; value: string; cpId?: string }
 
 function fmtMoney(n: number): string {
   return '\u00A5' + n.toLocaleString('zh-CN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })
@@ -281,7 +379,7 @@ function formatDetails(type: RecordType, rec: AnyRecord, getName: NameFn, getPro
     case 'purchase': {
       const r = rec as unknown as BizPurchase
       return [
-        { label: '供应商', value: getName(r.supplierId, cp) },
+        { label: '供应商', value: getName(r.supplierId, cp), cpId: r.supplierId },
         { label: '产品', value: getProd(r.productId) },
         { label: '数量', value: `${r.tonnage}` },
         { label: '单价', value: `${r.unitPrice}` },
@@ -293,7 +391,7 @@ function formatDetails(type: RecordType, rec: AnyRecord, getName: NameFn, getPro
     case 'sale': {
       const r = rec as unknown as BizSale
       return [
-        { label: '客户', value: getName(r.customerId, cp) },
+        { label: '客户', value: getName(r.customerId, cp), cpId: r.customerId },
         { label: '产品', value: getProd(r.productId) },
         { label: '数量', value: `${r.tonnage}` },
         { label: '单价', value: `${r.unitPrice}` },
@@ -305,7 +403,7 @@ function formatDetails(type: RecordType, rec: AnyRecord, getName: NameFn, getPro
     case 'logistics': {
       const r = rec as unknown as BizLogisticsRecord
       return [
-        ...(r.carrierId ? [{ label: '托运公司', value: getName(r.carrierId, cp) }] : []),
+        ...(r.carrierId ? [{ label: '托运公司', value: getName(r.carrierId, cp), cpId: r.carrierId }] : []),
         ...(r.destination ? [{ label: '目的地', value: r.destination }] : []),
         ...(r.tonnage ? [{ label: '吨位', value: `${r.tonnage}` }] : []),
         { label: '运费', value: fmtMoney(r.freight) },
@@ -320,7 +418,7 @@ function formatDetails(type: RecordType, rec: AnyRecord, getName: NameFn, getPro
       const r = rec as unknown as BizPayment
       return [
         { label: '类型', value: r.direction === 'in' ? '收款' : '付款' },
-        { label: '对象', value: getName(r.counterpartyId, cp) },
+        { label: '对象', value: getName(r.counterpartyId, cp), cpId: r.counterpartyId },
         { label: '金额', value: fmtMoney(r.amount) },
         ...(r.method ? [{ label: '方式', value: r.method }] : []),
         ...(r.projectId ? [{ label: '项目', value: getName(r.projectId, proj) }] : []),
@@ -331,7 +429,7 @@ function formatDetails(type: RecordType, rec: AnyRecord, getName: NameFn, getPro
       const r = rec as unknown as BizInvoice
       return [
         { label: '类型', value: r.direction === 'in' ? '进项发票' : '销项发票' },
-        { label: '对象', value: getName(r.counterpartyId, cp) },
+        { label: '对象', value: getName(r.counterpartyId, cp), cpId: r.counterpartyId },
         ...(r.invoiceNo ? [{ label: '发票号', value: r.invoiceNo }] : []),
         { label: '金额', value: fmtMoney(r.amount) },
         { label: '税率', value: `${r.taxRate}%` },

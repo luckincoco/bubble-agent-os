@@ -158,6 +158,13 @@ export interface BizPurchase {
   sourceId?: string
   cancelReason?: string
   amendedFrom?: string
+  // v0.7 event fields
+  location?: string
+  docNo?: string
+  paidAmount?: number
+  unpaidAmount?: number
+  paymentMethod?: string
+  paymentNotes?: string
   createdAt: number
   updatedAt: number
   deletedAt?: number
@@ -192,6 +199,13 @@ export interface BizSale {
   sourceId?: string
   cancelReason?: string
   amendedFrom?: string
+  // v0.7 event fields
+  location?: string
+  docNo?: string
+  paidAmount?: number
+  unpaidAmount?: number
+  paymentMethod?: string
+  paymentNotes?: string
   createdAt: number
   updatedAt: number
   deletedAt?: number
@@ -203,6 +217,7 @@ export interface BizLogisticsRecord {
   tenantId: string
   date: string
   waybillNo?: string
+  docNo?: string
   carrierId?: string
   projectId?: string
   destination?: string
@@ -279,6 +294,57 @@ export interface BizInvoice {
   createdAt: number
   updatedAt: number
   deletedAt?: number
+}
+
+// ── Computed view types ──────────────────────────────────────────
+
+// ── Line item types (v0.7 事件明细行) ────────────────────────────
+
+/** Weigh mode for line items */
+export type WeighMode = '理计' | '过磅'
+
+/** Purchase line item */
+export interface BizPurchaseLine {
+  id: string
+  purchaseId: string
+  lineNo: number
+  productId?: string
+  brand?: string
+  material?: string
+  spec?: string
+  measureUnit: string
+  weighMode: WeighMode
+  bundleCount?: number
+  weightPerPc?: number
+  quantity: number
+  unitPrice: number
+  taxInclusive: boolean
+  subtotal: number
+  notes?: string
+  createdAt: number
+  updatedAt: number
+}
+
+/** Sale line item */
+export interface BizSaleLine {
+  id: string
+  saleId: string
+  lineNo: number
+  productId?: string
+  brand?: string
+  material?: string
+  spec?: string
+  measureUnit: string
+  weighMode: WeighMode
+  bundleCount?: number
+  weightPerPc?: number
+  quantity: number
+  unitPrice: number
+  taxInclusive: boolean
+  subtotal: number
+  notes?: string
+  createdAt: number
+  updatedAt: number
 }
 
 // ── Computed view types ──────────────────────────────────────────

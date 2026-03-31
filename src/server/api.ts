@@ -122,25 +122,15 @@ export async function startServer(brain: Brain, memory: MemoryManager, port = 30
       return reply.code(401).send({ error: '用户名或密码错误' })
     }
 
-    // Get user's space ids
-    let spaceIds: string[]
-    let spaces: Array<{ id: string; name: string; description: string }>
-
-    if (user.role === 'admin') {
-      // Admin sees all spaces
-      const allSpaces = db.prepare('SELECT * FROM spaces ORDER BY created_at').all() as any[]
-      spaceIds = allSpaces.map((s: any) => s.id)
-      spaces = allSpaces.map((s: any) => ({ id: s.id, name: s.name, description: s.description || '' }))
-    } else {
-      const userSpaces = db.prepare(`
-        SELECT s.* FROM spaces s
-        JOIN user_spaces us ON us.space_id = s.id
-        WHERE us.user_id = ?
-        ORDER BY s.created_at
-      `).all(user.id) as any[]
-      spaceIds = userSpaces.map((s: any) => s.id)
-      spaces = userSpaces.map((s: any) => ({ id: s.id, name: s.name, description: s.description || '' }))
-    }
+    // Get user's space ids — all users see only their own spaces (privacy first)
+    const userSpaces = db.prepare(`
+      SELECT s.* FROM spaces s
+      JOIN user_spaces us ON us.space_id = s.id
+      WHERE us.user_id = ?
+      ORDER BY s.created_at
+    `).all(user.id) as any[]
+    const spaceIds = userSpaces.map((s: any) => s.id)
+    const spaces = userSpaces.map((s: any) => ({ id: s.id, name: s.name, description: s.description || '' }))
 
     const payload: JwtPayload = { userId: user.id, username: user.username, role: user.role, spaceIds }
     const token = app.jwt.sign(payload)

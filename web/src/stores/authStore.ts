@@ -1,6 +1,8 @@
 import { create } from 'zustand'
 import type { AuthUserInfo, SpaceInfo, LoginResponse } from '../types'
 import { useModuleStore } from './moduleStore'
+import { useChatStore } from './chatStore'
+import { useBizStore } from './bizStore'
 
 const TOKEN_KEY = 'bubble_token'
 const USER_KEY = 'bubble_user'
@@ -54,6 +56,16 @@ export const useAuthStore = create<AuthState>((set, get) => ({
   },
 
   logout: () => {
+    // Disconnect WebSocket and clear chat history FIRST
+    useChatStore.getState().disconnect()
+    useChatStore.setState({ messages: [], isStreaming: false })
+    // Clear biz data (no reset method, clear key arrays directly)
+    useBizStore.setState({
+      products: [], counterparties: [], projects: [],
+      purchases: [], sales: [], logistics: [], payments: [], invoices: [],
+      dashboard: null,
+    })
+    // Clear auth state
     localStorage.removeItem(TOKEN_KEY)
     localStorage.removeItem(USER_KEY)
     set({ token: null, user: null, currentSpaceId: null, error: null })

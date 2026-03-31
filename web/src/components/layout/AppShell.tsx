@@ -18,6 +18,7 @@ export function AppShell() {
   const tab = useUIStore((s) => s.activeTab)
   const setTab = useUIStore((s) => s.setTab)
   const currentSpaceId = useAuthStore((s) => s.currentSpaceId)
+  const token = useAuthStore((s) => s.token)
   const connect = useChatStore((s) => s.connect)
   const disconnect = useChatStore((s) => s.disconnect)
   const loadMasterData = useBizStore((s) => s.loadMasterData)
@@ -25,11 +26,12 @@ export function AppShell() {
   const visibleModules = useVisibleModules()
   const [onboarding, setOnboarding] = useState<OnboardingState>('checking')
 
-  // Connect WebSocket
+  // Connect WebSocket — reconnect when user (token) changes
   useEffect(() => {
+    if (!token) return
     connect()
     return () => disconnect()
-  }, [connect, disconnect])
+  }, [token, connect, disconnect])
 
   // Load biz master data when biz module is enabled
   useEffect(() => {

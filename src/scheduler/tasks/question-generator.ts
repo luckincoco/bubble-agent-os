@@ -202,6 +202,20 @@ export async function executeQuestionGenerator(
     logger.error('QuestionGenerator: gap detection failed:', err instanceof Error ? err.message : String(err))
   }
 
+  // ── D. Multi-scale questioning (「问」framework) ─────────────────────
+  // Use LLM to generate deeper questions by examining recent patterns
+  // through the lens of the "问" cognitive framework
+  try {
+    if (deps.llm) {
+      const askQuestions = await generateAskQuestions(deps, since)
+      for (const q of askQuestions) {
+        questions.push(q)
+      }
+    }
+  } catch (err) {
+    logger.error('QuestionGenerator: ask-framework scan failed:', err instanceof Error ? err.message : String(err))
+  }
+
   // ── Deduplicate against existing question bubbles ──────────────────
   const newQuestions = deduplicateQuestions(questions)
 
@@ -405,4 +419,79 @@ function median(nums: number[]): number {
   const sorted = [...nums].sort((a, b) => a - b)
   const mid = Math.floor(sorted.length / 2)
   return sorted.length % 2 !== 0 ? sorted[mid] : (sorted[mid - 1] + sorted[mid]) / 2
+}
+
+// ── 「问」Multi-scale questioning engine ─────────────────────────────
+
+const ASK_PROMPT = `你是一个以追问为核心的思维引擎。你的任务是从一组近期记忆中，发现值得追问的深层问题。
+
+你的追问方式：
+- 向上问：这些事件背后的前提是什么？这些前提是否被质疑过？
+- 向下问：表面现象之下，最小的真实单元是什么？
+- 横向问：这些模式在其他行业、其他文化、甚至自然界中有没有类似的？
+- 跨域类比：用涌现、熵、进化、共生、潮汐、根系等自然模式来审视
+
+要求：
+1. 只输出 1-3 个真正有价值的问题，不要泛泛而谈
+2. 每个问题必须具体、可追踪，而不是空泛的哲学感叹
+3. 问题应该能引发行动或思考转变，而不仅仅是信息补充
+4. 输出 JSON 数组格式：[{"title": "...", "content": "..."}]
+5. title 简短（15字以内），content 包含追问的逻辑和为什么值得关注`
+
+/**
+ * Use LLM to generate multi-scale questions from recent memory patterns.
+ * This is the "问" framework's proactive questioning capability.
+ */
+async function generateAskQuestions(
+  deps: TaskDeps,
+  since: number,
+): Promise<Array<{ title: string; content: string; tags: string[]; relatedIds: string[]; spaceId?: string }>> {
+  const db = getDatabase()
+  const results: Array<{ title: string; content: string; tags: string[]; relatedIds: string[]; spaceId?: string }> = []
+
+  // Gather a summary of recent activity across all types
+  const recentRows = db.prepare(`
+    SELECT id, type, title, content, tags, space_id
+    FROM bubbles
+    WHERE created_at > ? AND type IN ('memory', 'entity', 'event', 'observation')
+    ORDER BY created_at DESC LIMIT 30
+  `).all(since) as RecentBubbleRow[]
+
+  if (recentRows.length < 5) return results // not enough data
+
+  const summary = recentRows
+    .map(r => `[${r.type}] ${r.title}: ${r.content.slice(0, 120)}`)
+    .join('\n')
+
+  const messages = [
+    { role: 'system' as const, content: ASK_PROMPT },
+    { role: 'user' as const, content: `以下是近期的 ${recentRows.length} 条记忆摘要：\n\n${summary}` },
+  ]
+
+  try {
+    const response = await deps.llm!.chat(messages)
+    const text = response.content.trim()
+
+    // Extract JSON array from response
+    const jsonMatch = text.match(/\[[\s\S]*\]/)
+    if (!jsonMatch) return results
+
+    const parsed = JSON.parse(jsonMatch[0]) as Array<{ title: string; content: string }>
+
+    for (const q of parsed.slice(0, 3)) {
+      if (q.title && q.content) {
+        results.push({
+          title: q.title,
+          content: q.content,
+          tags: ['question', 'ask-framework', 'multi-scale'],
+          relatedIds: recentRows.slice(0, 3).map(r => r.id),
+          spaceId: recentRows[0].space_id ?? undefined,
+        })
+      }
+    }
+  } catch (err) {
+    logger.debug('Ask-framework LLM call failed:', err instanceof Error ? err.message : String(err))
+  }
+
+  return results
 }

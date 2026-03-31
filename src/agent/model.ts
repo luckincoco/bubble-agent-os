@@ -63,6 +63,8 @@ export function listAgents(creatorId?: string, spaceIds?: string[]): CustomAgent
   const rows = db.prepare('SELECT * FROM custom_agents ORDER BY updated_at DESC').all() as any[]
 
   return rows.filter(row => {
+    // System-created agents (e.g., "问") are visible to all users
+    if (row.creator_id === 'system') return true
     if (creatorId && row.creator_id === creatorId) return true
     if (spaceIds?.length) {
       const agentSpaces: string[] = JSON.parse(row.space_ids || '[]')

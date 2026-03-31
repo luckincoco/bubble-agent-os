@@ -23,11 +23,15 @@ import { TaskScheduler } from './scheduler/scheduler.js'
 import { initDatabase, closeDatabase } from './storage/database.js'
 import { startServer, type ServerModules } from './server/api.js'
 import { startREPL } from './cli/repl.js'
+import { seedAskAgent } from './agent/seed-agents.js'
 import { logger } from './shared/logger.js'
 
 async function main() {
   const config = getConfig()
   initDatabase(config.storage.dataDir, config.auth.defaultPassword)
+
+  // Seed built-in agents (「问」cognitive framework)
+  seedAskAgent()
 
   const llm = createLLM(config.llm)
   const memory = new MemoryManager(llm, config.features.focusTracking)

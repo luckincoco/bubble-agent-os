@@ -12,10 +12,14 @@ import { createTimeTool } from './connector/tools/time.js'
 import { createQueryExcelTool, createExportExcelTool, createCleanExcelTool, createCrossAnalyzeTool } from './connector/tools/excel.js'
 import { createWebSearchTool } from './connector/tools/web-search.js'
 import { createFetchPageTool } from './connector/tools/fetch-page.js'
+import { createBizQueryTools } from './connector/tools/biz-query-tools.js'
+import { createExtQueryTools } from './connector/tools/ext-query-tools.js'
+import { createExtAdminTools } from './connector/tools/ext-admin-tools.js'
 import { FeishuConnector } from './connector/feishu.js'
 import { WeComConnector } from './connector/wecom.js'
 import { MessageRouter } from './connector/router.js'
 import { BizEntryHandler } from './connector/biz/handler.js'
+import { EventNotifier } from './connector/event-notifier.js'
 import { TeachHandler } from './connector/teach/handler.js'
 import { SkillLoader } from './connector/skills/loader.js'
 import { SkillRouter } from './connector/skills/skill-router.js'
@@ -59,6 +63,15 @@ async function main() {
   tools.register(createCrossAnalyzeTool())
   tools.register(createWebSearchTool())
   tools.register(createFetchPageTool())
+  for (const tool of createBizQueryTools()) {
+    tools.register(tool)
+  }
+  for (const tool of createExtQueryTools()) {
+    tools.register(tool)
+  }
+  for (const tool of createExtAdminTools()) {
+    tools.register(tool)
+  }
 
   const brain = new Brain(llm)
   brain.setMemory(memory)
@@ -95,6 +108,11 @@ async function main() {
     logger.info('WeCom connector: initialized')
   }
 
+  // Wire up event notifier for pushing mirror events to external contacts
+  const eventNotifier = new EventNotifier(wecom ?? null, llm)
+  bizHandler.setEventNotifier(eventNotifier)
+  logger.info('Module: EventNotifier enabled')
+
   // Initialize scheduler
   let scheduler: TaskScheduler | undefined
   try {
@@ -106,7 +124,7 @@ async function main() {
     scheduler = undefined
   }
 
-  const serverModules: ServerModules = { semanticBridge, surpriseDetector, scheduler, tencentConfig: config.tencent, wecom }
+  const serverModules: ServerModules = { semanticBridge, surpriseDetector, scheduler, tencentConfig: config.tencent, wecom, llm }
 
   process.on('SIGINT', () => {
     scheduler?.stop()

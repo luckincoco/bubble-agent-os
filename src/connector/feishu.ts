@@ -4,6 +4,7 @@ import type { ToolRegistry } from '../connector/registry.js'
 import type { UserContext } from '../shared/types.js'
 import type { SurpriseDetector } from '../memory/surprise-detector.js'
 import { MessageRouter } from './router.js'
+import { resolveIdentity } from './identity.js'
 import { getDatabase } from '../storage/database.js'
 import { logger } from '../shared/logger.js'
 
@@ -25,6 +26,7 @@ export class FeishuConnector {
   private router: MessageRouter
   private tencentConfig: TencentOCRConfig | null = null
   private botOpenId: string | null = null
+  private adminChatId: string | null = null
   private userCtx: UserContext | null = null
   /** Track processed message IDs to prevent duplicate handling on WS reconnect */
   private processedMsgIds = new Set<string>()
@@ -89,6 +91,19 @@ export class FeishuConnector {
 
     this.wsClient.start({ eventDispatcher })
     logger.info('Feishu connector: WebSocket started (泡泡飞书机器人)')
+
+    // Load persisted admin chat_id from DB
+    try {
+      const db = getDatabase()
+      const admin = db.prepare("SELECT preferences FROM users WHERE role = 'admin' LIMIT 1").get() as { preferences: string } | undefined
+      if (admin) {
+        const prefs = JSON.parse(admin.preferences || '{}')
+        if (prefs.feishu_chat_id) {
+          this.adminChatId = prefs.feishu_chat_id
+          logger.info(`Feishu admin chat_id loaded: ${this.adminChatId}`)
+        }
+      }
+    } catch { /* ignore */ }
   }
 
   private async handleMessage(data: any) {
@@ -96,6 +111,7 @@ export class FeishuConnector {
     if (!msg) return
 
     const { chat_id, content, message_type, chat_type, message_id, mentions } = msg
+    const senderOpenId: string = data?.sender?.sender_id?.open_id ?? ''
 
     // Deduplicate: skip messages already processed (Feishu WS re-delivers on reconnect)
     if (message_id) {
@@ -108,6 +124,20 @@ export class FeishuConnector {
       }
     }
 
+    // Capture p2p chat_id for scheduled task push notifications
+    if (chat_type === 'p2p' && chat_id && chat_id !== this.adminChatId) {
+      this.adminChatId = chat_id
+      try {
+        const db = getDatabase()
+        const admin = db.prepare("SELECT id, preferences FROM users WHERE role = 'admin' LIMIT 1").get() as { id: string; preferences: string } | undefined
+        if (admin) {
+          const prefs = JSON.parse(admin.preferences || '{}')
+          prefs.feishu_chat_id = chat_id
+          db.prepare('UPDATE users SET preferences = ? WHERE id = ?').run(JSON.stringify(prefs), admin.id)
+        }
+      } catch { /* ignore */ }
+    }
+
     // In group chats, only respond when this bot is @mentioned
     if (chat_type === 'group' && this.botOpenId) {
       const botMentioned = Array.isArray(mentions) && mentions.some(
@@ -118,7 +148,7 @@ export class FeishuConnector {
 
     // Handle image messages with OCR
     if (message_type === 'image') {
-      await this.handleImageMessage(msg)
+      await this.handleImageMessage(msg, senderOpenId)
       return
     }
 
@@ -141,7 +171,7 @@ export class FeishuConnector {
 
     logger.info(`Feishu message: "${text.slice(0, 50)}${text.length > 50 ? '...' : ''}"`)
 
-    const ctx = this.resolveUserContext()
+    const ctx = senderOpenId ? resolveIdentity('feishu', senderOpenId) : this.resolveUserContext()
 
     try {
       const { response } = await this.router.handle(text, ctx)
@@ -154,7 +184,7 @@ export class FeishuConnector {
   }
 
   /** Handle image message: download from Feishu, run OCR, reply with recognized text */
-  private async handleImageMessage(msg: any) {
+  private async handleImageMessage(msg: any, senderOpenId?: string) {
     const { chat_id, chat_type, message_id, content } = msg
 
     if (!this.tencentConfig) {
@@ -197,7 +227,7 @@ export class FeishuConnector {
         : result.text
 
       // Send OCR result to brain for understanding
-      const ctx = this.resolveUserContext()
+      const ctx = senderOpenId ? resolveIdentity('feishu', senderOpenId) : this.resolveUserContext()
       const ocrPrompt = `[用户发送了一张图片，OCR识别结果如下]\n${ocrText}\n\n请帮我理解和整理这张图片中的信息。`
       const { response } = await this.brain.think(ocrPrompt, ctx)
 
@@ -249,6 +279,11 @@ export class FeishuConnector {
       chunks.push(Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk))
     }
     return Buffer.concat(chunks)
+  }
+
+  /** Get the admin user's p2p chat_id (auto-captured from incoming messages) */
+  getAdminChatId(): string | null {
+    return this.adminChatId
   }
 
   /** Public: push a text message to a given chat (used by scheduler tasks) */

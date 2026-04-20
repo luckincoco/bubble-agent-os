@@ -7,6 +7,7 @@ import type { LLMProvider, EmbeddingProvider } from '../../shared/types.js'
 import { detectBizIntent } from './detector.js'
 import { BizParser } from './parser.js'
 import { BizStore, type StoreResult } from './store.js'
+import type { EventNotifier } from '../event-notifier.js'
 import { logger } from '../../shared/logger.js'
 
 export interface BizEntryResult {
@@ -25,6 +26,10 @@ export class BizEntryHandler {
     if (embeddings) {
       this.store.setEmbeddingProvider(embeddings)
     }
+  }
+
+  setEventNotifier(notifier: EventNotifier) {
+    this.store.setEventNotifier(notifier)
   }
 
   /**

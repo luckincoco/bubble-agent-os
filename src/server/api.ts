@@ -11,7 +11,7 @@ import bcrypt from 'bcryptjs'
 import * as XLSX from 'xlsx'
 import type { Brain } from '../kernel/brain.js'
 import type { MemoryManager } from '../memory/manager.js'
-import type { BubbleType, UserContext, SpaceRole } from '../shared/types.js'
+import type { BubbleType, UserContext, SpaceRole, LLMProvider } from '../shared/types.js'
 import { createBubble, softDeleteBubble } from '../bubble/model.js'
 import { addLink } from '../bubble/links.js'
 import { getDatabase } from '../storage/database.js'
@@ -33,6 +33,7 @@ import * as biz from '../connector/biz/structured-store.js'
 import * as docEngine from '../connector/biz/doc-engine.js'
 import * as reports from '../connector/biz/reports.js'
 import { bridgeExcelSheet, type BridgeResult } from '../connector/biz/excel-bridge.js'
+import { inferAllSheets, applyColumnMap, resolveCategory, type SheetPreview } from '../connector/tools/schema-inference.js'
 
 const __dirname = dirname(fileURLToPath(import.meta.url))
 
@@ -50,6 +51,45 @@ export interface ServerModules {
   scheduler?: TaskScheduler
   tencentConfig?: { secretId: string; secretKey: string; region?: string }
   wecom?: WeComConnector
+  llm?: LLMProvider
+}
+
+// ── Sanitize XLSX cell values ──────────────────────────────────────
+// XLSX.utils.sheet_to_json may return non-primitive values for formula cells
+// (Date objects, rich text objects, error refs) which become "[object Object]"
+// when stringified. This sanitizer converts them back to usable primitives.
+
+function sanitizeCellValue(v: unknown): string | number | boolean | null | undefined {
+  if (v == null) return v
+  if (typeof v === 'string' || typeof v === 'number' || typeof v === 'boolean') return v
+  if (v instanceof Date) return isNaN(v.getTime()) ? '' : v.toISOString().slice(0, 10)
+  if (typeof v === 'object') {
+    const prim = (v as { valueOf(): unknown }).valueOf()
+    if (typeof prim === 'number' && !isNaN(prim)) return prim
+    if (typeof prim === 'string') return prim
+    const s = String(v)
+    return s === '[object Object]' ? '' : s
+  }
+  return String(v)
+}
+
+function sanitizeSheetRows(rawRows: Record<string, unknown>[]): Record<string, unknown>[] {
+  return rawRows
+    .map(row => {
+      const clean: Record<string, unknown> = {}
+      for (const [k, v] of Object.entries(row)) {
+        clean[k] = sanitizeCellValue(v)
+      }
+      return clean
+    })
+    .filter(row => {
+      // Real data rows have at least one non-empty string (date, name, status, etc.)
+      // Formula template rows only have numeric zeros from formula evaluation.
+      const vals = Object.values(row)
+      const nonEmpty = vals.filter(v => v != null && v !== '')
+      if (nonEmpty.length < 2) return false
+      return vals.some(v => typeof v === 'string' && v.trim() !== '')
+    })
 }
 
 export async function startServer(brain: Brain, memory: MemoryManager, port = 3000, jwtSecret = 'bubble-agent-secret', modules?: ServerModules, serviceApiKey?: string, router?: MessageRouter) {
@@ -582,7 +622,10 @@ export async function startServer(brain: Brain, memory: MemoryManager, port = 30
     const file = await req.file()
     if (!file) return reply.code(400).send({ error: '请上传Excel文件' })
 
-    const targetSpace = ctx.activeSpaceId
+    const { spaceId } = (req.query || {}) as { spaceId?: string }
+    const targetSpace = spaceId && (ctx.spaceIds.length === 0 || ctx.spaceIds.includes(spaceId))
+      ? spaceId
+      : ctx.activeSpaceId
 
     const buf = await file.toBuffer()
     const workbook = XLSX.read(buf)
@@ -594,12 +637,38 @@ export async function startServer(brain: Brain, memory: MemoryManager, port = 30
     const bridgeResults: BridgeResult[] = []
     const sheetsProcessed: Array<{ sheet: string; rows: number; columns: string[]; category: string }> = []
 
+    // ── LLM Schema Inference: pre-infer all sheets in parallel ──
+    const llm = modules?.llm
+    const sheetPreviews: SheetPreview[] = []
+    const sheetRowsCache = new Map<string, Record<string, unknown>[]>()
+
     for (const sheetName of workbook.SheetNames) {
-      const rows = XLSX.utils.sheet_to_json<Record<string, unknown>>(workbook.Sheets[sheetName]!)
+      const rawRows = XLSX.utils.sheet_to_json<Record<string, unknown>>(workbook.Sheets[sheetName]!)
+      const rows = sanitizeSheetRows(rawRows)
       if (!rows.length) continue
+      sheetRowsCache.set(sheetName, rows)
+      const headers = Object.keys(rows[0]!)
+      sheetPreviews.push({ sheetName, headers, sampleRows: rows.slice(0, 3) })
+    }
+
+    const inferences = llm
+      ? await inferAllSheets(llm, sheetPreviews)
+      : new Map()
+
+    for (const sheetName of workbook.SheetNames) {
+      let rows = sheetRowsCache.get(sheetName)
+      if (!rows?.length) continue
+      logger.info(`Excel import: sheet "${sheetName}" raw=${XLSX.utils.sheet_to_json(workbook.Sheets[sheetName]!).length} rows, after sanitize=${rows.length} rows`)
+
+      // Apply LLM column mapping (adds standard column aliases to each row)
+      const inference = inferences.get(sheetName)
+      if (inference && Object.keys(inference.columnMap).length > 0) {
+        rows = applyColumnMap(rows, inference.columnMap)
+        sheetRowsCache.set(sheetName, rows)
+      }
 
       const headers = Object.keys(rows[0]!)
-      const category = detectSheetCategory(sheetName)
+      const category = resolveCategory(sheetName, inference)
       const newBubbleIds: string[] = []
 
       // --- Phase 1: Generate knowledge cards from base-info sheets ---
@@ -863,7 +932,30 @@ export async function startServer(brain: Brain, memory: MemoryManager, port = 30
       logger.info(`Excel biz bridge: ${bizTotal} structured records created`)
     }
 
-    return { created: totalCreated, knowledgeCards: knowledgeCardsCreated, aggregations: aggregationsCreated, sheets: sheetsProcessed, bizBridge }
+    // ── Diagnostics: inference method per sheet ──
+    const diagnostics = {
+      inferenceReport: sheetsProcessed.map(sp => {
+        const inf = inferences.get(sp.sheet)
+        if (inf) {
+          return { sheet: sp.sheet, method: 'llm' as const, category: sp.category, confidence: inf.confidence }
+        }
+        return { sheet: sp.sheet, method: 'regex-fallback' as const, category: sp.category, confidence: 0 }
+      }),
+    }
+
+    // ── Validation summary ──
+    const totalRowsParsed = sheetsProcessed.reduce((a, s) => a + s.rows, 0)
+    const totalRecordsCreated = bizTotal
+    const totalDuplicatesSkipped = bizBridge.skipped.purchases + bizBridge.skipped.sales + bizBridge.skipped.logistics + bizBridge.skipped.payments
+    const validation = {
+      totalRowsParsed,
+      recordsCreated: totalRecordsCreated,
+      duplicatesSkipped: totalDuplicatesSkipped,
+      errors: bizBridge.errors.length,
+      errorSamples: bizBridge.errors.slice(0, 3),
+    }
+
+    return { created: totalCreated, knowledgeCards: knowledgeCardsCreated, aggregations: aggregationsCreated, sheets: sheetsProcessed, bizBridge, diagnostics, validation }
   })
 
   // Document import (PDF, Word, TXT)
@@ -1517,6 +1609,7 @@ export async function startServer(brain: Brain, memory: MemoryManager, port = 30
   app.get('/api/biz/receivables', async (req) => ({ data: biz.getReceivables(getBizCtx(req)) }))
   app.get('/api/biz/payables', async (req) => ({ data: biz.getPayables(getBizCtx(req)) }))
   app.get('/api/biz/dashboard', async (req) => ({ data: biz.getDashboard(getBizCtx(req)) }))
+  app.get('/api/biz/exposure', async (req) => ({ data: biz.getExposure(getBizCtx(req)) }))
   app.get('/api/biz/reconciliation', async (req) => ({ data: biz.getProjectReconciliation(getBizCtx(req)) }))
 
   // ── Reports (v0.6 SaaS) ────────────────────────────────────────
@@ -1596,6 +1689,19 @@ export async function startServer(brain: Brain, memory: MemoryManager, port = 30
       const body = req.body as biz.CreateSaleWithLinesInput
       body.spaceId = ctx.spaceId
       const result = biz.createSaleWithLines(body)
+      return { data: result }
+    } catch (err) {
+      return reply.code(400).send({ error: err instanceof Error ? err.message : String(err) })
+    }
+  })
+
+  // v1.0.2: Trade cascade creation
+  app.post('/api/biz/trades', async (req, reply) => {
+    try {
+      const ctx = getBizCtx(req)
+      const body = req.body as biz.CreateTradeInput
+      body.spaceId = ctx.spaceId
+      const result = biz.createTradeWithCascade(body)
       return { data: result }
     } catch (err) {
       return reply.code(400).send({ error: err instanceof Error ? err.message : String(err) })

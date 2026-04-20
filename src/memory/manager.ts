@@ -86,6 +86,20 @@ export class MemoryManager {
     }
   }
 
+  /** Get recent interest topics for a user (for interest_search task) */
+  getRecentTopics(userId: string): Array<{ term: string; freq: number }> {
+    if (!this.focusEnabled) return []
+    const windowSize = this.focusTracker.getWindowSize(userId)
+    const minFreq = windowSize < 5 ? 1 : 2
+    return this.focusTracker.getTopTerms(userId, minFreq, 15)
+  }
+
+  /** Get all user IDs with active focus data */
+  getActiveFocusUserIds(): string[] {
+    if (!this.focusEnabled) return []
+    return this.focusTracker.getActiveUserIds()
+  }
+
   setEmbeddingProvider(provider: EmbeddingProvider) {
     this.embeddings = provider
     this.aggregator.setEmbeddingProvider(provider)
@@ -156,7 +170,7 @@ export class MemoryManager {
 
     logger.debug(`Memory context: ~${usedTokens} tokens (budget ${budget}), ${summaryHits.length} candidates → ${bubbles.length} loaded, ${parts.length} sections`)
 
-    const context = `\n${parts.join('\n\n')}\n\n请基于以上信息回答用户的问题。如果涉及数值计算（金额汇总、吨位统计等），请基于完整数据表列出相关数据并计算，确保不遗漏任何行。`
+    const context = `\n${parts.join('\n\n')}\n\n请基于以上信息回答用户的问题。回复格式要求：\n1. 先用一句话给出结论（如"本月毛利 12.3万，环比下降 8%"）\n2. 多行数据用 Markdown 表格呈现（≤6列），金额≥1万时用"万"为单位（如 52.3万）\n3. 异常项排在最前并用 ⚠️ 标注（如负库存、亏损单、大额逾期）\n4. 如需计算过程，放在最后的"计算明细"段落，不要穿插在结论中\n5. 保持简洁，不要重复列出用户已知的信息`
     return { context, sources }
   }
 

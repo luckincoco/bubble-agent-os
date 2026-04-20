@@ -1,5 +1,5 @@
 import type { Bubble, BubbleType } from '../shared/types.js'
-import { createBubble, searchBubbles } from '../bubble/model.js'
+import { createBubble, searchBubbles, findBubblesByType } from '../bubble/model.js'
 import { addLink } from '../bubble/links.js'
 import { calcSurprise } from './manager.js'
 import { logger } from '../shared/logger.js'
@@ -170,5 +170,67 @@ export class SurpriseDetector {
     addLink(eventBubble.id, existing[0].id, 'contradicts', 1.0, 'system')
 
     logger.info(`SurpriseDetector: contradiction detected in message`)
+
+    // Check if accumulated contradictions create cognitive pressure → trigger "问"
+    this.checkContradictionPressure(spaceId)
+  }
+
+  /**
+   * Contradiction escalation — Bubble's "问" under cognitive pressure.
+   *
+   * When multiple contradictions accumulate without resolution,
+   * Bubble can't act coherently. This isn't a scheduled question —
+   * it's a survival response: "不问就会死" (don't ask = can't function).
+   *
+   * Creates a 'question' bubble only when real pressure exists:
+   * ≥2 unresolved contradictions within 7 days on overlapping topics.
+   */
+  private checkContradictionPressure(spaceId?: string): void {
+    const DAY_MS = 24 * 60 * 60 * 1000
+    const now = Date.now()
+    const spaceIds = spaceId ? [spaceId] : undefined
+
+    // Find recent contradiction events
+    const recentContradictions = searchBubbles('矛盾', 20, spaceIds)
+      .filter(b =>
+        b.type === 'event'
+        && b.tags.includes('contradiction')
+        && b.createdAt > now - 7 * DAY_MS,
+      )
+
+    // Only escalate when pressure is real: ≥2 unresolved contradictions
+    if (recentContradictions.length < 2) return
+
+    // Don't ask the same thing twice within 3 days
+    const existingQuestions = searchBubbles('信息矛盾', 5, spaceIds)
+      .filter(b =>
+        b.type === 'question'
+        && b.tags.includes('contradiction-pressure')
+        && b.createdAt > now - 3 * DAY_MS,
+      )
+    if (existingQuestions.length > 0) return
+
+    // Build question from accumulated contradictions
+    const contradictionSummary = recentContradictions.slice(0, 3)
+      .map(c => `- ${c.content.slice(0, 120)}`)
+      .join('\n')
+
+    const questionBubble = createBubble({
+      type: 'question' as BubbleType,
+      title: `${recentContradictions.length} 处信息矛盾待确认`,
+      content: `最近检测到 ${recentContradictions.length} 处信息矛盾，无法自行判断哪个是当前有效的：\n\n${contradictionSummary}\n\n需要你确认哪些信息是最新的。`,
+      tags: ['question', 'contradiction-pressure', 'auto-ask'],
+      source: 'surprise-detector',
+      confidence: 1.0,
+      decayRate: 0.1,
+      spaceId,
+    })
+
+    // Link question to the contradiction events it emerged from
+    for (const c of recentContradictions.slice(0, 5)) {
+      addLink(questionBubble.id, c.id, 'questions_about', 0.9, 'system')
+    }
+
+    logger.info(`SurpriseDetector: escalated ${recentContradictions.length} contradictions → question "${questionBubble.title}"`)
   }
 }

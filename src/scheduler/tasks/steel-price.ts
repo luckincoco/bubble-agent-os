@@ -52,7 +52,7 @@ export async function executeSteelPrice(_params: Record<string, unknown>, deps: 
 
     // Push to Feishu if configured
     if (deps.feishu) {
-      const chatId = String(_params.chatId || process.env.FEISHU_ADMIN_CHAT_ID || '')
+      const chatId = deps.feishu?.getAdminChatId() || String(_params.chatId || process.env.FEISHU_ADMIN_CHAT_ID || '')
       if (chatId) {
         try {
           await deps.feishu.pushMessage(chatId, `📊 今日上海钢材价格已更新 (${today})\n来源: 西本新干线\n数据已存入记忆系统，随时可查询。`)

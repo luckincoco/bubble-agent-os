@@ -22,30 +22,30 @@
 .logo {
   width: 32px;
   height: 32px;
-  border-radius: 50%;
-  background: var(--gradient-primary);
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  font-size: 16px;
-  box-shadow: 0 0 12px var(--glow-purple);
+  flex-shrink: 0;
+}
+
+.logo svg {
+  width: 100%;
+  height: 100%;
+  filter: drop-shadow(0 0 8px var(--glow-purple));
 }
 
 @media (min-width: 1024px) {
   .logo {
     width: 36px;
     height: 36px;
-    font-size: 18px;
   }
 }
 
 .title {
   font-size: 17px;
   font-weight: 600;
-  background: var(--gradient-accent);
+  background: linear-gradient(135deg, #6366F1, #2563EB, #06B6D4);
   background-clip: text;
   -webkit-background-clip: text;
   -webkit-text-fill-color: transparent;
+  letter-spacing: 0.3px;
 }
 
 @media (min-width: 1024px) {

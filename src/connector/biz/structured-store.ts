@@ -11,8 +11,9 @@ import { createDocLink } from './doc-engine.js'
 import type {
   BizProduct, BizCounterparty, BizProject,
   BizPurchase, BizSale, BizLogisticsRecord, BizPayment, BizInvoice,
-  BizPurchaseLine, BizSaleLine,
+  BizPurchaseLine, BizSaleLine, BizTrade, SettlementMethod,
   InventoryItem, ReceivableItem, PayableItem, DashboardData, ProjectReconciliationItem,
+  ExposureItem, ExposureSummary, SilenceAlertItem,
   DocLink,
 } from './schema.js'
 
@@ -40,6 +41,21 @@ function toCamel<T>(row: Record<string, unknown>): T {
     }
   }
   return result as T
+}
+
+/** Compute Lindy days from first interaction date to today. */
+export function computeLindyDays(firstInteraction?: string): number | null {
+  if (!firstInteraction) return null
+  const ms = Date.now() - new Date(firstInteraction + 'T00:00:00').getTime()
+  return Math.max(0, Math.floor(ms / 86400000))
+}
+
+/** Ensure first_interaction is always the earliest known transaction date. */
+function ensureFirstInteraction(counterpartyId: string, date: string): void {
+  const db = getDatabase()
+  db.prepare(
+    'UPDATE biz_counterparties SET first_interaction = ? WHERE id = ? AND (first_interaction IS NULL OR first_interaction > ?)',
+  ).run(date, counterpartyId, date)
 }
 
 // ── Products ────────────────────────────────────────────────────────
@@ -110,11 +126,12 @@ export function createCounterparty(ctx: BizContext, input: Omit<BizCounterparty,
   const db = getDatabase()
   const id = ulid()
   const ts = now()
+  const firstInteraction = input.firstInteraction ?? new Date().toISOString().slice(0, 10)
   db.prepare(`
-    INSERT INTO biz_counterparties (id, tenant_id, space_id, name, type, contact, phone, address, bank_info, tax_id, metadata, created_at, updated_at)
-    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-  `).run(id, TENANT, ctx.spaceId, input.name, input.type, input.contact ?? null, input.phone ?? null, input.address ?? null, input.bankInfo ?? null, input.taxId ?? null, JSON.stringify(input.metadata ?? {}), ts, ts)
-  return { id, tenantId: TENANT, createdAt: ts, updatedAt: ts, ...input } as BizCounterparty
+    INSERT INTO biz_counterparties (id, tenant_id, space_id, name, type, contact, phone, address, bank_info, tax_id, first_interaction, metadata, created_at, updated_at)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+  `).run(id, TENANT, ctx.spaceId, input.name, input.type, input.contact ?? null, input.phone ?? null, input.address ?? null, input.bankInfo ?? null, input.taxId ?? null, firstInteraction, JSON.stringify(input.metadata ?? {}), ts, ts)
+  return { id, tenantId: TENANT, firstInteraction, createdAt: ts, updatedAt: ts, ...input } as BizCounterparty
 }
 
 export function getCounterparties(ctx: BizContext, type?: string): BizCounterparty[] {
@@ -146,6 +163,7 @@ export function updateCounterparty(id: string, updates: Partial<BizCounterparty>
   const map: Record<string, string> = {
     name: 'name', type: 'type', contact: 'contact', phone: 'phone',
     address: 'address', bankInfo: 'bank_info', taxId: 'tax_id',
+    firstInteraction: 'first_interaction',
   }
   for (const [ts, col] of Object.entries(map)) {
     if ((updates as Record<string, unknown>)[ts] !== undefined) {
@@ -243,6 +261,7 @@ export function createPurchase(input: CreatePurchaseInput): BizPurchase {
     INSERT INTO biz_purchases (id, tenant_id, space_id, date, order_no, doc_no, supplier_id, product_id, bundle_count, tonnage, unit_price, total_amount, project_id, invoice_status, payment_status, notes, bubble_id, raw_input, created_by, doc_status, created_at, updated_at)
     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'draft', ?, ?)
   `).run(id, TENANT, input.spaceId ?? null, input.date, input.orderNo ?? null, input.docNo ?? input.orderNo ?? null, input.supplierId, input.productId, input.bundleCount ?? null, input.tonnage, input.unitPrice, input.totalAmount, input.projectId ?? null, input.invoiceStatus ?? 'none', input.paymentStatus ?? 'unpaid', input.notes ?? null, input.bubbleId ?? null, input.rawInput ?? null, input.createdBy ?? null, ts, ts)
+  ensureFirstInteraction(input.supplierId, input.date)
   return toCamel<BizPurchase>(db.prepare('SELECT * FROM biz_purchases WHERE id = ?').get(id) as Record<string, unknown>)
 }
 
@@ -347,6 +366,7 @@ export function createSale(input: CreateSaleInput): BizSale {
     INSERT INTO biz_sales (id, tenant_id, space_id, date, order_no, doc_no, customer_id, supplier_id, product_id, bundle_count, tonnage, unit_price, total_amount, cost_price, cost_amount, profit, project_id, logistics_provider, invoice_status, collection_status, notes, bubble_id, raw_input, created_by, doc_status, created_at, updated_at)
     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'draft', ?, ?)
   `).run(id, TENANT, input.spaceId ?? null, input.date, input.orderNo ?? null, input.docNo ?? input.orderNo ?? null, input.customerId, input.supplierId ?? null, input.productId, input.bundleCount ?? null, input.tonnage, input.unitPrice, input.totalAmount, input.costPrice ?? null, input.costAmount ?? null, input.profit ?? null, input.projectId ?? null, input.logisticsProvider ?? null, input.invoiceStatus ?? 'none', input.collectionStatus ?? 'uncollected', input.notes ?? null, input.bubbleId ?? null, input.rawInput ?? null, input.createdBy ?? null, ts, ts)
+  ensureFirstInteraction(input.customerId, input.date)
   return toCamel<BizSale>(db.prepare('SELECT * FROM biz_sales WHERE id = ?').get(id) as Record<string, unknown>)
 }
 
@@ -431,6 +451,7 @@ export function createLogistics(input: CreateLogisticsInput): BizLogisticsRecord
     INSERT INTO biz_logistics (id, tenant_id, space_id, date, waybill_no, doc_no, carrier_id, project_id, destination, tonnage, freight, lifting_fee, total_fee, driver, driver_phone, license_plate, settlement_status, notes, bubble_id, raw_input, created_by, doc_status, created_at, updated_at)
     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'draft', ?, ?)
   `).run(id, TENANT, input.spaceId ?? null, input.date, input.waybillNo ?? null, input.docNo ?? input.waybillNo ?? null, input.carrierId ?? null, input.projectId ?? null, input.destination ?? null, input.tonnage ?? null, freight, liftingFee, totalFee, input.driver ?? null, input.driverPhone ?? null, input.licensePlate ?? null, input.settlementStatus ?? 'unpaid', input.notes ?? null, input.bubbleId ?? null, input.rawInput ?? null, input.createdBy ?? null, ts, ts)
+  if (input.carrierId) ensureFirstInteraction(input.carrierId, input.date)
   return toCamel<BizLogisticsRecord>(db.prepare('SELECT * FROM biz_logistics WHERE id = ?').get(id) as Record<string, unknown>)
 }
 
@@ -481,6 +502,7 @@ export function createPayment(input: CreatePaymentInput): BizPayment {
     INSERT INTO biz_payments (id, tenant_id, space_id, date, doc_no, direction, counterparty_id, project_id, amount, method, reference_no, notes, bubble_id, raw_input, created_by, doc_status, created_at, updated_at)
     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'draft', ?, ?)
   `).run(id, TENANT, input.spaceId ?? null, input.date, input.docNo ?? null, input.direction, input.counterpartyId, input.projectId ?? null, input.amount, input.method ?? null, input.referenceNo ?? null, input.notes ?? null, input.bubbleId ?? null, input.rawInput ?? null, input.createdBy ?? null, ts, ts)
+  ensureFirstInteraction(input.counterpartyId, input.date)
   return toCamel<BizPayment>(db.prepare('SELECT * FROM biz_payments WHERE id = ?').get(id) as Record<string, unknown>)
 }
 
@@ -633,6 +655,217 @@ export function getPayables(ctx: BizContext): PayableItem[] {
     ORDER BY outstanding DESC
   `).all(TENANT, ctx.spaceId, TENANT, ctx.spaceId, TENANT, ctx.spaceId) as Record<string, unknown>[]
   return rows.map(r => toCamel<PayableItem>(r))
+}
+
+export function getExposure(ctx: BizContext): ExposureSummary {
+  const db = getDatabase()
+  const rows = db.prepare(`
+    SELECT
+      c.id as counterparty_id, c.name, c.type, c.first_interaction,
+      COALESCE(recv.outstanding, 0) as receivable,
+      COALESCE(pay.outstanding, 0) as payable,
+      COALESCE(recv.outstanding, 0) - COALESCE(pay.outstanding, 0) as net_exposure
+    FROM biz_counterparties c
+    LEFT JOIN (
+      SELECT s.customer_id as cid,
+        COALESCE(SUM(s.total_amount), 0) - COALESCE(pin.total, 0) as outstanding
+      FROM biz_sales s
+      LEFT JOIN (
+        SELECT counterparty_id, SUM(amount) as total
+        FROM biz_payments
+        WHERE tenant_id = ? AND space_id = ? AND direction = 'in'
+          AND deleted_at IS NULL AND ${ACTIVE_STATUS}
+        GROUP BY counterparty_id
+      ) pin ON pin.counterparty_id = s.customer_id
+      WHERE s.tenant_id = ? AND s.space_id = ? AND s.deleted_at IS NULL
+        AND s.${ACTIVE_STATUS}
+      GROUP BY s.customer_id
+    ) recv ON recv.cid = c.id
+    LEFT JOIN (
+      SELECT p.supplier_id as cid,
+        COALESCE(SUM(p.total_amount), 0) - COALESCE(pout.total, 0) as outstanding
+      FROM biz_purchases p
+      LEFT JOIN (
+        SELECT counterparty_id, SUM(amount) as total
+        FROM biz_payments
+        WHERE tenant_id = ? AND space_id = ? AND direction = 'out'
+          AND deleted_at IS NULL AND ${ACTIVE_STATUS}
+        GROUP BY counterparty_id
+      ) pout ON pout.counterparty_id = p.supplier_id
+      WHERE p.tenant_id = ? AND p.space_id = ? AND p.deleted_at IS NULL
+        AND p.${ACTIVE_STATUS}
+      GROUP BY p.supplier_id
+    ) pay ON pay.cid = c.id
+    WHERE c.tenant_id = ? AND c.space_id = ?
+      AND (COALESCE(recv.outstanding, 0) != 0 OR COALESCE(pay.outstanding, 0) != 0)
+    ORDER BY ABS(COALESCE(recv.outstanding, 0) - COALESCE(pay.outstanding, 0)) DESC
+  `).all(
+    TENANT, ctx.spaceId, TENANT, ctx.spaceId,
+    TENANT, ctx.spaceId, TENANT, ctx.spaceId,
+    TENANT, ctx.spaceId,
+  ) as Record<string, unknown>[]
+
+  let totalReceivable = 0
+  let totalPayable = 0
+  const items: ExposureItem[] = rows.map(r => {
+    const item = toCamel<ExposureItem>(r)
+    item.lindyDays = computeLindyDays(item.firstInteraction)
+    totalReceivable += item.receivable
+    totalPayable += item.payable
+    return item
+  })
+
+  return {
+    items,
+    totalReceivable,
+    totalPayable,
+    netExposure: totalReceivable - totalPayable,
+  }
+}
+
+export function getSilenceAlerts(ctx: BizContext, multiplier = 2.0, minTx = 3): SilenceAlertItem[] {
+  const db = getDatabase()
+  const today = new Date().toISOString().slice(0, 10)
+  const todayMs = new Date(today + 'T00:00:00').getTime()
+  const maxThresholdDays = 90
+
+  const activityRows = db.prepare(`
+    SELECT counterparty_id, MAX(date) as last_date, COUNT(*) as cnt, MIN(date) as first_date
+    FROM (
+      SELECT supplier_id as counterparty_id, date FROM biz_purchases
+        WHERE space_id = ? AND deleted_at IS NULL AND ${ACTIVE_STATUS}
+      UNION ALL
+      SELECT customer_id, date FROM biz_sales
+        WHERE space_id = ? AND deleted_at IS NULL AND ${ACTIVE_STATUS}
+      UNION ALL
+      SELECT counterparty_id, date FROM biz_payments
+        WHERE space_id = ? AND deleted_at IS NULL AND ${ACTIVE_STATUS}
+      UNION ALL
+      SELECT carrier_id, date FROM biz_logistics
+        WHERE space_id = ? AND deleted_at IS NULL AND ${ACTIVE_STATUS}
+    ) t
+    WHERE counterparty_id IS NOT NULL
+    GROUP BY counterparty_id
+    HAVING COUNT(*) >= ?
+  `).all(ctx.spaceId, ctx.spaceId, ctx.spaceId, ctx.spaceId, minTx) as Array<{
+    counterparty_id: string; last_date: string; cnt: number; first_date: string
+  }>
+
+  const alerts: SilenceAlertItem[] = []
+
+  for (const row of activityRows) {
+    const lastDateMs = new Date(row.last_date + 'T00:00:00').getTime()
+    const firstDateMs = new Date(row.first_date + 'T00:00:00').getTime()
+    const daysSilent = Math.floor((todayMs - lastDateMs) / 86400000)
+    const spanDays = Math.max(1, Math.floor((lastDateMs - firstDateMs) / 86400000))
+    const avgInterval = spanDays / Math.max(1, row.cnt - 1)
+    const threshold = Math.min(Math.ceil(multiplier * avgInterval), maxThresholdDays)
+
+    if (daysSilent <= threshold) continue
+
+    const cp = db.prepare(
+      'SELECT id, name, type FROM biz_counterparties WHERE id = ?',
+    ).get(row.counterparty_id) as { id: string; name: string; type: string } | undefined
+    if (!cp) continue
+
+    alerts.push({
+      counterpartyId: cp.id,
+      name: cp.name,
+      type: cp.type,
+      lastDate: row.last_date,
+      transactionCount: row.cnt,
+      avgIntervalDays: avgInterval,
+      silentDays: daysSilent,
+      threshold,
+    })
+  }
+
+  return alerts.sort((a, b) => b.silentDays - a.silentDays)
+}
+
+// ── Concentration Metrics ──────────────────────────────────────────
+
+export interface ConcentrationItem {
+  name: string
+  amount: number
+  share: number   // 0-100
+}
+
+export interface ConcentrationSide {
+  topN: number
+  topItems: ConcentrationItem[]
+  totalAmount: number
+  topNShare: number   // 0-100
+  warning: boolean
+}
+
+export interface ConcentrationMetrics {
+  supplierConcentration: ConcentrationSide
+  customerConcentration: ConcentrationSide
+  threshold: number
+}
+
+function computeConcentration(
+  rows: Array<{ name: string; total: number }>,
+  topN: number,
+  threshold: number,
+): ConcentrationSide {
+  const totalAmount = rows.reduce((s, r) => s + r.total, 0)
+  if (totalAmount === 0) {
+    return { topN, topItems: [], totalAmount: 0, topNShare: 0, warning: false }
+  }
+  const sorted = [...rows].sort((a, b) => b.total - a.total)
+  const topItems = sorted.slice(0, topN).map(r => ({
+    name: r.name,
+    amount: r.total,
+    share: Math.round((r.total / totalAmount) * 10000) / 100,
+  }))
+  const topNShare = Math.round(topItems.reduce((s, i) => s + i.share, 0) * 100) / 100
+  return { topN, topItems, totalAmount, topNShare, warning: topNShare > threshold }
+}
+
+export function getConcentrationMetrics(
+  ctx: BizContext,
+  options: { topN?: number; threshold?: number; dateFrom?: string; dateTo?: string } = {},
+): ConcentrationMetrics {
+  const db = getDatabase()
+  const topN = options.topN ?? 3
+  const threshold = options.threshold ?? 60
+
+  const dateFilter = (alias: string) => {
+    const parts: string[] = []
+    if (options.dateFrom) parts.push(`${alias}.date >= '${options.dateFrom}'`)
+    if (options.dateTo) parts.push(`${alias}.date <= '${options.dateTo}'`)
+    return parts.length > 0 ? `AND ${parts.join(' AND ')}` : ''
+  }
+
+  // Supplier concentration: total purchase amount per supplier
+  const supplierRows = db.prepare(`
+    SELECT c.name, COALESCE(SUM(p.total_amount), 0) as total
+    FROM biz_purchases p
+    JOIN biz_counterparties c ON c.id = p.supplier_id
+    WHERE p.tenant_id = ? AND p.space_id = ? AND p.deleted_at IS NULL AND p.${ACTIVE_STATUS}
+    ${dateFilter('p')}
+    GROUP BY p.supplier_id
+    HAVING total > 0
+  `).all(TENANT, ctx.spaceId) as Array<{ name: string; total: number }>
+
+  // Customer concentration: total sales amount per customer
+  const customerRows = db.prepare(`
+    SELECT c.name, COALESCE(SUM(s.total_amount), 0) as total
+    FROM biz_sales s
+    JOIN biz_counterparties c ON c.id = s.customer_id
+    WHERE s.tenant_id = ? AND s.space_id = ? AND s.deleted_at IS NULL AND s.${ACTIVE_STATUS}
+    ${dateFilter('s')}
+    GROUP BY s.customer_id
+    HAVING total > 0
+  `).all(TENANT, ctx.spaceId) as Array<{ name: string; total: number }>
+
+  return {
+    supplierConcentration: computeConcentration(supplierRows, topN, threshold),
+    customerConcentration: computeConcentration(customerRows, topN, threshold),
+    threshold,
+  }
 }
 
 export function getDashboard(ctx: BizContext): DashboardData {
@@ -902,8 +1135,12 @@ export interface CreatePurchaseWithLinesInput {
   spaceId?: string
 }
 
-export function createPurchaseWithLines(input: CreatePurchaseWithLinesInput): { purchase: BizPurchase; lines: BizPurchaseLine[]; paymentId?: string } {
-  const db = getDatabase()
+/** Internal core: creates purchase header + lines + optional payment. Called within an existing transaction. */
+function _createPurchaseCore(
+  db: ReturnType<typeof getDatabase>,
+  input: CreatePurchaseWithLinesInput,
+  tradeId?: string,
+): { purchase: BizPurchase; lines: BizPurchaseLine[]; paymentId?: string } {
   const purchaseId = ulid()
   const ts = now()
 
@@ -915,79 +1152,81 @@ export function createPurchaseWithLines(input: CreatePurchaseWithLinesInput): { 
   const unpaidAmount = Math.round((totalAmount - paidAmount) * 100) / 100
   const paymentStatus = paidAmount <= 0 ? 'unpaid' : (paidAmount >= totalAmount ? 'paid' : 'partial')
 
-  const result = db.transaction(() => {
-    db.prepare(`
-      INSERT INTO biz_purchases (id, tenant_id, space_id, date, order_no, supplier_id, product_id, bundle_count, tonnage, unit_price, total_amount, project_id, invoice_status, payment_status, notes, bubble_id, raw_input, created_by, doc_status, location, doc_no, paid_amount, unpaid_amount, payment_method, payment_notes, created_at, updated_at)
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'none', ?, ?, ?, ?, ?, 'draft', ?, ?, ?, ?, ?, ?, ?, ?)
-    `).run(
-      purchaseId, TENANT, input.spaceId ?? null, input.date, null,
-      input.supplierId,
-      input.lines[0]?.productId ?? null,
-      null,
-      totalTonnage, avgUnitPrice, totalAmount,
-      input.projectId ?? null,
-      paymentStatus,
-      input.notes ?? null, input.bubbleId ?? null, input.rawInput ?? null, input.createdBy ?? null,
-      input.location ?? null, input.docNo ?? null,
-      paidAmount, unpaidAmount,
-      input.payment?.method ?? null, input.payment?.notes ?? null,
+  db.prepare(`
+    INSERT INTO biz_purchases (id, tenant_id, space_id, date, order_no, supplier_id, product_id, bundle_count, tonnage, unit_price, total_amount, project_id, invoice_status, payment_status, notes, bubble_id, raw_input, created_by, doc_status, location, doc_no, paid_amount, unpaid_amount, payment_method, payment_notes, trade_id, created_at, updated_at)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'none', ?, ?, ?, ?, ?, 'draft', ?, ?, ?, ?, ?, ?, ?, ?, ?)
+  `).run(
+    purchaseId, TENANT, input.spaceId ?? null, input.date, null,
+    input.supplierId,
+    input.lines[0]?.productId ?? null,
+    null,
+    totalTonnage, avgUnitPrice, totalAmount,
+    input.projectId ?? null,
+    paymentStatus,
+    input.notes ?? null, input.bubbleId ?? null, input.rawInput ?? null, input.createdBy ?? null,
+    input.location ?? null, input.docNo ?? null,
+    paidAmount, unpaidAmount,
+    input.payment?.method ?? null, input.payment?.notes ?? null,
+    tradeId ?? null,
+    ts, ts,
+  )
+
+  const insertLine = db.prepare(`
+    INSERT INTO biz_purchase_lines (id, purchase_id, line_no, product_id, brand, material, spec, measure_unit, weigh_mode, bundle_count, weight_per_pc, quantity, unit_price, tax_inclusive, subtotal, notes, created_at, updated_at)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+  `)
+
+  const lines: BizPurchaseLine[] = input.lines.map((line, i) => {
+    const lineId = ulid()
+    insertLine.run(
+      lineId, purchaseId, i + 1,
+      line.productId ?? null,
+      line.brand ?? null, line.material ?? null, line.spec ?? null,
+      line.measureUnit ?? '吨', line.weighMode ?? '理计',
+      line.bundleCount ?? null, line.weightPerPc ?? null,
+      line.quantity, line.unitPrice,
+      (line.taxInclusive ?? true) ? 1 : 0,
+      line.subtotal, line.notes ?? null,
       ts, ts,
     )
-
-    const insertLine = db.prepare(`
-      INSERT INTO biz_purchase_lines (id, purchase_id, line_no, product_id, brand, material, spec, measure_unit, weigh_mode, bundle_count, weight_per_pc, quantity, unit_price, tax_inclusive, subtotal, notes, created_at, updated_at)
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-    `)
-
-    const lines: BizPurchaseLine[] = input.lines.map((line, i) => {
-      const lineId = ulid()
-      insertLine.run(
-        lineId, purchaseId, i + 1,
-        line.productId ?? null,
-        line.brand ?? null, line.material ?? null, line.spec ?? null,
-        line.measureUnit ?? '吨', line.weighMode ?? '理计',
-        line.bundleCount ?? null, line.weightPerPc ?? null,
-        line.quantity, line.unitPrice,
-        (line.taxInclusive ?? true) ? 1 : 0,
-        line.subtotal, line.notes ?? null,
-        ts, ts,
-      )
-      return {
-        id: lineId, purchaseId, lineNo: i + 1,
-        productId: line.productId, brand: line.brand, material: line.material, spec: line.spec,
-        measureUnit: line.measureUnit ?? '吨', weighMode: line.weighMode ?? '理计',
-        bundleCount: line.bundleCount, weightPerPc: line.weightPerPc,
-        quantity: line.quantity, unitPrice: line.unitPrice,
-        taxInclusive: line.taxInclusive ?? true,
-        subtotal: line.subtotal, notes: line.notes,
-        createdAt: ts, updatedAt: ts,
-      }
-    })
-
-    let paymentId: string | undefined
-    if (paidAmount > 0) {
-      const payment = createPayment({
-        date: input.date,
-        direction: 'out',
-        counterpartyId: input.supplierId,
-        projectId: input.projectId,
-        amount: paidAmount,
-        method: input.payment?.method,
-        notes: input.payment?.notes ?? '采购付款',
-        createdBy: input.createdBy,
-        spaceId: input.spaceId,
-      })
-      paymentId = payment.id
-      createDocLink('purchase', purchaseId, 'payment', payment.id)
+    return {
+      id: lineId, purchaseId, lineNo: i + 1,
+      productId: line.productId, brand: line.brand, material: line.material, spec: line.spec,
+      measureUnit: line.measureUnit ?? '吨', weighMode: line.weighMode ?? '理计',
+      bundleCount: line.bundleCount, weightPerPc: line.weightPerPc,
+      quantity: line.quantity, unitPrice: line.unitPrice,
+      taxInclusive: line.taxInclusive ?? true,
+      subtotal: line.subtotal, notes: line.notes,
+      createdAt: ts, updatedAt: ts,
     }
+  })
 
-    const purchase = toCamel<BizPurchase>(
-      db.prepare('SELECT * FROM biz_purchases WHERE id = ?').get(purchaseId) as Record<string, unknown>
-    )
-    return { purchase, lines, paymentId }
-  })()
+  let paymentId: string | undefined
+  if (paidAmount > 0) {
+    const payment = createPayment({
+      date: input.date,
+      direction: 'out',
+      counterpartyId: input.supplierId,
+      projectId: input.projectId,
+      amount: paidAmount,
+      method: input.payment?.method,
+      notes: input.payment?.notes ?? '采购付款',
+      createdBy: input.createdBy,
+      spaceId: input.spaceId,
+    })
+    paymentId = payment.id
+    createDocLink('purchase', purchaseId, 'payment', payment.id)
+  }
 
-  return result
+  const purchase = toCamel<BizPurchase>(
+    db.prepare('SELECT * FROM biz_purchases WHERE id = ?').get(purchaseId) as Record<string, unknown>
+  )
+  return { purchase, lines, paymentId }
+}
+
+export function createPurchaseWithLines(input: CreatePurchaseWithLinesInput): { purchase: BizPurchase; lines: BizPurchaseLine[]; paymentId?: string } {
+  const db = getDatabase()
+  return db.transaction(() => _createPurchaseCore(db, input))()
 }
 
 export function getPurchaseLines(purchaseId: string): BizPurchaseLine[] {
@@ -1073,8 +1312,12 @@ export interface CreateSaleWithLinesInput {
   spaceId?: string
 }
 
-export function createSaleWithLines(input: CreateSaleWithLinesInput): { sale: BizSale; lines: BizSaleLine[]; paymentId?: string } {
-  const db = getDatabase()
+/** Internal core: creates sale header + lines + optional payment. Called within an existing transaction. */
+function _createSaleCore(
+  db: ReturnType<typeof getDatabase>,
+  input: CreateSaleWithLinesInput,
+  tradeId?: string,
+): { sale: BizSale; lines: BizSaleLine[]; paymentId?: string } {
   const saleId = ulid()
   const ts = now()
 
@@ -1086,79 +1329,267 @@ export function createSaleWithLines(input: CreateSaleWithLinesInput): { sale: Bi
   const unpaidAmount = Math.round((totalAmount - paidAmount) * 100) / 100
   const collectionStatus = paidAmount <= 0 ? 'uncollected' : (paidAmount >= totalAmount ? 'collected' : 'partial')
 
-  const result = db.transaction(() => {
+  db.prepare(`
+    INSERT INTO biz_sales (id, tenant_id, space_id, date, order_no, customer_id, supplier_id, product_id, bundle_count, tonnage, unit_price, total_amount, cost_price, cost_amount, profit, project_id, logistics_provider, invoice_status, collection_status, notes, bubble_id, raw_input, created_by, doc_status, location, doc_no, paid_amount, unpaid_amount, payment_method, payment_notes, trade_id, created_at, updated_at)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'none', ?, ?, ?, ?, ?, 'draft', ?, ?, ?, ?, ?, ?, ?, ?, ?)
+  `).run(
+    saleId, TENANT, input.spaceId ?? null, input.date, null,
+    input.customerId, input.supplierId ?? null,
+    input.lines[0]?.productId ?? null, null,
+    totalTonnage, avgUnitPrice, totalAmount,
+    null, null, null,
+    input.projectId ?? null, input.logisticsProvider ?? null,
+    collectionStatus,
+    input.notes ?? null, input.bubbleId ?? null, input.rawInput ?? null, input.createdBy ?? null,
+    input.location ?? null, input.docNo ?? null,
+    paidAmount, unpaidAmount,
+    input.payment?.method ?? null, input.payment?.notes ?? null,
+    tradeId ?? null,
+    ts, ts,
+  )
+
+  const insertLine = db.prepare(`
+    INSERT INTO biz_sale_lines (id, sale_id, line_no, product_id, brand, material, spec, measure_unit, weigh_mode, bundle_count, weight_per_pc, quantity, unit_price, tax_inclusive, subtotal, notes, created_at, updated_at)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+  `)
+
+  const lines: BizSaleLine[] = input.lines.map((line, i) => {
+    const lineId = ulid()
+    insertLine.run(
+      lineId, saleId, i + 1,
+      line.productId ?? null,
+      line.brand ?? null, line.material ?? null, line.spec ?? null,
+      line.measureUnit ?? '吨', line.weighMode ?? '理计',
+      line.bundleCount ?? null, line.weightPerPc ?? null,
+      line.quantity, line.unitPrice,
+      (line.taxInclusive ?? true) ? 1 : 0,
+      line.subtotal, line.notes ?? null,
+      ts, ts,
+    )
+    return {
+      id: lineId, saleId, lineNo: i + 1,
+      productId: line.productId, brand: line.brand, material: line.material, spec: line.spec,
+      measureUnit: line.measureUnit ?? '吨', weighMode: line.weighMode ?? '理计',
+      bundleCount: line.bundleCount, weightPerPc: line.weightPerPc,
+      quantity: line.quantity, unitPrice: line.unitPrice,
+      taxInclusive: line.taxInclusive ?? true,
+      subtotal: line.subtotal, notes: line.notes,
+      createdAt: ts, updatedAt: ts,
+    }
+  })
+
+  let paymentId: string | undefined
+  if (paidAmount > 0) {
+    const payment = createPayment({
+      date: input.date,
+      direction: 'in',
+      counterpartyId: input.customerId,
+      projectId: input.projectId,
+      amount: paidAmount,
+      method: input.payment?.method,
+      notes: input.payment?.notes ?? '销售收款',
+      createdBy: input.createdBy,
+      spaceId: input.spaceId,
+    })
+    paymentId = payment.id
+    createDocLink('sale', saleId, 'payment', payment.id)
+  }
+
+  const sale = toCamel<BizSale>(
+    db.prepare('SELECT * FROM biz_sales WHERE id = ?').get(saleId) as Record<string, unknown>
+  )
+  return { sale, lines, paymentId }
+}
+
+export function createSaleWithLines(input: CreateSaleWithLinesInput): { sale: BizSale; lines: BizSaleLine[]; paymentId?: string } {
+  const db = getDatabase()
+  return db.transaction(() => _createSaleCore(db, input))()
+}
+
+// ── v1.0.2: Trade Cascade ───────────────────────────────────────────
+
+export interface CreateTradeInput {
+  tradeType: 'purchase' | 'sale'
+  date: string
+  docNo?: string
+  counterpartyId: string
+  secondaryCounterpartyId?: string
+  contact?: string
+  phone?: string
+  settlementMethod: SettlementMethod
+  creditTermDays?: number
+  projectId?: string
+  location?: string
+  notes?: string
+  createdBy?: string
+  spaceId?: string
+  lines: CreatePurchaseLineInput[]
+  payment?: { amount: number; method?: string; notes?: string }
+  logistics?: {
+    carrier?: string
+    freight?: number
+    liftingFee?: number
+    destination?: string
+  }
+}
+
+export interface TradeResult {
+  trade: BizTrade
+  purchase?: BizPurchase
+  sale?: BizSale
+  lines: (BizPurchaseLine | BizSaleLine)[]
+  cascaded: { paymentId?: string; logisticsId?: string }
+}
+
+/** Compute due date by adding days to a YYYY-MM-DD string */
+function addDays(dateStr: string, days: number): string {
+  const d = new Date(dateStr + 'T00:00:00')
+  d.setDate(d.getDate() + days)
+  return d.toISOString().slice(0, 10)
+}
+
+/**
+ * Create a trade with cascaded records in a single atomic transaction.
+ * - Creates biz_trades parent record
+ * - Creates purchase or sale with line items
+ * - Optionally creates payment (when not credit settlement)
+ * - Optionally creates logistics draft (for sales)
+ * - Links all records via biz_doc_links and trade_id
+ */
+export function createTradeWithCascade(input: CreateTradeInput): TradeResult {
+  const db = getDatabase()
+
+  return db.transaction(() => {
+    const tradeId = ulid()
+    const ts = now()
+
+    // Compute totals from lines
+    const totalTonnage = input.lines.reduce((sum, l) => sum + l.quantity, 0)
+    const totalAmount = input.lines.reduce((sum, l) => sum + l.subtotal, 0)
+
+    // Compute due_date for credit settlement
+    const dueDate = (input.settlementMethod === 'credit' && input.creditTermDays)
+      ? addDays(input.date, input.creditTermDays)
+      : null
+
+    // 1. Create biz_trades parent record
     db.prepare(`
-      INSERT INTO biz_sales (id, tenant_id, space_id, date, order_no, customer_id, supplier_id, product_id, bundle_count, tonnage, unit_price, total_amount, cost_price, cost_amount, profit, project_id, logistics_provider, invoice_status, collection_status, notes, bubble_id, raw_input, created_by, doc_status, location, doc_no, paid_amount, unpaid_amount, payment_method, payment_notes, created_at, updated_at)
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'none', ?, ?, ?, ?, ?, 'draft', ?, ?, ?, ?, ?, ?, ?, ?)
+      INSERT INTO biz_trades (id, tenant_id, space_id, trade_type, date, doc_no, counterparty_id, contact, phone, settlement_method, credit_term_days, due_date, total_amount, total_tonnage, project_id, location, logistics_carrier, logistics_freight, logistics_lifting_fee, logistics_destination, notes, doc_status, created_by, created_at, updated_at)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'draft', ?, ?, ?)
     `).run(
-      saleId, TENANT, input.spaceId ?? null, input.date, null,
-      input.customerId, input.supplierId ?? null,
-      input.lines[0]?.productId ?? null, null,
-      totalTonnage, avgUnitPrice, totalAmount,
-      null, null, null,
-      input.projectId ?? null, input.logisticsProvider ?? null,
-      collectionStatus,
-      input.notes ?? null, input.bubbleId ?? null, input.rawInput ?? null, input.createdBy ?? null,
-      input.location ?? null, input.docNo ?? null,
-      paidAmount, unpaidAmount,
-      input.payment?.method ?? null, input.payment?.notes ?? null,
+      tradeId, TENANT, input.spaceId ?? null,
+      input.tradeType, input.date, input.docNo ?? null,
+      input.counterpartyId, input.contact ?? null, input.phone ?? null,
+      input.settlementMethod, input.creditTermDays ?? null, dueDate,
+      totalAmount, totalTonnage,
+      input.projectId ?? null, input.location ?? null,
+      input.logistics?.carrier ?? null, input.logistics?.freight ?? null,
+      input.logistics?.liftingFee ?? null, input.logistics?.destination ?? null,
+      input.notes ?? null, input.createdBy ?? null,
       ts, ts,
     )
 
-    const insertLine = db.prepare(`
-      INSERT INTO biz_sale_lines (id, sale_id, line_no, product_id, brand, material, spec, measure_unit, weigh_mode, bundle_count, weight_per_pc, quantity, unit_price, tax_inclusive, subtotal, notes, created_at, updated_at)
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-    `)
+    ensureFirstInteraction(input.counterpartyId, input.date)
 
-    const lines: BizSaleLine[] = input.lines.map((line, i) => {
-      const lineId = ulid()
-      insertLine.run(
-        lineId, saleId, i + 1,
-        line.productId ?? null,
-        line.brand ?? null, line.material ?? null, line.spec ?? null,
-        line.measureUnit ?? '吨', line.weighMode ?? '理计',
-        line.bundleCount ?? null, line.weightPerPc ?? null,
-        line.quantity, line.unitPrice,
-        (line.taxInclusive ?? true) ? 1 : 0,
-        line.subtotal, line.notes ?? null,
-        ts, ts,
-      )
-      return {
-        id: lineId, saleId, lineNo: i + 1,
-        productId: line.productId, brand: line.brand, material: line.material, spec: line.spec,
-        measureUnit: line.measureUnit ?? '吨', weighMode: line.weighMode ?? '理计',
-        bundleCount: line.bundleCount, weightPerPc: line.weightPerPc,
-        quantity: line.quantity, unitPrice: line.unitPrice,
-        taxInclusive: line.taxInclusive ?? true,
-        subtotal: line.subtotal, notes: line.notes,
-        createdAt: ts, updatedAt: ts,
-      }
-    })
-
+    let purchase: BizPurchase | undefined
+    let sale: BizSale | undefined
+    let lines: (BizPurchaseLine | BizSaleLine)[] = []
     let paymentId: string | undefined
-    if (paidAmount > 0) {
-      const payment = createPayment({
+    let logisticsId: string | undefined
+
+    // Suppress payment for credit settlement
+    const paymentInput = input.settlementMethod !== 'credit' ? input.payment : undefined
+
+    // 2. Create purchase or sale with lines
+    if (input.tradeType === 'purchase') {
+      const result = _createPurchaseCore(db, {
         date: input.date,
-        direction: 'in',
-        counterpartyId: input.customerId,
+        supplierId: input.counterpartyId,
+        location: input.location,
+        docNo: input.docNo,
         projectId: input.projectId,
-        amount: paidAmount,
-        method: input.payment?.method,
-        notes: input.payment?.notes ?? '销售收款',
+        notes: input.notes,
         createdBy: input.createdBy,
         spaceId: input.spaceId,
-      })
-      paymentId = payment.id
-      createDocLink('sale', saleId, 'payment', payment.id)
+        lines: input.lines,
+        payment: paymentInput,
+      }, tradeId)
+
+      purchase = result.purchase
+      lines = result.lines
+      paymentId = result.paymentId
+
+      // Set settlement fields on purchase
+      db.prepare(`
+        UPDATE biz_purchases SET settlement_method = ?, credit_term_days = ?, due_date = ? WHERE id = ?
+      `).run(input.settlementMethod, input.creditTermDays ?? null, dueDate, purchase.id)
+
+      // Link trade → purchase
+      createDocLink('trade', tradeId, 'purchase', purchase.id)
+
+    } else {
+      const result = _createSaleCore(db, {
+        date: input.date,
+        customerId: input.counterpartyId,
+        supplierId: input.secondaryCounterpartyId,
+        location: input.location,
+        docNo: input.docNo,
+        projectId: input.projectId,
+        logisticsProvider: input.logistics?.carrier,
+        notes: input.notes,
+        createdBy: input.createdBy,
+        spaceId: input.spaceId,
+        lines: input.lines,
+        payment: paymentInput,
+      }, tradeId)
+
+      sale = result.sale
+      lines = result.lines
+      paymentId = result.paymentId
+
+      // Set settlement fields on sale
+      db.prepare(`
+        UPDATE biz_sales SET settlement_method = ?, credit_term_days = ?, due_date = ? WHERE id = ?
+      `).run(input.settlementMethod, input.creditTermDays ?? null, dueDate, sale.id)
+
+      // Link trade → sale
+      createDocLink('trade', tradeId, 'sale', sale.id)
+
+      // 3. Cascade: create draft logistics for sale
+      if (input.logistics && (input.logistics.carrier || input.logistics.destination)) {
+        const logRecord = createLogistics({
+          date: input.date,
+          docNo: input.docNo,
+          destination: input.logistics.destination,
+          tonnage: totalTonnage,
+          freight: input.logistics.freight,
+          liftingFee: input.logistics.liftingFee,
+          notes: '由销售交易自动创建',
+          createdBy: input.createdBy,
+          spaceId: input.spaceId,
+        })
+        logisticsId = logRecord.id
+        // Set trade_id on logistics
+        db.prepare('UPDATE biz_logistics SET trade_id = ? WHERE id = ?').run(tradeId, logisticsId)
+        // Link trade → logistics, sale → logistics
+        createDocLink('trade', tradeId, 'logistics', logisticsId)
+        createDocLink('sale', sale.id, 'logistics', logisticsId)
+      }
     }
 
-    const sale = toCamel<BizSale>(
-      db.prepare('SELECT * FROM biz_sales WHERE id = ?').get(saleId) as Record<string, unknown>
-    )
-    return { sale, lines, paymentId }
-  })()
+    // 4. Link trade → payment (if payment was created by _core)
+    if (paymentId) {
+      createDocLink('trade', tradeId, 'payment', paymentId)
+      db.prepare('UPDATE biz_payments SET trade_id = ? WHERE id = ?').run(tradeId, paymentId)
+    }
 
-  return result
+    // 5. Re-read trade record
+    const trade = toCamel<BizTrade>(
+      db.prepare('SELECT * FROM biz_trades WHERE id = ?').get(tradeId) as Record<string, unknown>
+    )
+
+    return { trade, purchase, sale, lines, cascaded: { paymentId, logisticsId } }
+  })()
 }
 
 export function getSaleLines(saleId: string): BizSaleLine[] {

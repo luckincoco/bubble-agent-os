@@ -53,15 +53,20 @@ export function truncateToTokenBudget(text: string, maxTokens: number): string {
 }
 
 // Default context limits (tokens)
+// DeepSeek V3 context = 64K total, so MAX_PROMPT_TOKENS ≤ 60K (leave room for completion)
 export const TOKEN_LIMITS = {
   /** Max tokens to send to LLM (leave room for completion) */
-  MAX_PROMPT_TOKENS: 110_000,
+  MAX_PROMPT_TOKENS: 56_000,
   /** Reserved for the LLM's response */
-  COMPLETION_RESERVE: 16_000,
+  COMPLETION_RESERVE: 8_000,
   /** Budget for memory context in system prompt */
-  MEMORY_BUDGET: 60_000,
+  MEMORY_BUDGET: 24_000,
   /** Budget for conversation history */
-  HISTORY_BUDGET: 40_000,
+  HISTORY_BUDGET: 24_000,
+  /** Max tokens for a single user message (truncate if exceeded) */
+  SINGLE_MESSAGE_MAX: 12_000,
   /** Max tokens for a single bubble in context */
   SINGLE_BUBBLE_MAX: 8_000,
+  /** Timeout for a single LLM call in milliseconds */
+  LLM_TIMEOUT_MS: 120_000,
 } as const

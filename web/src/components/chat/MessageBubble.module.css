@@ -87,3 +87,132 @@
   text-overflow: ellipsis;
   white-space: nowrap;
 }
+
+/* ── Markdown rendering (assistant bubbles) ────────────────────── */
+.markdown {
+  white-space: normal;
+}
+
+.markdown p {
+  margin: 0 0 8px;
+}
+
+.markdown p:last-child {
+  margin-bottom: 0;
+}
+
+.markdown table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 13px;
+  margin: 8px 0;
+  overflow-x: auto;
+  display: block;
+}
+
+.markdown th {
+  text-align: left;
+  padding: 6px 8px;
+  font-weight: 600;
+  color: rgba(255, 255, 255, 0.6);
+  border-bottom: 1px solid rgba(255, 255, 255, 0.12);
+  white-space: nowrap;
+}
+
+.markdown td {
+  padding: 5px 8px;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.04);
+  font-variant-numeric: tabular-nums;
+}
+
+.markdown tr:hover td {
+  background: rgba(255, 255, 255, 0.03);
+}
+
+.markdown th:nth-child(n+2),
+.markdown td:nth-child(n+2) {
+  text-align: right;
+}
+
+.markdown ul,
+.markdown ol {
+  margin: 4px 0;
+  padding-left: 20px;
+}
+
+.markdown li {
+  margin: 2px 0;
+}
+
+.markdown strong {
+  color: #fff;
+}
+
+.markdown code {
+  background: rgba(255, 255, 255, 0.08);
+  padding: 1px 4px;
+  border-radius: 3px;
+  font-size: 12px;
+}
+
+.markdown h3,
+.markdown h4 {
+  margin: 12px 0 6px;
+  font-size: 14px;
+  font-weight: 600;
+  color: rgba(255, 255, 255, 0.8);
+}
+
+.markdown h3:first-child,
+.markdown h4:first-child {
+  margin-top: 0;
+}
+
+/* ── Feedback buttons ────────────────────── */
+.wrapper {
+  display: flex;
+  flex-direction: column;
+}
+
+.feedbackRow {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 4px 0 0 4px;
+  animation: fadeIn var(--duration-fast) var(--ease-smooth);
+}
+
+.fbBtn {
+  width: 26px;
+  height: 26px;
+  border-radius: 50%;
+  border: 1px solid rgba(255, 255, 255, 0.06);
+  background: transparent;
+  color: var(--text-dim);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+  transition: all var(--duration-fast);
+  padding: 0;
+}
+
+.fbBtn svg {
+  width: 14px;
+  height: 14px;
+}
+
+.fbBtn:hover {
+  background: rgba(255, 255, 255, 0.06);
+  border-color: rgba(255, 255, 255, 0.12);
+}
+
+.fbUp {
+  background: rgba(20, 184, 166, 0.12);
+  border-color: rgba(20, 184, 166, 0.3);
+}
+
+.fbDown {
+  background: rgba(248, 113, 113, 0.12);
+  border-color: rgba(248, 113, 113, 0.3);
+}

@@ -33,12 +33,12 @@ export function AppShell() {
     return () => disconnect()
   }, [token, connect, disconnect])
 
-  // Load biz master data when biz module is enabled
+  // Load biz master data when biz module is enabled or space changes
   useEffect(() => {
-    if (enabledModuleIds.includes('biz')) {
+    if (enabledModuleIds.includes('biz') && currentSpaceId) {
       loadMasterData()
     }
-  }, [enabledModuleIds, loadMasterData])
+  }, [enabledModuleIds, loadMasterData, currentSpaceId])
 
   // Check if onboarding is needed
   useEffect(() => {

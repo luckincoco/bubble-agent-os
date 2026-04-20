@@ -4,6 +4,8 @@ import type { SurpriseDetector } from '../memory/surprise-detector.js'
 import type { BizEntryHandler } from './biz/handler.js'
 import type { SkillRouter as SkillRouterType } from './skills/skill-router.js'
 import type { UserContext, ThinkResult } from '../shared/types.js'
+import { isExternalContext } from '../shared/types.js'
+import { findRecentBySource, getBubble, updateBubble } from '../bubble/model.js'
 import { logger } from '../shared/logger.js'
 
 /**
@@ -27,6 +29,11 @@ const STEEL_PRICE_RE = /钢[材筋]|螺纹|盘螺|高线|圆钢|工字钢|角钢
 
 /** Keywords that indicate the user wants a web search or price lookup */
 const SEARCH_INTENT_RE = /搜索|查一下|查询下|查询|搜一下|搜下|检索|今[天日].*价格|最新.*价格|实时|行情|现货|报价|新闻|帮我[查搜找]|价格.*多少|多少钱|什么价|啥价|涨了|跌了|走势/
+
+/** Feedback detection for learning digest */
+const POSITIVE_RE = /有意思|不错|很好|太好了|学到了|继续|多看看|关注|深入|赞|nice|cool|有启发/i
+const NEGATIVE_RE = /不对|错了|不准|有问题|别看|不要|没用|无聊|跑偏|离谱|wrong/i
+const FEEDBACK_WINDOW_MS = 12 * 60 * 60 * 1000
 
 const STEEL_PRICE_URL = 'https://shanghai.steelx2.com/city/Quotation/quotation/1/index.html'
 
@@ -118,6 +125,11 @@ export class MessageRouter {
    * Price/search (real-time data) → skill routing → legacy biz fallback.
    */
   private async runReflexLayer(text: string, ctx?: UserContext): Promise<ReflexResult> {
+    // External users bypass all L0 rules — go straight to L1 Brain.think()
+    if (ctx && isExternalContext(ctx)) {
+      return { handled: false, context: '' }
+    }
+
     // ── Real-time data fetch (highest priority — user needs live prices) ─
     if (this.tools && SEARCH_INTENT_RE.test(text)) {
       try {
@@ -192,11 +204,74 @@ export class MessageRouter {
 
   /**
    * Async background processing after response is sent.
-   * Currently: contradiction detection via SurpriseDetector.
-   * Future: could trigger question-generator inline, update user models, etc.
+   * - Contradiction detection via SurpriseDetector
+   * - Learning digest feedback processing
    */
   private async runAnticipationLayer(text: string, ctx: UserContext): Promise<void> {
-    if (!this.surpriseDetector) return
-    await this.surpriseDetector.scanMessage(text, ctx.activeSpaceId)
+    // Skip anticipation for external users
+    if (isExternalContext(ctx)) return
+
+    if (this.surpriseDetector) {
+      await this.surpriseDetector.scanMessage(text, ctx.activeSpaceId)
+    }
+    await this.processDigestFeedback(text)
+  }
+
+  // ── Digest feedback processing ──────────────────────────────────
+
+  /**
+   * Detect user feedback on learning digest and adjust bubble confidence.
+   * Runs async in L2 — does not block user response.
+   */
+  private async processDigestFeedback(text: string): Promise<void> {
+    try {
+      const isPositive = POSITIVE_RE.test(text)
+      const isNegative = NEGATIVE_RE.test(text)
+      if (!isPositive && !isNegative) return
+
+      const recentDigests = findRecentBySource('learning-digest', Date.now() - FEEDBACK_WINDOW_MS, 1)
+      if (recentDigests.length === 0) return
+
+      const digest = recentDigests[0]
+      const sourceIds: string[] = (digest.metadata as Record<string, unknown>)?.sourceBubbleIds as string[] ?? []
+      if (sourceIds.length === 0) return
+
+      // Match user message keywords against source bubble titles/tags
+      const textLower = text.toLowerCase()
+      const words = textLower.split(/[\s,，。？！、]+/).filter(w => w.length >= 2)
+      const matchedIds: string[] = []
+
+      for (const id of sourceIds) {
+        const b = getBubble(id)
+        if (!b) continue
+        const titleLower = b.title.toLowerCase()
+        const tagsStr = b.tags.join(' ').toLowerCase()
+        const hasMatch = words.some(w => titleLower.includes(w) || tagsStr.includes(w))
+        if (hasMatch) matchedIds.push(id)
+      }
+
+      // Fallback: apply to top 5 source bubbles if no specific match
+      const targetIds = matchedIds.length > 0 ? matchedIds : sourceIds.slice(0, 5)
+
+      for (const id of targetIds) {
+        const b = getBubble(id)
+        if (!b) continue
+
+        if (isPositive) {
+          const newConfidence = Math.min(1.0, b.confidence * 1.2)
+          const newTags = [...new Set([...b.tags, 'user-endorsed'])]
+          updateBubble(id, { confidence: newConfidence, tags: newTags })
+        } else {
+          const newConfidence = Math.max(0.1, b.confidence * 0.5)
+          const newTags = [...new Set([...b.tags, 'user-questioned'])]
+          updateBubble(id, { confidence: newConfidence, tags: newTags })
+        }
+      }
+
+      const feedbackType = isPositive ? '正面' : '负面'
+      logger.info(`Router L2: digest feedback (${feedbackType}), updated ${targetIds.length} bubbles`)
+    } catch (err) {
+      logger.error('Router L2 digest feedback error:', err instanceof Error ? err.message : String(err))
+    }
   }
 }

@@ -1,7 +1,7 @@
 import { useState, useMemo } from 'react'
 import { useBizStore } from '../../stores/bizStore'
 import { SearchSelect } from './SearchSelect'
-import { createPurchaseWithLinesApi, type BizLineInput } from '../../services/api'
+import { type BizLineInput } from '../../services/api'
 import type { BizProduct } from '../../types'
 import s from './PurchaseEventForm.module.css'
 
@@ -159,7 +159,7 @@ function LineItemCard({ line, index, products, onChange, onRemove }: {
 // ── Main Form ───────────────────────────────────────────────────
 
 export function PurchaseEventForm({ onSuccess }: { onSuccess?: () => void } = {}) {
-  const { products, counterparties, projects, addProduct, addCounterparty, addProject, loadPurchases } = useBizStore()
+  const { products, counterparties, projects, addProduct, addCounterparty, addProject, createTrade } = useBizStore()
   const suppliers = counterparties.filter(c => c.type === 'supplier' || c.type === 'both')
   const projectOpts = projects.map(p => ({ id: p.id, label: p.name }))
 
@@ -171,7 +171,16 @@ export function PurchaseEventForm({ onSuccess }: { onSuccess?: () => void } = {}
   const [projectId, setProjectId] = useState('')
   const [notes, setNotes] = useState('')
 
-  // Payment state
+  // Contact state (auto-filled from counterparty)
+  const [contact, setContact] = useState('')
+  const [phone, setPhone] = useState('')
+
+  // Settlement state (v1.0.2)
+  const [settlementMethod, setSettlementMethod] = useState<'cash' | 'transfer' | 'credit'>('cash')
+  const [creditTermDays, setCreditTermDays] = useState('30')
+  const [customCredit, setCustomCredit] = useState(false)
+
+  // Payment state (only for cash/transfer)
   const [paymentMethod, setPaymentMethod] = useState('')
   const [paidAmount, setPaidAmount] = useState('')
 
@@ -240,19 +249,25 @@ export function PurchaseEventForm({ onSuccess }: { onSuccess?: () => void } = {}
         })
       )
 
-      await createPurchaseWithLinesApi({
+      await createTrade({
+        tradeType: 'purchase',
         date,
-        supplierId,
+        counterpartyId: supplierId,
+        contact: contact || undefined,
+        phone: phone || undefined,
+        settlementMethod,
+        creditTermDays: settlementMethod === 'credit' ? (parseInt(creditTermDays) || 30) : undefined,
         location: location || undefined,
         docNo: docNo || undefined,
         projectId: projectId || undefined,
         notes: notes || undefined,
-        paidAmount: paidAmount ? parseFloat(paidAmount) : undefined,
-        paymentMethod: paymentMethod || undefined,
         lines: lineInputs,
+        payment: (settlementMethod !== 'credit' && paidAmount && parseFloat(paidAmount) > 0)
+          ? { amount: parseFloat(paidAmount), method: paymentMethod || undefined }
+          : undefined,
       })
 
-      setMsg('采购事件录入成功!')
+      setMsg('采购交易录入成功!')
       // Reset lines but keep header for convenience
       setLines([emptyLine(lineKey)])
       setLineKey(k => k + 1)
@@ -260,7 +275,11 @@ export function PurchaseEventForm({ onSuccess }: { onSuccess?: () => void } = {}
       setPaidAmount('')
       setPaymentMethod('')
       setNotes('')
-      loadPurchases()
+      setContact('')
+      setPhone('')
+      setSettlementMethod('cash')
+      setCreditTermDays('30')
+      setCustomCredit(false)
       onSuccess?.()
     } catch (e: any) {
       setMsg('错误: ' + e.message)
@@ -275,9 +294,17 @@ export function PurchaseEventForm({ onSuccess }: { onSuccess?: () => void } = {}
         <Input label="日期" value={date} onChange={setDate} type="date" />
         <Input label="送货单号" value={docNo} onChange={setDocNo} placeholder="如: NO.6003456" />
       </div>
-      <SearchSelect label="供应商" value={supplierId} onChange={setSupplierId}
+      <SearchSelect label="供应商" value={supplierId} onChange={(id) => {
+          setSupplierId(id)
+          const cp = counterparties.find(c => c.id === id)
+          if (cp) { setContact(cp.contact ?? ''); setPhone(cp.phone ?? '') }
+        }}
         options={suppliers.map(c => ({ id: c.id, label: c.name }))} placeholder="搜索供应商..."
         onQuickCreate={async (name) => (await addCounterparty({ name, type: 'supplier' })).id} />
+      <div className={s.row}>
+        <Input label="联系人" value={contact} onChange={setContact} placeholder="联系人姓名" />
+        <Input label="电话" value={phone} onChange={setPhone} placeholder="联系电话" />
+      </div>
       <div className={s.row}>
         <Input label="交货地点" value={location} onChange={setLocation} placeholder="仓库/工地" />
         <SearchSelect label="项目" value={projectId} onChange={setProjectId} options={projectOpts} placeholder="搜索项目..."
@@ -304,17 +331,71 @@ export function PurchaseEventForm({ onSuccess }: { onSuccess?: () => void } = {}
         合计: {totalQty.toFixed(3)} 吨 / &yen;{grandTotal.toLocaleString('zh-CN', { minimumFractionDigits: 2 })}
       </div>
 
-      {/* Payment section */}
-      <div className={s.section}><span>付款信息（可选）</span></div>
-      <div className={s.row}>
-        <Input label="已付金额" value={paidAmount} onChange={setPaidAmount} type="number" step="0.01" placeholder="0.00" />
-        <Input label="付款方式" value={paymentMethod} onChange={setPaymentMethod} placeholder="转账/现金/承兑" />
+      {/* Settlement section (v1.0.2) */}
+      <div className={s.section}><span>结算方式</span></div>
+      <div className={s.field}>
+        <div className={s.toggleRow}>
+          {(['cash', 'transfer', 'credit'] as const).map(m => (
+            <button key={m} type="button" className={s.toggle} data-active={settlementMethod === m}
+              onClick={() => setSettlementMethod(m)}>
+              {{ cash: '现金', transfer: '转账', credit: '欠款' }[m]}
+            </button>
+          ))}
+        </div>
+      </div>
+
+      {settlementMethod !== 'credit' ? (
+        <div className={s.row}>
+          <Input label="已付金额" value={paidAmount} onChange={setPaidAmount} type="number" step="0.01" placeholder="0.00" />
+          <Input label="付款方式" value={paymentMethod} onChange={setPaymentMethod} placeholder="转账/现金" />
+        </div>
+      ) : (
+        <div className={s.row}>
+          <div className={s.field}>
+            <label className={s.label}>账期</label>
+            <div className={s.toggleRow}>
+              <button type="button" className={s.toggle} data-active={!customCredit && creditTermDays === '30'}
+                onClick={() => { setCreditTermDays('30'); setCustomCredit(false) }}>30天</button>
+              <button type="button" className={s.toggle} data-active={customCredit}
+                onClick={() => setCustomCredit(true)}>自定义</button>
+            </div>
+            {customCredit && (
+              <input className={s.input} type="number" value={creditTermDays} onChange={e => setCreditTermDays(e.target.value)}
+                placeholder="天数" style={{ marginTop: 6 }} />
+            )}
+          </div>
+          <div className={s.field}>
+            <label className={s.label}>到期日</label>
+            <div className={s.computed}>
+              {(() => {
+                const days = parseInt(creditTermDays) || 0
+                const d = new Date(date + 'T00:00:00')
+                d.setDate(d.getDate() + days)
+                return d.toISOString().slice(0, 10)
+              })()}
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Cascade Preview (v1.0.2) */}
+      <div className={s.cascadePreview}>
+        <div className={s.cascadeItem} data-active="true">采购单 (草稿)</div>
+        {settlementMethod !== 'credit' && paidAmount && parseFloat(paidAmount) > 0 ? (
+          <div className={s.cascadeItem} data-active="true">
+            付款记录 &yen;{parseFloat(paidAmount).toLocaleString('zh-CN', { minimumFractionDigits: 2 })} (草稿)
+          </div>
+        ) : settlementMethod === 'credit' ? (
+          <div className={s.cascadeItem} data-inactive="true">无付款记录（欠款结算，账期{creditTermDays}天）</div>
+        ) : (
+          <div className={s.cascadeItem} data-inactive="true">无付款记录</div>
+        )}
       </div>
 
       <Input label="备注" value={notes} onChange={setNotes} placeholder="可选" />
 
       <button className={s.submit} onClick={handleSubmit} disabled={saving}>
-        {saving ? '保存中...' : '保存采购事件'}
+        {saving ? '保存中...' : '保存采购交易'}
       </button>
       {msg && <div className={s.msg} data-error={msg.startsWith('错误')}>{msg}</div>}
     </div>

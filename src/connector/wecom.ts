@@ -6,6 +6,7 @@ import type { ToolRegistry } from '../connector/registry.js'
 import type { UserContext } from '../shared/types.js'
 import type { SurpriseDetector } from '../memory/surprise-detector.js'
 import { MessageRouter } from './router.js'
+import { resolveIdentity } from './identity.js'
 import { getDatabase } from '../storage/database.js'
 import { logger } from '../shared/logger.js'
 
@@ -281,7 +282,7 @@ export class WeComConnector {
     const userId = String(FromUserName || 'unknown')
     logger.info(`WeCom message from ${userId}: "${text.slice(0, 50)}${text.length > 50 ? '...' : ''}"`)
 
-    const ctx = this.resolveUserContext()
+    const ctx = resolveIdentity('wecom', userId)
 
     try {
       const { response } = await this.router.handle(text, ctx)

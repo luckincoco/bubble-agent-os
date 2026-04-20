@@ -44,8 +44,25 @@ export function Header() {
   return (
     <>
       <header className={s.header}>
-        <div className={s.logo}>B</div>
-        <span className={s.title}>Bubble Agent</span>
+        <div className={s.logo}>
+          <svg viewBox="0 0 30 30" xmlns="http://www.w3.org/2000/svg">
+            <defs>
+              <linearGradient id="bubble-bg" x1="0" y1="0" x2="1" y2="1">
+                <stop offset="0%" stopColor="#7C3AED" />
+                <stop offset="50%" stopColor="#6366F1" />
+                <stop offset="100%" stopColor="#2563EB" />
+              </linearGradient>
+              <linearGradient id="bubble-ring" x1="0" y1="0" x2="1" y2="1">
+                <stop offset="0%" stopColor="#818CF8" />
+                <stop offset="100%" stopColor="#60A5FA" />
+              </linearGradient>
+            </defs>
+            <circle cx="15" cy="15" r="14" fill="url(#bubble-bg)" />
+            <circle cx="15" cy="15" r="9" fill="none" stroke="url(#bubble-ring)" strokeWidth="1.5" opacity="0.5" />
+            <circle cx="15" cy="15" r="4" fill="rgba(255,255,255,0.9)" />
+          </svg>
+        </div>
+        <span className={s.title}>Bubble</span>
         <div className={s.spacer} />
         {spaces.length > 1 && (
           <select

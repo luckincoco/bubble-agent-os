@@ -6,6 +6,7 @@ import { useBizStore } from './bizStore'
 
 const TOKEN_KEY = 'bubble_token'
 const USER_KEY = 'bubble_user'
+const SPACE_KEY = 'bubble_space'
 
 interface AuthState {
   token: string | null
@@ -42,10 +43,15 @@ export const useAuthStore = create<AuthState>((set, get) => ({
       const data: LoginResponse = await res.json()
       localStorage.setItem(TOKEN_KEY, data.token)
       localStorage.setItem(USER_KEY, JSON.stringify(data.user))
+      const savedSpace = localStorage.getItem(SPACE_KEY)
+      const initialSpace = (savedSpace && data.user.spaceIds.includes(savedSpace))
+        ? savedSpace
+        : data.user.spaceIds[0] || null
+      if (initialSpace) localStorage.setItem(SPACE_KEY, initialSpace)
       set({
         token: data.token,
         user: data.user,
-        currentSpaceId: data.user.spaceIds[0] || null,
+        currentSpaceId: initialSpace,
         isLoading: false,
         error: null,
       })
@@ -68,6 +74,7 @@ export const useAuthStore = create<AuthState>((set, get) => ({
     // Clear auth state
     localStorage.removeItem(TOKEN_KEY)
     localStorage.removeItem(USER_KEY)
+    localStorage.removeItem(SPACE_KEY)
     set({ token: null, user: null, currentSpaceId: null, error: null })
     useModuleStore.getState().reset()
   },
@@ -87,7 +94,11 @@ export const useAuthStore = create<AuthState>((set, get) => ({
           return
         }
         const user: AuthUserInfo = JSON.parse(userStr)
-        set({ token, user, currentSpaceId: user.spaceIds[0] || null, isLoading: false })
+        const savedSpace = localStorage.getItem(SPACE_KEY)
+        const restoredSpace = (savedSpace && user.spaceIds.includes(savedSpace))
+          ? savedSpace
+          : user.spaceIds[0] || null
+        set({ token, user, currentSpaceId: restoredSpace, isLoading: false })
         useModuleStore.getState().initFromPreferences(user.preferences)
       } catch {
         localStorage.removeItem(TOKEN_KEY)
@@ -102,6 +113,7 @@ export const useAuthStore = create<AuthState>((set, get) => ({
   switchSpace: (spaceId: string) => {
     const { user } = get()
     if (user?.spaceIds.includes(spaceId)) {
+      localStorage.setItem(SPACE_KEY, spaceId)
       set({ currentSpaceId: spaceId })
     }
   },

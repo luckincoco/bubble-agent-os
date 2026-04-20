@@ -261,6 +261,15 @@ export function getChildBubbles(parentId: string): Bubble[] {
   return rows.map(rowToBubble)
 }
 
+/** Find recent bubbles by source, within a time window */
+export function findRecentBySource(source: string, sinceMs: number, limit = 1): Bubble[] {
+  const db = getDatabase()
+  const rows = db.prepare(
+    'SELECT * FROM bubbles WHERE source = ? AND created_at > ? AND deleted_at IS NULL ORDER BY created_at DESC LIMIT ?',
+  ).all(source, sinceMs, limit) as any[]
+  return rows.map(rowToBubble)
+}
+
 export function rowToBubble(row: any): Bubble {
   return {
     id: row.id,

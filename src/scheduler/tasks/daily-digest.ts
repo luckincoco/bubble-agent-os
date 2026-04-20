@@ -65,7 +65,7 @@ ${topItems}
 
   // Push to Feishu if available
   if (deps.feishu) {
-    const chatId = String(params.chatId || process.env.FEISHU_ADMIN_CHAT_ID || '')
+    const chatId = deps.feishu?.getAdminChatId() || String(params.chatId || process.env.FEISHU_ADMIN_CHAT_ID || '')
     if (chatId) {
       try {
         await deps.feishu.pushMessage(chatId, `📊 每日数据摘要\n\n${summary}`)

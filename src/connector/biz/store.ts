@@ -8,6 +8,8 @@ import { BIZ_TYPE_LABELS } from './schema.js'
 import { createBubble, searchBubbles } from '../../bubble/model.js'
 import { addLink } from '../../bubble/links.js'
 import { logger } from '../../shared/logger.js'
+import { renderMirror, getMirrorEventType } from './mirror-templates.js'
+import type { EventNotifier } from '../event-notifier.js'
 import {
   fuzzyFindCounterparty, fuzzyFindProduct, findProjectByName,
   createCounterparty, createProduct, createProject,
@@ -173,11 +175,55 @@ function getMainAmount(record: BizRecord): number {
   }
 }
 
+/** Map bizType → mirror event type */
+function mapBizTypeToMirrorEvent(record: BizRecord): string | undefined {
+  switch (record.bizType) {
+    case 'procurement': return 'purchase'
+    case 'sales': return 'sale'
+    case 'payment': return record.direction === '收' ? 'payment_in' : 'payment_out'
+    case 'logistics': return 'logistics'
+  }
+}
+
+/** Extract data fields for mirror template rendering */
+function buildMirrorData(record: BizRecord): Record<string, string | number> {
+  const data: Record<string, string | number> = { date: record.date }
+  const cp = getCounterparty(record)
+  if (cp) data.counterparty = cp
+  switch (record.bizType) {
+    case 'procurement':
+      data.product = record.product
+      data.tonnage = record.quantity
+      data.unitPrice = record.unitPrice
+      data.totalAmount = record.totalAmount ?? record.quantity * record.unitPrice
+      break
+    case 'sales':
+      data.product = record.product
+      data.tonnage = record.quantity
+      data.unitPrice = record.unitPrice
+      data.totalAmount = record.totalAmount ?? record.quantity * record.unitPrice
+      break
+    case 'payment':
+      data.amount = record.amount
+      break
+    case 'logistics':
+      data.tonnage = record.tonnage
+      if (record.destination) data.destination = record.destination
+      break
+  }
+  return data
+}
+
 export class BizStore {
   private embeddings: EmbeddingProvider | null = null
+  private eventNotifier: EventNotifier | null = null
 
   setEmbeddingProvider(provider: EmbeddingProvider) {
     this.embeddings = provider
+  }
+
+  setEventNotifier(notifier: EventNotifier) {
+    this.eventNotifier = notifier
   }
 
   async store(record: BizRecord, spaceId?: string): Promise<StoreResult> {
@@ -209,12 +255,18 @@ export class BizStore {
       }
     }
 
-    // ── Generate embedding ────────────────────────────────────────
+    // ── Generate content + mirror perspective ─────────────────────
     const content = buildContent(record)
+    const mirrorEventType = mapBizTypeToMirrorEvent(record)
+    const mirrorData = buildMirrorData(record)
+    const mirrorText = mirrorEventType ? renderMirror(mirrorEventType, mirrorData, 'their') : undefined
+    const fullContent = mirrorText ? `${content}\n\n【对方视角】${mirrorText}` : content
+
+    // ── Generate embedding ────────────────────────────────────────
     let embedding: number[] | undefined
     if (this.embeddings) {
       try {
-        embedding = await this.embeddings.embed(content)
+        embedding = await this.embeddings.embed(fullContent)
       } catch {
         logger.debug('BizStore: embedding generation failed, storing without vector')
       }
@@ -224,8 +276,11 @@ export class BizStore {
     const bubble = createBubble({
       type: 'event',
       title: buildTitle(record),
-      content,
-      metadata: record as unknown as Record<string, unknown>,
+      content: fullContent,
+      metadata: {
+        ...(record as unknown as Record<string, unknown>),
+        ...(mirrorText ? { mirrorPerspective: mirrorText, mirrorEventType: getMirrorEventType(mirrorEventType!) } : {}),
+      },
       tags: buildTags(record),
       embedding,
       source: 'biz-entry',
@@ -247,6 +302,30 @@ export class BizStore {
     // ── Auto-link to related bubbles ──────────────────────────────
     this.autoLink(bubble.id, record, spaceId)
 
+    // ── Push mirror perspective to bound external contacts ─────────
+    if (this.eventNotifier && mirrorText && mirrorEventType && structuredId) {
+      const cpName = getCounterparty(record)
+      if (cpName && spaceId) {
+        // Resolve counterparty ID from structured write
+        const cpId = this.findCounterpartyIdFromRecord(ctx, record)
+        if (cpId) {
+          const cpType: 'supplier' | 'customer' | 'logistics' =
+            record.bizType === 'procurement' ? 'supplier'
+              : record.bizType === 'logistics' ? 'logistics' : 'customer'
+          this.eventNotifier.notifyCounterparty({
+            counterpartyId: cpId,
+            counterpartyName: cpName,
+            counterpartyType: cpType,
+            spaceId,
+            mirrorText,
+            eventType: mirrorEventType,
+          }).catch(err =>
+            logger.error('BizStore: event notification failed:', err instanceof Error ? err.message : String(err)),
+          )
+        }
+      }
+    }
+
     logger.info(`BizStore: created ${record.bizType} bubble ${bubble.id}${structuredId ? ` + biz ${structuredId}` : ''} — ${buildTitle(record)}`)
 
     return {
@@ -258,6 +337,14 @@ export class BizStore {
   }
 
   // ── Resolve name → ID helpers (auto-create if missing) ─────────
+
+  /** Find counterparty ID from a record (for event notification) */
+  private findCounterpartyIdFromRecord(ctx: BizContext, record: BizRecord): string | undefined {
+    const name = getCounterparty(record)
+    if (!name) return undefined
+    const found = fuzzyFindCounterparty(ctx, name)
+    return found?.id
+  }
 
   private resolveCounterpartyId(ctx: BizContext, name: string, type: 'supplier' | 'customer' | 'logistics' | 'both'): string {
     const found = fuzzyFindCounterparty(ctx, name, type)

@@ -17,6 +17,7 @@ import {
   updatePurchaseApi, updateSaleApi,
   fetchInvoices, createInvoiceApi, deleteInvoiceApi,
   transitionDocStatus, fetchDocLinks, createFromDoc, amendDocApi,
+  createTradeApi, type CreateTradePayload, type TradeResult,
 } from '../services/api'
 
 interface BizState {
@@ -86,9 +87,28 @@ interface BizState {
   createFrom: (action: string, sourceId: string) => Promise<{ doc: unknown; link: DocLink }>
   amendDoc: (docType: string, id: string) => Promise<string>
   getDocLinks: (docType: string, id: string) => Promise<{ children: DocLink[]; parents: DocLink[] }>
+
+  // v1.0.2: Trade cascade
+  createTrade: (data: CreateTradePayload) => Promise<TradeResult>
 }
 
-export const useBizStore = create<BizState>((set, get) => ({
+export const useBizStore = create<BizState>((set, get) => {
+  // 防抖刷新计算视图（库存/应收/应付）
+  let invalidateTimer: ReturnType<typeof setTimeout> | null = null
+  const invalidateComputedViews = () => {
+    if (invalidateTimer) clearTimeout(invalidateTimer)
+    invalidateTimer = setTimeout(() => {
+      const s = get()
+      Promise.all([
+        s.loadInventory(),
+        s.loadReceivables(),
+        s.loadPayables(),
+      ]).catch(() => {})
+      invalidateTimer = null
+    }, 300)
+  }
+
+  return {
   products: [],
   counterparties: [],
   projects: [],
@@ -326,6 +346,9 @@ export const useBizStore = create<BizState>((set, get) => ({
       payments: updateStatus(get().payments),
       invoices: updateStatus(get().invoices),
     })
+    if (['confirmed', 'completed', 'cancelled'].includes(newStatus)) {
+      invalidateComputedViews()
+    }
   },
 
   updatePurchase: async (id, data) => {
@@ -343,6 +366,7 @@ export const useBizStore = create<BizState>((set, get) => ({
     // Reload the relevant list to pick up the new doc
     if (action.startsWith('logistics')) await get().loadLogistics()
     if (action.startsWith('invoice')) await get().loadInvoices()
+    invalidateComputedViews()
     return result
   },
 
@@ -361,4 +385,17 @@ export const useBizStore = create<BizState>((set, get) => ({
   getDocLinks: async (docType, id) => {
     return fetchDocLinks(docType, id)
   },
-}))
+
+  // v1.0.2: Trade cascade
+  createTrade: async (data) => {
+    const result = await createTradeApi(data)
+    await Promise.all([
+      get().loadPurchases(),
+      get().loadSales(),
+      get().loadPayments(),
+      get().loadLogistics(),
+    ])
+    invalidateComputedViews()
+    return result
+  },
+}})

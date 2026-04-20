@@ -173,6 +173,10 @@ export interface BizPurchase {
   sourceId?: string
   cancelReason?: string
   amendedFrom?: string
+  tradeId?: string
+  settlementMethod?: string
+  creditTermDays?: number
+  dueDate?: string
   createdAt: number
   updatedAt: number
 }
@@ -205,8 +209,44 @@ export interface BizSale {
   sourceId?: string
   cancelReason?: string
   amendedFrom?: string
+  tradeId?: string
+  settlementMethod?: string
+  creditTermDays?: number
+  dueDate?: string
   createdAt: number
   updatedAt: number
+}
+
+/** Trade entity — parent record for cascaded trades (v1.0.2) */
+export type SettlementMethod = 'cash' | 'transfer' | 'credit'
+
+export interface BizTrade {
+  id: string
+  tenantId: string
+  spaceId?: string
+  tradeType: 'purchase' | 'sale'
+  date: string
+  docNo?: string
+  counterpartyId: string
+  contact?: string
+  phone?: string
+  settlementMethod: SettlementMethod
+  creditTermDays?: number
+  dueDate?: string
+  totalAmount: number
+  totalTonnage: number
+  projectId?: string
+  location?: string
+  logisticsCarrier?: string
+  logisticsFreight?: number
+  logisticsLiftingFee?: number
+  logisticsDestination?: string
+  notes?: string
+  docStatus: DocStatus
+  createdBy?: string
+  createdAt: number
+  updatedAt: number
+  deletedAt?: number
 }
 
 export interface BizLogisticsRecord {

@@ -15,9 +15,10 @@
  */
 
 import type { LLMProvider, LLMMessage, Bubble, BubbleType } from '../shared/types.js'
-import { createBubble, findBubblesByType, searchBubbles, updateBubble } from '../bubble/model.js'
-import { addLink } from '../bubble/links.js'
+import { createBubble, findBubblesByType, getChildBubbles, searchBubbles, updateBubble } from '../bubble/model.js'
+import { addLink, findLinksByRelation } from '../bubble/links.js'
 import { logger } from '../shared/logger.js'
+import type { QualitySignal, SynthesisQualityAssessment } from './compactor.js'
 
 export type ObservationTrend = 'new' | 'strengthening' | 'stable' | 'weakening' | 'stale'
 
@@ -330,5 +331,90 @@ export class Reflector {
           && meta?.trend !== 'stale'
           && meta?.trend !== 'weakening'
       })
+  }
+
+  /**
+   * Extract quality signals from observations for use by the Compactor.
+   * Maps each evidence bubble ID to the quality signal of its citing observation.
+   * Pure SQL/memory operation — no LLM calls.
+   */
+  getQualitySignals(spaceId?: string): Map<string, QualitySignal> {
+    const signals = new Map<string, QualitySignal>()
+    const spaceIds = spaceId ? [spaceId] : undefined
+    const observations = findBubblesByType('observation' as BubbleType, MAX_OBSERVATIONS_PER_RUN, spaceIds)
+
+    for (const obs of observations) {
+      const meta = obs.metadata as unknown as ObservationMetadata
+      if (!meta?.trend || !meta.evidenceIds) continue
+
+      const signal: QualitySignal = {
+        validated: meta.reviewCount > 0,
+        observationTrend: meta.trend,
+        observationConfidence: obs.confidence,
+      }
+
+      for (const evidenceId of meta.evidenceIds) {
+        // If a bubble is evidence for multiple observations, keep the strongest signal
+        const existing = signals.get(evidenceId)
+        if (!existing || obs.confidence > existing.observationConfidence) {
+          signals.set(evidenceId, signal)
+        }
+      }
+    }
+
+    logger.debug(`Reflector: generated ${signals.size} quality signals from ${observations.length} observations`)
+    return signals
+  }
+
+  /**
+   * Validate a synthesis bubble against existing observations.
+   * Checks how much the synthesis's source evidence overlaps with observation evidence.
+   * Pure graph analysis — no LLM calls.
+   */
+  validateSynthesis(synthesisId: string, spaceId?: string): SynthesisQualityAssessment {
+    const assessment: SynthesisQualityAssessment = {
+      alignedObservations: 0,
+      contradictedObservations: 0,
+      noveltyScore: 0,
+      assessedAt: Date.now(),
+    }
+
+    // Get source bubble IDs of this synthesis (composed_of links)
+    const children = getChildBubbles(synthesisId)
+    const childIds = new Set(children.map(c => c.id))
+    if (childIds.size === 0) return assessment
+
+    // Get all observations and their evidence
+    const spaceIds = spaceId ? [spaceId] : undefined
+    const observations = findBubblesByType('observation' as BubbleType, MAX_OBSERVATIONS_PER_RUN, spaceIds)
+
+    for (const obs of observations) {
+      const meta = obs.metadata as unknown as ObservationMetadata
+      if (!meta?.evidenceIds) continue
+
+      // Count overlap between synthesis sources and observation evidence
+      const overlap = meta.evidenceIds.filter(eid => childIds.has(eid)).length
+      if (overlap === 0) continue
+
+      if (meta.trend === 'weakening' || meta.trend === 'stale') {
+        assessment.contradictedObservations++
+      } else {
+        assessment.alignedObservations++
+      }
+    }
+
+    // Novelty = proportion of synthesis sources NOT covered by any observation evidence
+    const allEvidenceIds = new Set<string>()
+    for (const obs of observations) {
+      const meta = obs.metadata as unknown as ObservationMetadata
+      if (meta?.evidenceIds) {
+        for (const eid of meta.evidenceIds) allEvidenceIds.add(eid)
+      }
+    }
+    const novelChildren = [...childIds].filter(id => !allEvidenceIds.has(id)).length
+    assessment.noveltyScore = childIds.size > 0 ? novelChildren / childIds.size : 1
+
+    logger.debug(`Reflector: synthesis ${synthesisId} quality: aligned=${assessment.alignedObservations}, contradicted=${assessment.contradictedObservations}, novelty=${assessment.noveltyScore.toFixed(2)}`)
+    return assessment
   }
 }

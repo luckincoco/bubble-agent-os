@@ -63,6 +63,21 @@ export interface UserContext {
   activeAgentId?: string
 }
 
+// External user context — extends UserContext with counterparty binding info
+export interface ExternalUserContext extends UserContext {
+  isExternal: true
+  counterpartyId: string
+  counterpartyName: string
+  counterpartyType: 'supplier' | 'customer' | 'logistics'
+  permissionLevel: 'query' | 'query_confirm'
+  platformUserId: string
+  platform: 'wecom' | 'feishu'
+}
+
+export function isExternalContext(ctx: UserContext): ctx is ExternalUserContext {
+  return 'isExternal' in ctx && (ctx as ExternalUserContext).isExternal === true
+}
+
 // Citation / Source tracking
 export interface SourceRef {
   refIndex: number

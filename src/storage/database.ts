@@ -624,6 +624,167 @@ function runMigrations(database: Database.Database, defaultPassword: string) {
       database.exec(`CREATE INDEX IF NOT EXISTS idx_${t}_space ON ${t}(space_id)`)
     }
   }
+
+  // ── Migration v1.0.2: Trade entity + cascade support ────────────
+
+  // 1A: Create biz_trades table (parent entity for cascaded trades)
+  database.exec(`
+    CREATE TABLE IF NOT EXISTS biz_trades (
+      id TEXT PRIMARY KEY,
+      tenant_id TEXT NOT NULL DEFAULT 'default',
+      space_id TEXT,
+      trade_type TEXT NOT NULL,
+      date TEXT NOT NULL,
+      doc_no TEXT,
+      counterparty_id TEXT REFERENCES biz_counterparties(id),
+      contact TEXT,
+      phone TEXT,
+      settlement_method TEXT DEFAULT 'cash',
+      credit_term_days INTEGER,
+      due_date TEXT,
+      total_amount REAL DEFAULT 0,
+      total_tonnage REAL DEFAULT 0,
+      project_id TEXT REFERENCES biz_projects(id),
+      location TEXT,
+      logistics_carrier TEXT,
+      logistics_freight REAL,
+      logistics_lifting_fee REAL,
+      logistics_destination TEXT,
+      notes TEXT,
+      doc_status TEXT NOT NULL DEFAULT 'draft',
+      created_by TEXT,
+      created_at INTEGER NOT NULL,
+      updated_at INTEGER NOT NULL,
+      deleted_at INTEGER
+    )
+  `)
+  database.exec('CREATE INDEX IF NOT EXISTS idx_biz_trades_date ON biz_trades(date)')
+  database.exec('CREATE INDEX IF NOT EXISTS idx_biz_trades_counterparty ON biz_trades(counterparty_id)')
+  database.exec('CREATE INDEX IF NOT EXISTS idx_biz_trades_space ON biz_trades(space_id)')
+  database.exec('CREATE INDEX IF NOT EXISTS idx_biz_trades_status ON biz_trades(tenant_id, doc_status)')
+
+  // 1B: Add trade_id column to child tables
+  const purCols102 = database.pragma('table_info(biz_purchases)') as Array<{ name: string }>
+  if (!purCols102.some(c => c.name === 'trade_id')) {
+    const tradeTables = ['biz_purchases', 'biz_sales', 'biz_logistics', 'biz_payments', 'biz_invoices']
+    for (const t of tradeTables) {
+      database.exec(`ALTER TABLE ${t} ADD COLUMN trade_id TEXT`)
+    }
+    logger.info('Migration v1.0.2: added trade_id column to all transaction tables')
+  }
+
+  // 1C: Add settlement fields to biz_purchases and biz_sales
+  const purCols102b = database.pragma('table_info(biz_purchases)') as Array<{ name: string }>
+  if (!purCols102b.some(c => c.name === 'settlement_method')) {
+    for (const t of ['biz_purchases', 'biz_sales']) {
+      database.exec(`ALTER TABLE ${t} ADD COLUMN settlement_method TEXT DEFAULT 'cash'`)
+      database.exec(`ALTER TABLE ${t} ADD COLUMN credit_term_days INTEGER`)
+      database.exec(`ALTER TABLE ${t} ADD COLUMN due_date TEXT`)
+    }
+    logger.info('Migration v1.0.2: added settlement_method/credit_term_days/due_date to purchases and sales')
+  }
+
+  logger.info('Migration v1.0.2: trade entity + cascade support ready')
+
+  // ── Migration phase0: Time attributes (t_lindy) ─────────────────
+  const cpColsPhase0 = database.pragma('table_info(biz_counterparties)') as Array<{ name: string }>
+  if (!cpColsPhase0.some(c => c.name === 'first_interaction')) {
+    database.exec('ALTER TABLE biz_counterparties ADD COLUMN first_interaction TEXT')
+    // Backfill from earliest transaction date across all four transaction tables
+    database.exec(`
+      UPDATE biz_counterparties SET first_interaction = (
+        SELECT MIN(d) FROM (
+          SELECT MIN(date) as d FROM biz_purchases
+            WHERE supplier_id = biz_counterparties.id AND deleted_at IS NULL
+          UNION ALL
+          SELECT MIN(date) FROM biz_sales
+            WHERE customer_id = biz_counterparties.id AND deleted_at IS NULL
+          UNION ALL
+          SELECT MIN(date) FROM biz_payments
+            WHERE counterparty_id = biz_counterparties.id AND deleted_at IS NULL
+          UNION ALL
+          SELECT MIN(date) FROM biz_logistics
+            WHERE carrier_id = biz_counterparties.id AND deleted_at IS NULL
+        )
+      ) WHERE first_interaction IS NULL
+    `)
+    logger.info('Migration phase0: added first_interaction to biz_counterparties with backfill')
+  }
+
+  // ── Phase 2: External contacts ──────────────────────────────────
+  database.exec(`
+    CREATE TABLE IF NOT EXISTS external_contacts (
+      id TEXT PRIMARY KEY,
+      tenant_id TEXT NOT NULL DEFAULT 'default',
+      space_id TEXT NOT NULL,
+      platform TEXT NOT NULL,
+      platform_user_id TEXT NOT NULL,
+      counterparty_id TEXT NOT NULL REFERENCES biz_counterparties(id),
+      permission_level TEXT NOT NULL DEFAULT 'query',
+      enabled INTEGER NOT NULL DEFAULT 1,
+      bound_by TEXT,
+      bound_at INTEGER,
+      created_at INTEGER NOT NULL,
+      updated_at INTEGER NOT NULL,
+      UNIQUE(tenant_id, platform, platform_user_id)
+    )
+  `)
+  database.exec('CREATE INDEX IF NOT EXISTS idx_ext_contacts_lookup ON external_contacts(platform, platform_user_id, enabled)')
+  database.exec('CREATE INDEX IF NOT EXISTS idx_ext_contacts_cp ON external_contacts(counterparty_id)')
+
+  database.exec(`
+    CREATE TABLE IF NOT EXISTS external_audit_log (
+      id TEXT PRIMARY KEY,
+      external_contact_id TEXT,
+      counterparty_id TEXT,
+      action TEXT NOT NULL,
+      input TEXT,
+      output TEXT,
+      created_at INTEGER NOT NULL
+    )
+  `)
+
+  // ── Phase 3: Multi-role expansion — relax UNIQUE + add is_active ──
+  // Check if is_active column exists; if not, migrate the table
+  const extColInfo = database.prepare("PRAGMA table_info(external_contacts)").all() as Array<{ name: string }>
+  const hasIsActive = extColInfo.some(c => c.name === 'is_active')
+  if (!hasIsActive) {
+    database.exec('BEGIN TRANSACTION')
+    try {
+      database.exec(`
+        CREATE TABLE external_contacts_v2 (
+          id TEXT PRIMARY KEY,
+          tenant_id TEXT NOT NULL DEFAULT 'default',
+          space_id TEXT NOT NULL,
+          platform TEXT NOT NULL,
+          platform_user_id TEXT NOT NULL,
+          counterparty_id TEXT NOT NULL REFERENCES biz_counterparties(id),
+          permission_level TEXT NOT NULL DEFAULT 'query',
+          enabled INTEGER NOT NULL DEFAULT 1,
+          is_active INTEGER NOT NULL DEFAULT 0,
+          bound_by TEXT,
+          bound_at INTEGER,
+          created_at INTEGER NOT NULL,
+          updated_at INTEGER NOT NULL,
+          UNIQUE(tenant_id, platform, platform_user_id, counterparty_id)
+        )
+      `)
+      database.exec(`
+        INSERT INTO external_contacts_v2
+        SELECT id, tenant_id, space_id, platform, platform_user_id, counterparty_id,
+               permission_level, enabled, 1 as is_active, bound_by, bound_at, created_at, updated_at
+        FROM external_contacts
+      `)
+      database.exec('DROP TABLE external_contacts')
+      database.exec('ALTER TABLE external_contacts_v2 RENAME TO external_contacts')
+      database.exec('CREATE INDEX IF NOT EXISTS idx_ext_contacts_lookup ON external_contacts(platform, platform_user_id, enabled, is_active)')
+      database.exec('CREATE INDEX IF NOT EXISTS idx_ext_contacts_cp ON external_contacts(counterparty_id)')
+      database.exec('COMMIT')
+    } catch (err) {
+      database.exec('ROLLBACK')
+      throw err
+    }
+  }
 }
 
 function seedData(database: Database.Database, defaultPassword: string) {

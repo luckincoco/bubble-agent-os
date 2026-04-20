@@ -14,8 +14,15 @@ import { executeBubbleCompaction } from './tasks/bubble-compaction.js'
 import { executeSteelPrice } from './tasks/steel-price.js'
 import { executeQuestionGenerator } from './tasks/question-generator.js'
 import { executeReflection } from './tasks/reflection.js'
+import { executePressureSim } from './tasks/pressure-sim.js'
+import { executeSelfDialogue } from './tasks/self-dialogue.js'
+import { executeFeedWatcher } from './tasks/feed-watcher.js'
+import { executeInterestSearch } from './tasks/interest-search.js'
+import { executeLearningDigest } from './tasks/learning-digest.js'
+import { executeSilenceScan } from './tasks/silence-scan.js'
+import { executeConcentrationScan } from './tasks/concentration-scan.js'
 
-export type ScheduledTaskType = 'daily_digest' | 'keyword_monitor' | 'memory_decay' | 'bubble_compaction' | 'steel_price' | 'question_generator' | 'reflection'
+export type ScheduledTaskType = 'daily_digest' | 'keyword_monitor' | 'memory_decay' | 'bubble_compaction' | 'steel_price' | 'question_generator' | 'reflection' | 'pressure_sim' | 'self_dialogue' | 'feed_watcher' | 'interest_search' | 'learning_digest' | 'silence_scan' | 'concentration_scan'
 
 export interface TaskDeps {
   brain: Brain
@@ -54,6 +61,13 @@ const EXECUTORS: Record<ScheduledTaskType, TaskExecutor> = {
   steel_price: executeSteelPrice,
   question_generator: executeQuestionGenerator,
   reflection: executeReflection,
+  pressure_sim: executePressureSim,
+  self_dialogue: executeSelfDialogue,
+  feed_watcher: executeFeedWatcher,
+  interest_search: executeInterestSearch,
+  learning_digest: executeLearningDigest,
+  silence_scan: executeSilenceScan,
+  concentration_scan: executeConcentrationScan,
 }
 
 export class TaskScheduler {
@@ -78,14 +92,23 @@ export class TaskScheduler {
       this.seedDefaults()
     }
 
-    // Ensure bubble_compaction task exists (migration for existing installations)
-    const hasCompaction = db.prepare("SELECT id FROM scheduled_tasks WHERE type = 'bubble_compaction'").get()
-    if (!hasCompaction) {
+    // Ensure bubble_compaction task exists and is enabled (migration for existing installations)
+    const compactionRow = db.prepare("SELECT * FROM scheduled_tasks WHERE type = 'bubble_compaction'").get() as ScheduledTaskRow | undefined
+    if (!compactionRow) {
       const now = Date.now()
       db.prepare(
         'INSERT INTO scheduled_tasks (id, name, type, cron, params, enabled, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)',
-      ).run(ulid(), '泡泡压缩引擎', 'bubble_compaction', '0 4 * * *', '{}', 0, now, now)
-      logger.info('Scheduler: seeded bubble_compaction task (disabled)')
+      ).run(ulid(), '泡泡蒸馏引擎', 'bubble_compaction', '0 4 * * *', '{}', 1, now, now)
+      const newRow = db.prepare("SELECT * FROM scheduled_tasks WHERE type = 'bubble_compaction'").get() as ScheduledTaskRow
+      this.scheduleJob(newRow)
+      logger.info('Scheduler: seeded bubble_compaction task (enabled, daily 4:00)')
+    } else if (!compactionRow.enabled) {
+      // Migration: enable previously disabled compaction task
+      db.prepare('UPDATE scheduled_tasks SET enabled = 1, name = ?, updated_at = ? WHERE id = ?')
+        .run('泡泡蒸馏引擎', Date.now(), compactionRow.id)
+      const updatedRow = db.prepare('SELECT * FROM scheduled_tasks WHERE id = ?').get(compactionRow.id) as ScheduledTaskRow
+      this.scheduleJob(updatedRow)
+      logger.info('Scheduler: migration — enabled bubble_compaction task')
     }
 
     // Ensure steel_price task exists (Mon-Fri 8:30 AM)
@@ -122,6 +145,102 @@ export class TaskScheduler {
       const row = db.prepare("SELECT * FROM scheduled_tasks WHERE type = 'reflection'").get() as ScheduledTaskRow
       this.scheduleJob(row)
       logger.info('Scheduler: seeded reflection task (daily 5:00)')
+    }
+
+    // Ensure pressure_sim task exists (disabled, manual-only)
+    const hasPressureSim = db.prepare("SELECT id FROM scheduled_tasks WHERE type = 'pressure_sim'").get()
+    if (!hasPressureSim) {
+      const now = Date.now()
+      db.prepare(
+        'INSERT INTO scheduled_tasks (id, name, type, cron, params, enabled, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)',
+      ).run(ulid(), '压力模拟器', 'pressure_sim', '0 0 31 2 *', '{}', 0, now, now)
+      logger.info('Scheduler: seeded pressure_sim task (disabled, manual-only)')
+    }
+
+    // Ensure self_dialogue task exists (every 6 hours)
+    const hasSelfDialogue = db.prepare("SELECT id FROM scheduled_tasks WHERE type = 'self_dialogue'").get()
+    if (!hasSelfDialogue) {
+      const now = Date.now()
+      db.prepare(
+        'INSERT INTO scheduled_tasks (id, name, type, cron, params, enabled, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)',
+      ).run(ulid(), '自对话引擎', 'self_dialogue', '0 */6 * * *', '{"maxQuestions":3}', 1, now, now)
+      const row = db.prepare("SELECT * FROM scheduled_tasks WHERE type = 'self_dialogue'").get() as ScheduledTaskRow
+      this.scheduleJob(row)
+      logger.info('Scheduler: seeded self_dialogue task (every 6h)')
+    }
+
+    // Ensure feed_watcher task exists (every 4 hours)
+    const hasFeedWatcher = db.prepare("SELECT id FROM scheduled_tasks WHERE type = 'feed_watcher'").get()
+    if (!hasFeedWatcher) {
+      const now = Date.now()
+      const feedParams = JSON.stringify({
+        feeds: [
+          { id: 'arxiv-ai', name: 'arXiv AI 论文', type: 'rss', url: 'https://rss.arxiv.org/rss/cs.AI', tags: ['ai', 'research'], enabled: true },
+          { id: 'arxiv-cl', name: 'arXiv NLP 论文', type: 'rss', url: 'https://rss.arxiv.org/rss/cs.CL', tags: ['ai', 'nlp'], enabled: true },
+          { id: 'hf-blog', name: 'Hugging Face 博客', type: 'rss', url: 'https://huggingface.co/blog/feed.xml', tags: ['ai', 'opensource'], enabled: true },
+          { id: 'hn-best', name: 'Hacker News 精选', type: 'rss', url: 'https://hnrss.org/best', tags: ['tech', 'community'], enabled: true },
+          { id: 'aeon', name: 'Aeon 思想散文', type: 'rss', url: 'https://aeon.co/feed.rss', tags: ['philosophy', 'essay'], enabled: true },
+          { id: 'marginalian', name: 'The Marginalian', type: 'rss', url: 'https://www.themarginalian.org/feed/', tags: ['philosophy', 'interdisciplinary'], enabled: true },
+          { id: 'sep', name: '斯坦福哲学百科', type: 'rss', url: 'https://plato.stanford.edu/rss/sep.xml', tags: ['philosophy', 'academic'], enabled: true },
+        ],
+        maxItemsPerFeed: 10,
+        maxContentLength: 2000,
+        surpriseThreshold: 0.3,
+      })
+      db.prepare(
+        'INSERT INTO scheduled_tasks (id, name, type, cron, params, enabled, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)',
+      ).run(ulid(), '外部信息订阅', 'feed_watcher', '0 */4 * * *', feedParams, 1, now, now)
+      const row = db.prepare("SELECT * FROM scheduled_tasks WHERE type = 'feed_watcher'").get() as ScheduledTaskRow
+      this.scheduleJob(row)
+      logger.info('Scheduler: seeded feed_watcher task (every 4h)')
+    }
+
+    // Ensure interest_search task exists (every 6 hours at :30)
+    const hasInterestSearch = db.prepare("SELECT id FROM scheduled_tasks WHERE type = 'interest_search'").get()
+    if (!hasInterestSearch) {
+      const now = Date.now()
+      db.prepare(
+        'INSERT INTO scheduled_tasks (id, name, type, cron, params, enabled, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)',
+      ).run(ulid(), '兴趣驱动搜索', 'interest_search', '30 */6 * * *', '{}', 1, now, now)
+      const row = db.prepare("SELECT * FROM scheduled_tasks WHERE type = 'interest_search'").get() as ScheduledTaskRow
+      this.scheduleJob(row)
+      logger.info('Scheduler: seeded interest_search task (every 6h at :30)')
+    }
+
+    // Ensure learning_digest task exists (daily 21:00)
+    const hasLearningDigest = db.prepare("SELECT id FROM scheduled_tasks WHERE type = 'learning_digest'").get()
+    if (!hasLearningDigest) {
+      const now = Date.now()
+      db.prepare(
+        'INSERT INTO scheduled_tasks (id, name, type, cron, params, enabled, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)',
+      ).run(ulid(), '学习日报', 'learning_digest', '0 21 * * *', '{}', 1, now, now)
+      const row = db.prepare("SELECT * FROM scheduled_tasks WHERE type = 'learning_digest'").get() as ScheduledTaskRow
+      this.scheduleJob(row)
+      logger.info('Scheduler: seeded learning_digest task (daily 21:00)')
+    }
+
+    // Ensure silence_scan task exists (daily 8:30 — after question_generator at 8:00)
+    const hasSilenceScan = db.prepare("SELECT id FROM scheduled_tasks WHERE type = 'silence_scan'").get()
+    if (!hasSilenceScan) {
+      const now = Date.now()
+      db.prepare(
+        'INSERT INTO scheduled_tasks (id, name, type, cron, params, enabled, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)',
+      ).run(ulid(), '沉默扫描', 'silence_scan', '30 8 * * *', '{"silenceMultiplier":2.0,"minTransactions":3}', 1, now, now)
+      const row = db.prepare("SELECT * FROM scheduled_tasks WHERE type = 'silence_scan'").get() as ScheduledTaskRow
+      this.scheduleJob(row)
+      logger.info('Scheduler: seeded silence_scan task (daily 8:30)')
+    }
+
+    // Ensure concentration_scan task exists (1st of month 09:00)
+    const hasConcentrationScan = db.prepare("SELECT id FROM scheduled_tasks WHERE type = 'concentration_scan'").get()
+    if (!hasConcentrationScan) {
+      const now = Date.now()
+      db.prepare(
+        'INSERT INTO scheduled_tasks (id, name, type, cron, params, enabled, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)',
+      ).run(ulid(), '集中度扫描', 'concentration_scan', '0 9 1 * *', '{"topN":3,"threshold":60}', 1, now, now)
+      const row = db.prepare("SELECT * FROM scheduled_tasks WHERE type = 'concentration_scan'").get() as ScheduledTaskRow
+      this.scheduleJob(row)
+      logger.info('Scheduler: seeded concentration_scan task (monthly 1st 9:00)')
     }
 
     logger.info(`Scheduler: ${this.jobs.size} active jobs loaded`)

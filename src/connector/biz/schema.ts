@@ -111,6 +111,7 @@ export interface BizCounterparty {
   address?: string
   bankInfo?: string
   taxId?: string
+  firstInteraction?: string  // YYYY-MM-DD, earliest known transaction date (t_lindy)
   metadata?: Record<string, unknown>
   createdAt: number
   updatedAt: number
@@ -165,6 +166,11 @@ export interface BizPurchase {
   unpaidAmount?: number
   paymentMethod?: string
   paymentNotes?: string
+  // v1.0.2 trade cascade fields
+  tradeId?: string
+  settlementMethod?: string
+  creditTermDays?: number
+  dueDate?: string
   createdAt: number
   updatedAt: number
   deletedAt?: number
@@ -206,6 +212,44 @@ export interface BizSale {
   unpaidAmount?: number
   paymentMethod?: string
   paymentNotes?: string
+  // v1.0.2 trade cascade fields
+  tradeId?: string
+  settlementMethod?: string
+  creditTermDays?: number
+  dueDate?: string
+  createdAt: number
+  updatedAt: number
+  deletedAt?: number
+}
+
+/** Trade entity — parent record for cascaded trades (v1.0.2) */
+export type TradeType = 'purchase' | 'sale'
+export type SettlementMethod = 'cash' | 'transfer' | 'credit'
+
+export interface BizTrade {
+  id: string
+  tenantId: string
+  spaceId?: string
+  tradeType: TradeType
+  date: string
+  docNo?: string
+  counterpartyId: string
+  contact?: string
+  phone?: string
+  settlementMethod: SettlementMethod
+  creditTermDays?: number
+  dueDate?: string
+  totalAmount: number
+  totalTonnage: number
+  projectId?: string
+  location?: string
+  logisticsCarrier?: string
+  logisticsFreight?: number
+  logisticsLiftingFee?: number
+  logisticsDestination?: string
+  notes?: string
+  docStatus: DocStatus
+  createdBy?: string
   createdAt: number
   updatedAt: number
   deletedAt?: number
@@ -401,4 +445,33 @@ export interface ProjectReconciliationItem {
   totalPaymentsIn: number
   totalPaymentsOut: number
   outstanding: number
+}
+
+export interface ExposureItem {
+  counterpartyId: string
+  name: string
+  type: string
+  receivable: number
+  payable: number
+  netExposure: number
+  firstInteraction?: string
+  lindyDays: number | null
+}
+
+export interface ExposureSummary {
+  items: ExposureItem[]
+  totalReceivable: number
+  totalPayable: number
+  netExposure: number
+}
+
+export interface SilenceAlertItem {
+  counterpartyId: string
+  name: string
+  type: string
+  lastDate: string
+  transactionCount: number
+  avgIntervalDays: number
+  silentDays: number
+  threshold: number
 }

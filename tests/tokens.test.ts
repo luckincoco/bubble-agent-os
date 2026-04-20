@@ -71,11 +71,13 @@ describe('truncateToTokenBudget', () => {
 
 describe('TOKEN_LIMITS', () => {
   it('has expected constants', () => {
-    expect(TOKEN_LIMITS.MAX_PROMPT_TOKENS).toBe(110_000)
-    expect(TOKEN_LIMITS.COMPLETION_RESERVE).toBe(16_000)
-    expect(TOKEN_LIMITS.MEMORY_BUDGET).toBe(60_000)
-    expect(TOKEN_LIMITS.HISTORY_BUDGET).toBe(40_000)
+    expect(TOKEN_LIMITS.MAX_PROMPT_TOKENS).toBe(56_000)
+    expect(TOKEN_LIMITS.COMPLETION_RESERVE).toBe(8_000)
+    expect(TOKEN_LIMITS.MEMORY_BUDGET).toBe(24_000)
+    expect(TOKEN_LIMITS.HISTORY_BUDGET).toBe(24_000)
+    expect(TOKEN_LIMITS.SINGLE_MESSAGE_MAX).toBe(12_000)
     expect(TOKEN_LIMITS.SINGLE_BUBBLE_MAX).toBe(8_000)
+    expect(TOKEN_LIMITS.LLM_TIMEOUT_MS).toBe(120_000)
   })
 
   it('COMPLETION_RESERVE is less than MAX_PROMPT_TOKENS', () => {

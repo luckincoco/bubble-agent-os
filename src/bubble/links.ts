@@ -28,6 +28,37 @@ export function getLinks(bubbleId: string): BubbleLink[] {
   }))
 }
 
+/** Update the weight of an existing link */
+export function updateLinkWeight(sourceId: string, targetId: string, relation: string, newWeight: number): boolean {
+  const db = getDatabase()
+  const result = db.prepare(`
+    UPDATE bubble_links SET weight = ?
+    WHERE source_id = ? AND target_id = ? AND relation = ?
+  `).run(newWeight, sourceId, targetId, relation)
+  return result.changes > 0
+}
+
+/** Find all links of a given relation type, optionally filtered by source */
+export function findLinksByRelation(relation: string, sourceId?: string): BubbleLink[] {
+  const db = getDatabase()
+  let sql = 'SELECT source_id, target_id, relation, weight, link_source, created_at FROM bubble_links WHERE relation = ?'
+  const params: unknown[] = [relation]
+
+  if (sourceId) {
+    sql += ' AND source_id = ?'
+    params.push(sourceId)
+  }
+
+  const rows = db.prepare(sql).all(...params) as any[]
+  return rows.map((r) => ({
+    targetId: r.target_id,
+    relation: r.relation,
+    weight: r.weight,
+    source: r.link_source,
+    createdAt: r.created_at,
+  }))
+}
+
 /** Get IDs of bubbles connected within N hops */
 export function getNeighborIds(bubbleId: string, maxHops = 2): Set<string> {
   const visited = new Set<string>()

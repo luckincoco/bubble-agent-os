@@ -16,6 +16,39 @@ export interface CompactionResult {
   portrayed: number
   clustersFound: number
   skipped: number
+  newBubbleIds: string[]
+}
+
+/** Provenance metadata stored in synthesis/portrait bubble metadata */
+interface ProvenanceMetadata {
+  sourceIds: string[]
+  sourceWeights: number[]
+  clusterCohesion: number
+  temperature: number
+  createdByVersion: string
+}
+
+/** Quality assessment stored in synthesis bubble metadata (set by Reflector) */
+export interface SynthesisQualityAssessment {
+  alignedObservations: number
+  contradictedObservations: number
+  noveltyScore: number
+  assessedAt: number
+}
+
+/** Quality signal from Reflector for individual source bubbles */
+export interface QualitySignal {
+  validated: boolean
+  observationTrend: 'new' | 'strengthening' | 'stable' | 'weakening' | 'stale'
+  observationConfidence: number
+}
+
+/** Negation record: why a source bubble's info was or wasn't absorbed during compaction */
+export interface NegationRecord {
+  sourceIndex: number
+  sourceId: string
+  absorbed: boolean
+  reason?: string   // only present when absorbed=false — the "why not" is the learning signal
 }
 
 // --- LLM Prompts ---
@@ -33,8 +66,14 @@ const SYNTHESIS_PROMPT = `你是一个认知科学家，专门从具体事实中
 3. 发现「趋势」而非「事件」：这些事实放在一起说明了什么变化？
 4. 提出「预测」：基于已有模式，用户下一步可能关心什么？
 
+## 否定信号（同等重要）
+完成抽象后，对每条原子记忆做判断：它的核心信息是否已融入你的抽象？
+- absorbed=true: 该条信息已融入抽象
+- absorbed=false: 该条信息未被吸收，写明原因（偏离模式方向/孤证无法纳入趋势/与主流证据矛盾/讨论了不同维度）
+不被吸收不代表不重要——记录原因是为了理解这次选择本身。
+
 ## 输出格式（严格 JSON，不要包裹在代码块中）
-{"title":"概念标题(不超过20字)","content":"抽象描述(50-150字，包含模式识别、动因推测和趋势预判)","tags":["标签1","标签2"],"confidence":0.7}`
+{"title":"概念标题(不超过20字)","content":"抽象描述(50-150字，包含模式识别、动因推测和趋势预判)","tags":["标签1","标签2"],"confidence":0.7,"negations":[{"index":0,"absorbed":true},{"index":2,"absorbed":false,"reason":"该记忆讨论的是物流效率，与发现的价格趋势无关"}]}`
 
 const PORTRAIT_PROMPT = `你是一个用户研究专家，专门从行为模式中构建用户画像。
 
@@ -49,8 +88,14 @@ const PORTRAIT_PROMPT = `你是一个用户研究专家，专门从行为模式�
 3. 发现「矛盾与张力」：不同行为之间是否存在有趣的张力？
 4. 可操作性：这个画像应能指导AI更好地服务用户
 
+## 否定信号（同等重要）
+完成画像构建后，对每条概念记忆做判断：它的核心洞察是否已融入画像？
+- absorbed=true: 已融入
+- absorbed=false: 未融入，写明原因
+记录"为什么不选它"的信息密度可能比"为什么选它"更高。
+
 ## 输出格式（严格 JSON，不要包裹在代码块中）
-{"title":"画像标题(不超过15字)","content":"画像描述(80-200字，包含核心特质、决策模式和服务建议)","tags":["portrait","标签"],"confidence":0.6}`
+{"title":"画像标题(不超过15字)","content":"画像描述(80-200字，包含核心特质、决策模式和服务建议)","tags":["portrait","标签"],"confidence":0.6,"negations":[{"index":0,"absorbed":true},{"index":1,"absorbed":false,"reason":"原因"}]}`
 
 // --- Union-Find ---
 
@@ -100,31 +145,87 @@ class UnionFind {
 const MAX_CLUSTERS_PER_RUN = 20
 const MIN_CLUSTER_SIZE = 3
 const MAX_CLUSTER_SIZE = 12
-const SIMILARITY_THRESHOLD = 0.3
 
 export class BubbleCompactor {
   private llm: LLMProvider
+  private qualitySignals: Map<string, QualitySignal>
 
   constructor(llm: LLMProvider) {
     this.llm = llm
+    this.qualitySignals = new Map()
   }
 
-  async compact(spaceId?: string): Promise<CompactionResult> {
-    const result: CompactionResult = { synthesized: 0, portrayed: 0, clustersFound: 0, skipped: 0 }
+  /**
+   * Compute dynamic similarity threshold based on candidate bubble properties.
+   * Low confidence / high density → higher temperature (more aggressive merging).
+   * High confidence / low density / wide time spread → lower temperature (conservative).
+   */
+  private computeTemperature(bubbles: Bubble[]): number {
+    const BASE = 0.3
+
+    // Factor 1: average confidence — low confidence → merge more aggressively
+    const avgConf = bubbles.reduce((s, b) => s + b.confidence, 0) / bubbles.length
+    const confAdjust = avgConf < 0.5 ? 0.1 : avgConf > 0.8 ? -0.1 : 0
+
+    // Factor 2: candidate density — more candidates → need more compression
+    const densityAdjust = bubbles.length > 50 ? 0.05 : bubbles.length < 10 ? -0.05 : 0
+
+    // Factor 3: time spread — wider spread → more conservative
+    const timestamps = bubbles.map(b => b.createdAt)
+    const timeSpread = Math.max(...timestamps) - Math.min(...timestamps)
+    const ageAdjust = timeSpread > 30 * 86400000 ? -0.05 : 0
+
+    const temperature = Math.max(0.15, Math.min(0.55, BASE + confAdjust + densityAdjust + ageAdjust))
+    logger.debug(`Compactor: temperature=${temperature.toFixed(3)} (avgConf=${avgConf.toFixed(2)}, count=${bubbles.length}, spread=${(timeSpread / 86400000).toFixed(0)}d)`)
+    return temperature
+  }
+
+  /**
+   * Compute quality signal score for a pair of bubbles.
+   * Returns 0 if no signals available, positive if both are strengthening evidence, negative if weakening.
+   */
+  private computeQualityBonus(a: Bubble, b: Bubble): number {
+    const sigA = this.qualitySignals.get(a.id)
+    const sigB = this.qualitySignals.get(b.id)
+    if (!sigA && !sigB) return 0
+
+    let bonus = 0
+
+    // Both bubbles are evidence for strengthening observations → reward clustering
+    if (sigA?.observationTrend === 'strengthening' && sigB?.observationTrend === 'strengthening') {
+      bonus += 0.1
+    }
+
+    // Either bubble is evidence for a weakening observation → penalize
+    if (sigA?.observationTrend === 'weakening') bonus -= 0.05
+    if (sigB?.observationTrend === 'weakening') bonus -= 0.05
+
+    return bonus
+  }
+
+  async compact(spaceId?: string, qualitySignals?: Map<string, QualitySignal>): Promise<CompactionResult> {
+    this.qualitySignals = qualitySignals ?? new Map()
+    const result: CompactionResult = { synthesized: 0, portrayed: 0, clustersFound: 0, skipped: 0, newBubbleIds: [] }
+
+    if (this.qualitySignals.size > 0) {
+      logger.info(`Compactor: received ${this.qualitySignals.size} quality signals from Reflector`)
+    }
 
     // Round 1: Level 0 → Level 1 (skip observations — they have their own lifecycle)
     const l0Candidates = findCompactionCandidates(0, spaceId)
       .filter(b => b.type !== 'observation')
     if (l0Candidates.length >= MIN_CLUSTER_SIZE) {
-      const l0Clusters = this.findClusters(l0Candidates)
+      const temperature = this.computeTemperature(l0Candidates)
+      const l0Clusters = this.findClusters(l0Candidates, temperature)
       result.clustersFound += l0Clusters.length
 
       let processed = 0
       for (const cluster of l0Clusters) {
         if (processed >= MAX_CLUSTERS_PER_RUN) break
-        const created = await this.abstractCluster(cluster, 1)
+        const created = await this.abstractCluster(cluster, 1, temperature)
         if (created) {
           result.synthesized++
+          result.newBubbleIds.push(created.id)
           processed++
         } else {
           result.skipped++
@@ -135,15 +236,17 @@ export class BubbleCompactor {
     // Round 2: Level 1 → Level 2
     const l1Candidates = findCompactionCandidates(1, spaceId)
     if (l1Candidates.length >= MIN_CLUSTER_SIZE) {
-      const l1Clusters = this.findClusters(l1Candidates)
+      const temperature = this.computeTemperature(l1Candidates)
+      const l1Clusters = this.findClusters(l1Candidates, temperature)
       result.clustersFound += l1Clusters.length
 
       let processed = 0
       for (const cluster of l1Clusters) {
         if (processed >= MAX_CLUSTERS_PER_RUN) break
-        const created = await this.abstractCluster(cluster, 2)
+        const created = await this.abstractCluster(cluster, 2, temperature)
         if (created) {
           result.portrayed++
+          result.newBubbleIds.push(created.id)
           processed++
         } else {
           result.skipped++
@@ -154,7 +257,7 @@ export class BubbleCompactor {
     return result
   }
 
-  findClusters(bubbles: Bubble[]): BubbleCluster[] {
+  findClusters(bubbles: Bubble[], threshold: number): BubbleCluster[] {
     const n = bubbles.length
     if (n < MIN_CLUSTER_SIZE) return []
 
@@ -170,7 +273,7 @@ export class BubbleCompactor {
     for (let i = 0; i < n; i++) {
       for (let j = i + 1; j < n; j++) {
         const sim = this.pairSimilarity(bubbles[i], bubbles[j], neighborSets)
-        if (sim > SIMILARITY_THRESHOLD) {
+        if (sim > threshold) {
           uf.union(i, j)
         }
       }
@@ -183,7 +286,7 @@ export class BubbleCompactor {
     for (const [, indices] of groups) {
       if (indices.length < MIN_CLUSTER_SIZE) continue
 
-      let clusterBubbles = indices.map(i => bubbles[i])
+      const clusterBubbles = indices.map(i => bubbles[i])
 
       // Split large clusters by most frequent tag
       if (clusterBubbles.length > MAX_CLUSTER_SIZE) {
@@ -204,22 +307,25 @@ export class BubbleCompactor {
   }
 
   private pairSimilarity(a: Bubble, b: Bubble, neighborSets: Map<string, Set<string>>): number {
-    // Tag Jaccard similarity (weight 0.4)
+    // Tag Jaccard similarity (weight 0.35)
     const tagsA = new Set(a.tags)
     const tagsB = new Set(b.tags)
     const intersection = [...tagsA].filter(t => tagsB.has(t)).length
     const union = new Set([...tagsA, ...tagsB]).size
     const tagSim = union > 0 ? intersection / union : 0
 
-    // Graph link (weight 0.4)
+    // Graph link (weight 0.35)
     const neighborsA = neighborSets.get(a.id)
     const graphSim = neighborsA?.has(b.id) ? 1.0 : 0
 
-    // Time proximity (weight 0.2), 7-day half-life
+    // Time proximity (weight 0.15), 7-day half-life
     const timeDiff = Math.abs(a.createdAt - b.createdAt)
     const timeSim = Math.exp(-timeDiff / (7 * 86400000))
 
-    return 0.4 * tagSim + 0.4 * graphSim + 0.2 * timeSim
+    // Quality signal from Reflector (weight 0.15)
+    const qualityBonus = this.computeQualityBonus(a, b)
+
+    return 0.35 * tagSim + 0.35 * graphSim + 0.15 * timeSim + 0.15 * Math.max(0, Math.min(1, 0.5 + qualityBonus))
   }
 
   private splitByTag(bubbles: Bubble[]): Bubble[][] {
@@ -283,7 +389,20 @@ export class BubbleCompactor {
     }
   }
 
-  private async abstractCluster(cluster: BubbleCluster, targetLevel: 1 | 2): Promise<Bubble | null> {
+  /**
+   * Compute contribution weights for each source bubble in a cluster.
+   * Higher confidence → higher contribution weight (normalized to sum=1).
+   */
+  private computeContributionWeights(bubbles: Bubble[]): Map<string, number> {
+    const totalConf = bubbles.reduce((s, b) => s + b.confidence, 0)
+    const weights = new Map<string, number>()
+    for (const b of bubbles) {
+      weights.set(b.id, totalConf > 0 ? b.confidence / totalConf : 1 / bubbles.length)
+    }
+    return weights
+  }
+
+  private async abstractCluster(cluster: BubbleCluster, targetLevel: 1 | 2, temperature: number): Promise<Bubble | null> {
     // Verify all bubbles share the same spaceId
     const spaceIds = new Set(cluster.bubbles.map(b => b.spaceId ?? '_null'))
     if (spaceIds.size > 1) {
@@ -291,6 +410,9 @@ export class BubbleCompactor {
       return null
     }
     const spaceId = cluster.bubbles[0].spaceId
+
+    // Compute contribution weights (soft labels)
+    const contributionWeights = this.computeContributionWeights(cluster.bubbles)
 
     // Build the prompt content
     const systemPrompt = targetLevel === 1 ? SYNTHESIS_PROMPT : PORTRAIT_PROMPT
@@ -326,6 +448,7 @@ export class BubbleCompactor {
         content: string
         tags: string[]
         confidence: number
+        negations?: Array<{ index: number; absorbed: boolean; reason?: string }>
       }
 
       if (!parsed.title || !parsed.content) {
@@ -339,7 +462,34 @@ export class BubbleCompactor {
         ...cluster.sharedTags,
       ])]
 
-      // Create the higher-level bubble
+      // Build provenance metadata (soft labels)
+      const sourceIds = cluster.bubbles.map(b => b.id)
+      const sourceWeights = sourceIds.map(id => contributionWeights.get(id) ?? 0)
+      const provenance: ProvenanceMetadata = {
+        sourceIds,
+        sourceWeights,
+        clusterCohesion: cluster.cohesionScore,
+        temperature,
+        createdByVersion: 'distill-v1',
+      }
+
+      // Parse negation records — the "why not" learning signal
+      const rawNegations = Array.isArray(parsed.negations) ? parsed.negations : []
+      const negations: NegationRecord[] = rawNegations
+        .filter(n => typeof n.index === 'number' && n.index >= 0 && n.index < cluster.bubbles.length)
+        .map(n => ({
+          sourceIndex: n.index,
+          sourceId: cluster.bubbles[n.index].id,
+          absorbed: n.absorbed !== false,
+          reason: n.absorbed === false ? (n.reason || '未说明') : undefined,
+        }))
+
+      const nonAbsorbedCount = negations.filter(n => !n.absorbed).length
+      if (negations.length > 0) {
+        logger.debug(`Compactor: negation signal — ${negations.length} evaluated, ${nonAbsorbedCount} not absorbed`)
+      }
+
+      // Create the higher-level bubble with provenance
       const newBubble = createBubble({
         type: targetLevel === 1 ? 'synthesis' : 'portrait',
         title: parsed.title,
@@ -350,18 +500,26 @@ export class BubbleCompactor {
         decayRate: 0.02,
         spaceId,
         abstractionLevel: targetLevel,
+        metadata: { provenance, negations } as unknown as Record<string, unknown>,
       })
 
-      // Create composed_of links (parent → child)
+      // Create composed_of links with differential weights (soft labels)
       for (const child of cluster.bubbles) {
-        addLink(newBubble.id, child.id, 'composed_of', 1.0, 'system')
+        const weight = contributionWeights.get(child.id) ?? (1 / cluster.bubbles.length)
+        addLink(newBubble.id, child.id, 'composed_of', weight, 'system')
       }
 
-      // Accelerate decay of child bubbles
-      this.accelerateDecay(cluster.bubbles)
+      // Check if any source is evidence for a contradicted observation
+      const hasContradictions = cluster.bubbles.some(b => {
+        const sig = this.qualitySignals.get(b.id)
+        return sig?.observationTrend === 'weakening'
+      })
+
+      // Adaptive decay acceleration based on contribution weights and negation signals
+      this.accelerateDecay(cluster.bubbles, contributionWeights, hasContradictions, negations)
 
       const levelName = targetLevel === 1 ? 'synthesis' : 'portrait'
-      logger.info(`Compactor: created ${levelName} "${newBubble.title}" from ${cluster.bubbles.length} bubbles`)
+      logger.info(`Compactor: created ${levelName} "${newBubble.title}" from ${cluster.bubbles.length} bubbles (temp=${temperature.toFixed(2)}, cohesion=${cluster.cohesionScore.toFixed(2)})`)
 
       return newBubble
     } catch (err) {
@@ -370,9 +528,42 @@ export class BubbleCompactor {
     }
   }
 
-  private accelerateDecay(children: Bubble[]): void {
+  /**
+   * Adaptive decay acceleration based on contribution weights and negation signals.
+   *
+   * Key insight from ocean.md "杀死即学习":
+   * - Absorbed children → accelerate decay (their info lives on in the synthesis)
+   * - Non-absorbed children → PROTECT from acceleration (their unique info isn't captured)
+   *   These carry knowledge the synthesis chose not to include — that's valuable.
+   */
+  private accelerateDecay(
+    children: Bubble[],
+    contributionWeights: Map<string, number>,
+    hasContradictions: boolean,
+    negations: NegationRecord[] = [],
+  ): void {
+    const BASE_ACCELERATION = 3.0
+    const PROTECTION_FACTOR = 4.0
+    const nonAbsorbedIds = new Set(negations.filter(n => !n.absorbed).map(n => n.sourceId))
+
     for (const child of children) {
-      const newRate = Math.min(0.5, child.decayRate * 3)
+      // Non-absorbed children: protect from acceleration
+      // Their unique information isn't captured by the synthesis — they survive longer
+      if (nonAbsorbedIds.has(child.id)) {
+        const newRate = Math.max(0.01, child.decayRate * 0.8)
+        if (newRate !== child.decayRate) {
+          updateBubble(child.id, { decayRate: newRate })
+        }
+        continue
+      }
+
+      const weight = contributionWeights.get(child.id) ?? 0
+      // Higher weight → lower acceleration factor → slower decay
+      let factor = BASE_ACCELERATION / (1 + weight * PROTECTION_FACTOR)
+      // If synthesis has contradictions, halve acceleration to preserve evidence
+      if (hasContradictions) factor /= 2
+
+      const newRate = Math.min(0.5, child.decayRate * factor)
       if (newRate !== child.decayRate) {
         updateBubble(child.id, { decayRate: newRate })
       }

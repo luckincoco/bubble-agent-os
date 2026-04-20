@@ -190,18 +190,25 @@ function ProfitReport() {
               </tr>
             </thead>
             <tbody>
-              {rows.map(r => (
+              {rows.map((r, i) => {
+                const prevMargin = i > 0 ? rows[i - 1].margin : r.margin
+                const delta = r.margin - prevMargin
+                return (
                 <tr key={r.month}>
                   <td data-label="月份">{r.month}</td>
                   <td className={s.numCell} data-label="销售额">{fmtMoney(r.salesRevenue)}</td>
                   <td className={s.numCell} data-label="采购成本">{fmtMoney(r.purchaseCost)}</td>
                   <td className={s.numCell} data-label="物流成本">{fmtMoney(r.logisticsCost)}</td>
                   <td className={`${s.numCell} ${r.grossProfit >= 0 ? s.positive : s.negative}`} data-label="毛利润">{fmtMoney(r.grossProfit)}</td>
-                  <td className={`${s.numCell} ${r.margin >= 0 ? s.positive : s.negative}`} data-label="毛利率">{r.margin}%</td>
+                  <td className={`${s.numCell} ${r.margin >= 0 ? s.positive : s.negative}`} data-label="毛利率">
+                    {r.margin}%
+                    {i > 0 && <span className={delta > 0 ? s.trendUp : delta < 0 ? s.trendDown : s.trendFlat}>{delta > 0 ? ' ▲' : delta < 0 ? ' ▼' : ' –'}</span>}
+                  </td>
                   <td className={s.numCell} data-label="销售吨">{fmtTons(r.salesTons)}</td>
                   <td className={s.numCell} data-label="采购吨">{fmtTons(r.purchaseTons)}</td>
                 </tr>
-              ))}
+                )
+              })}
             </tbody>
             <tfoot>
               <tr>
@@ -394,10 +401,8 @@ function MonthlyReport() {
             <thead>
               <tr>
                 <th>月份</th>
-                <th className={s.numCell}>采购额</th>
-                <th className={s.numCell}>采购吨</th>
-                <th className={s.numCell}>销售额</th>
-                <th className={s.numCell}>销售吨</th>
+                <th className={s.numCell}>采购</th>
+                <th className={s.numCell}>销售</th>
                 <th className={s.numCell}>物流费</th>
                 <th className={s.numCell}>收款</th>
                 <th className={s.numCell}>付款</th>
@@ -409,10 +414,14 @@ function MonthlyReport() {
                 return (
                   <tr key={r.month} style={!hasData ? { opacity: 0.3 } : undefined}>
                     <td data-label="月份">{r.month}</td>
-                    <td className={s.numCell} data-label="采购额">{r.purchaseAmount ? fmtMoney(r.purchaseAmount) : '-'}</td>
-                    <td className={s.numCell} data-label="采购吨">{r.purchaseTons ? fmtTons(r.purchaseTons) : '-'}</td>
-                    <td className={s.numCell} data-label="销售额">{r.salesAmount ? fmtMoney(r.salesAmount) : '-'}</td>
-                    <td className={s.numCell} data-label="销售吨">{r.salesTons ? fmtTons(r.salesTons) : '-'}</td>
+                    <td className={s.numCell} data-label="采购">
+                      {r.purchaseAmount ? fmtMoney(r.purchaseAmount) : '-'}
+                      {r.purchaseTons > 0 && <span className={s.subText}>{fmtTons(r.purchaseTons)} 吨</span>}
+                    </td>
+                    <td className={s.numCell} data-label="销售">
+                      {r.salesAmount ? fmtMoney(r.salesAmount) : '-'}
+                      {r.salesTons > 0 && <span className={s.subText}>{fmtTons(r.salesTons)} 吨</span>}
+                    </td>
                     <td className={s.numCell} data-label="物流费">{r.logisticsAmount ? fmtMoney(r.logisticsAmount) : '-'}</td>
                     <td className={`${s.numCell} ${s.positive}`} data-label="收款">{r.paymentsIn ? fmtMoney(r.paymentsIn) : '-'}</td>
                     <td className={`${s.numCell} ${s.negative}`} data-label="付款">{r.paymentsOut ? fmtMoney(r.paymentsOut) : '-'}</td>
@@ -423,10 +432,14 @@ function MonthlyReport() {
             <tfoot>
               <tr>
                 <td data-label="">合计</td>
-                <td className={s.numCell} data-label="采购额">{fmtMoney(sum(r => r.purchaseAmount))}</td>
-                <td className={s.numCell} data-label="采购吨">{fmtTons(sum(r => r.purchaseTons))}</td>
-                <td className={s.numCell} data-label="销售额">{fmtMoney(sum(r => r.salesAmount))}</td>
-                <td className={s.numCell} data-label="销售吨">{fmtTons(sum(r => r.salesTons))}</td>
+                <td className={s.numCell} data-label="采购">
+                  {fmtMoney(sum(r => r.purchaseAmount))}
+                  <span className={s.subText}>{fmtTons(sum(r => r.purchaseTons))} 吨</span>
+                </td>
+                <td className={s.numCell} data-label="销售">
+                  {fmtMoney(sum(r => r.salesAmount))}
+                  <span className={s.subText}>{fmtTons(sum(r => r.salesTons))} 吨</span>
+                </td>
                 <td className={s.numCell} data-label="物流费">{fmtMoney(sum(r => r.logisticsAmount))}</td>
                 <td className={`${s.numCell} ${s.positive}`} data-label="收款">{fmtMoney(sum(r => r.paymentsIn))}</td>
                 <td className={`${s.numCell} ${s.negative}`} data-label="付款">{fmtMoney(sum(r => r.paymentsOut))}</td>
@@ -514,7 +527,7 @@ function ByOrderReport() {
             </thead>
             <tbody>
               {rows.map(r => (
-                <tr key={r.docNo}>
+                <tr key={r.docNo} className={r.margin < totalMargin ? s.warnRow : undefined}>
                   <td data-label="单号"><strong>{r.docNo}</strong></td>
                   <td data-label="日期">{r.date}</td>
                   <td data-label="供应商">{r.supplierName}</td>

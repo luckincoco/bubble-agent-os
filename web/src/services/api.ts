@@ -59,10 +59,24 @@ export async function changePassword(oldPassword: string, newPassword: string): 
   }
 }
 
-export async function uploadExcel(file: File): Promise<{ created: number; sheet: string; columns: string[] }> {
+export interface ExcelImportResult {
+  created: number
+  knowledgeCards?: number
+  aggregations?: number
+  sheets?: Array<{ sheet: string; rows: number; columns: string[]; category: string }>
+  bizBridge?: {
+    created: { purchases: number; sales: number; logistics: number; payments: number }
+    skipped: { purchases: number; sales: number; logistics: number; payments: number }
+    errors: Array<{ rowIndex: number; message: string }>
+  }
+}
+
+export async function uploadExcel(file: File): Promise<ExcelImportResult> {
   const form = new FormData()
   form.append('file', file)
-  const res = await authFetch(`${BASE}/api/import-excel`, { method: 'POST', body: form })
+  const spaceId = useAuthStore.getState().currentSpaceId
+  const qs = spaceId ? `?spaceId=${spaceId}` : ''
+  const res = await authFetch(`${BASE}/api/import-excel${qs}`, { method: 'POST', body: form })
   if (!res.ok) {
     const err = await res.json().catch(() => ({ error: `HTTP ${res.status}` }))
     throw new Error(err.error || `HTTP ${res.status}`)
@@ -346,6 +360,36 @@ export const createPurchaseWithLinesApi = (data: CreatePurchaseWithLinesPayload)
 
 export const createSaleWithLinesApi = (data: CreateSaleWithLinesPayload) =>
   bizPost<BizSale>('/sales-with-lines', data)
+
+// v1.0.2: Trade cascade API
+export interface CreateTradePayload {
+  tradeType: 'purchase' | 'sale'
+  date: string
+  docNo?: string
+  counterpartyId: string
+  secondaryCounterpartyId?: string
+  contact?: string
+  phone?: string
+  settlementMethod: 'cash' | 'transfer' | 'credit'
+  creditTermDays?: number
+  projectId?: string
+  location?: string
+  notes?: string
+  lines: BizLineInput[]
+  payment?: { amount: number; method?: string; notes?: string }
+  logistics?: { carrier?: string; freight?: number; liftingFee?: number; destination?: string }
+}
+
+export interface TradeResult {
+  trade: import('../types').BizTrade
+  purchase?: import('../types').BizPurchase
+  sale?: import('../types').BizSale
+  lines: unknown[]
+  cascaded: { paymentId?: string; logisticsId?: string }
+}
+
+export const createTradeApi = (data: CreateTradePayload) =>
+  bizPost<TradeResult>('/trades', data)
 
 // Reports (v0.6 SaaS + v0.7 enhancements)
 export interface ProfitReportFilter {

@@ -55,6 +55,27 @@ export class FocusTracker {
    * Compute a focus boost for a piece of bubble content.
    * Returns 0 if no focus data, up to MAX_BOOST if high overlap.
    */
+  /** Get top frequent terms for a user (sorted by frequency desc) */
+  getTopTerms(userId: string, minFreq = 2, limit = 10): Array<{ term: string; freq: number }> {
+    const focus = this.focusMap.get(userId)
+    if (!focus || focus.terms.size === 0) return []
+    return [...focus.terms.entries()]
+      .filter(([, freq]) => freq >= minFreq)
+      .sort((a, b) => b[1] - a[1])
+      .slice(0, limit)
+      .map(([term, freq]) => ({ term, freq }))
+  }
+
+  /** Get all user IDs that have focus data */
+  getActiveUserIds(): string[] {
+    return [...this.focusMap.keys()]
+  }
+
+  /** Get the current message window size for a user */
+  getWindowSize(userId: string): number {
+    return this.focusMap.get(userId)?.messages.length ?? 0
+  }
+
   computeFocusBoost(userId: string, bubbleContent: string): number {
     const focus = this.focusMap.get(userId)
     if (!focus || focus.terms.size === 0) return 0

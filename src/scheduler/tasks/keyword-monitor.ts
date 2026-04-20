@@ -38,7 +38,7 @@ export async function executeKeywordMonitor(params: Record<string, unknown>, dep
 
   // Push summary to Feishu if there are findings
   if (deps.feishu && findings.length > 0) {
-    const chatId = String(params.chatId || process.env.FEISHU_ADMIN_CHAT_ID || '')
+    const chatId = deps.feishu?.getAdminChatId() || String(params.chatId || process.env.FEISHU_ADMIN_CHAT_ID || '')
     if (chatId) {
       try {
         await deps.feishu.pushMessage(chatId, `🔍 关键词监控更新\n\n${findings.join('\n')}`)

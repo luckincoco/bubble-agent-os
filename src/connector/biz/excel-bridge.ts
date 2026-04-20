@@ -76,6 +76,66 @@ function safeDate(v: unknown): string {
   return /^\d{4}-\d{2}-\d{2}/.test(d) ? d.slice(0, 10) : ''
 }
 
+// ── Import Guardrails (P2b) ─────────────────────────────────────────
+
+interface GuardrailResult {
+  ok: boolean
+  warnings: string[]
+}
+
+const GUARDRAIL_LIMITS = {
+  maxAmount: 50_000_000,     // 5000万 — 单笔最大金额
+  maxTonnage: 5_000,         // 5000吨 — 单笔最大吨位
+  maxUnitPrice: 20_000,      // 2万/吨 — 钢材最大单价
+  minDate: '2020-01-01',     // 不接受 2020 年之前的数据
+  maxFuturedays: 7,          // 不接受超过7天的未来日期
+}
+
+function validateRow(
+  category: string,
+  row: { date?: string; tonnage?: number; totalAmount?: number; unitPrice?: number; amount?: number },
+): GuardrailResult {
+  const warnings: string[] = []
+
+  // Date sanity check
+  if (row.date) {
+    if (row.date < GUARDRAIL_LIMITS.minDate) {
+      warnings.push(`日期 ${row.date} 早于 ${GUARDRAIL_LIMITS.minDate}`)
+    }
+    const future = new Date()
+    future.setDate(future.getDate() + GUARDRAIL_LIMITS.maxFuturedays)
+    if (row.date > future.toISOString().slice(0, 10)) {
+      warnings.push(`日期 ${row.date} 超过未来 ${GUARDRAIL_LIMITS.maxFuturedays} 天`)
+    }
+  }
+
+  // Amount range
+  const amt = row.totalAmount ?? row.amount ?? 0
+  if (amt < 0) {
+    warnings.push(`金额为负: ${amt}`)
+  } else if (amt > GUARDRAIL_LIMITS.maxAmount) {
+    warnings.push(`金额异常大: ${amt} > ${GUARDRAIL_LIMITS.maxAmount}`)
+  }
+
+  // Tonnage range
+  if (row.tonnage != null) {
+    if (row.tonnage < 0) {
+      warnings.push(`吨位为负: ${row.tonnage}`)
+    } else if (row.tonnage > GUARDRAIL_LIMITS.maxTonnage) {
+      warnings.push(`吨位异常大: ${row.tonnage} > ${GUARDRAIL_LIMITS.maxTonnage}`)
+    }
+  }
+
+  // Unit price range
+  if (row.unitPrice != null && row.unitPrice > 0) {
+    if (row.unitPrice > GUARDRAIL_LIMITS.maxUnitPrice) {
+      warnings.push(`单价异常: ${row.unitPrice} > ${GUARDRAIL_LIMITS.maxUnitPrice}`)
+    }
+  }
+
+  return { ok: warnings.length === 0, warnings }
+}
+
 // ── Entity Resolution Cache ─────────────────────────────────────────
 
 class EntityCache {
@@ -94,20 +154,40 @@ class EntityCache {
     const cached = this.cpCache.get(key)
     if (cached) return cached
 
-    // Broad search (any type) first
+    // 1. Space-scoped fuzzy search (any type)
     const found = fuzzyFindCounterparty(this.ctx, name)
     if (found) {
-      // If found with a different type, upgrade to 'both'
-      if (found.type !== type && found.type !== 'both') {
-        updateCounterparty(found.id, { type: 'both' })
-      }
+      this.safeUpgradeType(found.id, found.type, type)
       this.cpCache.set(key, found.id)
       return found.id
     }
 
+    // 2. Cross-space exact lookup — prefer 'both' record to avoid update conflicts
+    const db = getDatabase()
+    const crossSpace = db.prepare(
+      `SELECT id, type FROM biz_counterparties WHERE tenant_id = ? AND space_id = ? AND name = ?
+       ORDER BY CASE WHEN type = 'both' THEN 0 ELSE 1 END LIMIT 1`,
+    ).get(TENANT, this.ctx.spaceId, name) as { id: string; type: string } | undefined
+    if (crossSpace) {
+      this.safeUpgradeType(crossSpace.id, crossSpace.type, type)
+      this.cpCache.set(key, crossSpace.id)
+      return crossSpace.id
+    }
+
+    // 3. Create new
     const created = createCounterparty(this.ctx, { name, type })
     this.cpCache.set(key, created.id)
     return created.id
+  }
+
+  /** Upgrade counterparty type to 'both' only when safe (no conflicting row exists) */
+  private safeUpgradeType(id: string, currentType: string, wantedType: string): void {
+    if (currentType === wantedType || currentType === 'both') return
+    try {
+      updateCounterparty(id, { type: 'both' })
+    } catch {
+      // Another row with (name, 'both') already exists — safe to ignore
+    }
   }
 
   ensureProduct(brand: string, name: string, specRaw: string): string {
@@ -115,6 +195,8 @@ class EntityCache {
     const key = `${brand}|${name}|${spec}`
     const cached = this.prodCache.get(key)
     if (cached) return cached
+
+    const db = getDatabase()
 
     // Generate deterministic code first for exact-match lookup
     const code = [brand, name, spec].filter(Boolean).join('-') || `PROD-${Date.now()}`
@@ -124,6 +206,15 @@ class EntityCache {
     if (byCode) {
       this.prodCache.set(key, byCode.id)
       return byCode.id
+    }
+
+    // Cross-space code lookup
+    const crossSpace = db.prepare(
+      'SELECT id FROM biz_products WHERE tenant_id = ? AND space_id = ? AND code = ? LIMIT 1',
+    ).get(TENANT, this.ctx.spaceId, code) as { id: string } | undefined
+    if (crossSpace) {
+      this.prodCache.set(key, crossSpace.id)
+      return crossSpace.id
     }
 
     // Try fuzzy match by "brand spec"
@@ -157,6 +248,16 @@ class EntityCache {
     if (found) {
       this.projCache.set(name, found.id)
       return found.id
+    }
+
+    // Cross-space lookup
+    const db = getDatabase()
+    const crossSpace = db.prepare(
+      'SELECT id FROM biz_projects WHERE tenant_id = ? AND space_id = ? AND name = ? LIMIT 1',
+    ).get(TENANT, this.ctx.spaceId, name) as { id: string } | undefined
+    if (crossSpace) {
+      this.projCache.set(name, crossSpace.id)
+      return crossSpace.id
     }
 
     const created = createProject(this.ctx, { name, status: 'active' })
@@ -243,6 +344,9 @@ function mapSaleRow(row: Record<string, unknown>, cache: EntityCache, createdBy?
   const costPrice = num(col(row, '成本价(自动)', '成本价(手动)', '成本价'))
   const profit = num(col(row, '单笔毛利'))
 
+  // 销售的「客户/项目」通常就是项目名，自动关联 project_id
+  const projectId = customerName ? cache.ensureProject(customerName) : undefined
+
   const docNo = str(col(row, '销售单号')) || undefined
   return {
     date,
@@ -250,6 +354,7 @@ function mapSaleRow(row: Record<string, unknown>, cache: EntityCache, createdBy?
     docNo,
     customerId,
     supplierId: supplierId || undefined,
+    projectId: projectId || undefined,
     productId,
     bundleCount: num(col(row, '件数')) || undefined,
     tonnage: tonnage || (totalAmount && unitPrice ? totalAmount / unitPrice : 0),
@@ -441,6 +546,12 @@ export function bridgeExcelSheet(
           case 'purchase': {
             const input = mapPurchaseRow(row, cache, createdBy)
             if (!input) { result.skipped[statsKey]++; continue }
+            const guard = validateRow('purchase', input)
+            if (!guard.ok) {
+              for (const w of guard.warnings) logger.warn(`Guardrail [purchase row ${i}]: ${w}`)
+              result.errors.push({ rowIndex: i, message: `guardrail: ${guard.warnings.join('; ')}` })
+              result.skipped[statsKey]++; continue
+            }
             if (isDuplicatePurchase(input.date, input.supplierId, input.tonnage, input.totalAmount)) {
               result.skipped[statsKey]++; continue
             }
@@ -451,6 +562,12 @@ export function bridgeExcelSheet(
           case 'sales': {
             const input = mapSaleRow(row, cache, createdBy)
             if (!input) { result.skipped[statsKey]++; continue }
+            const guard = validateRow('sales', input)
+            if (!guard.ok) {
+              for (const w of guard.warnings) logger.warn(`Guardrail [sales row ${i}]: ${w}`)
+              result.errors.push({ rowIndex: i, message: `guardrail: ${guard.warnings.join('; ')}` })
+              result.skipped[statsKey]++; continue
+            }
             if (isDuplicateSale(input.date, input.customerId, input.tonnage, input.totalAmount)) {
               result.skipped[statsKey]++; continue
             }
@@ -461,6 +578,12 @@ export function bridgeExcelSheet(
           case 'logistics': {
             const input = mapLogisticsRow(row, cache, createdBy)
             if (!input) { result.skipped[statsKey]++; continue }
+            const guard = validateRow('logistics', { date: input.date, tonnage: input.tonnage, totalAmount: input.totalFee })
+            if (!guard.ok) {
+              for (const w of guard.warnings) logger.warn(`Guardrail [logistics row ${i}]: ${w}`)
+              result.errors.push({ rowIndex: i, message: `guardrail: ${guard.warnings.join('; ')}` })
+              result.skipped[statsKey]++; continue
+            }
             if (isDuplicateLogistics(input.date, input.carrierId, input.tonnage ?? 0, input.totalFee ?? 0)) {
               result.skipped[statsKey]++; continue
             }
@@ -471,6 +594,12 @@ export function bridgeExcelSheet(
           case 'payment': {
             const input = mapPaymentRow(row, cache, createdBy)
             if (!input) { result.skipped[statsKey]++; continue }
+            const guard = validateRow('payment', { date: input.date, amount: input.amount })
+            if (!guard.ok) {
+              for (const w of guard.warnings) logger.warn(`Guardrail [payment row ${i}]: ${w}`)
+              result.errors.push({ rowIndex: i, message: `guardrail: ${guard.warnings.join('; ')}` })
+              result.skipped[statsKey]++; continue
+            }
             if (isDuplicatePayment(input.date, input.counterpartyId, input.amount, input.direction)) {
               result.skipped[statsKey]++; continue
             }

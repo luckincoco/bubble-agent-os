@@ -26,6 +26,7 @@ function toCamel<T>(row: Record<string, unknown>): T {
 
 // Map docType shorthand to actual table name
 const TABLE_MAP: Record<string, string> = {
+  trade: 'biz_trades',
   purchase: 'biz_purchases',
   sale: 'biz_sales',
   logistics: 'biz_logistics',

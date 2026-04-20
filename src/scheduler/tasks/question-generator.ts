@@ -247,7 +247,7 @@ export async function executeQuestionGenerator(
 
   // Push summary to Feishu
   if (deps.feishu && newQuestions.length > 0) {
-    const chatId = String(params.chatId || process.env.FEISHU_ADMIN_CHAT_ID || '')
+    const chatId = deps.feishu?.getAdminChatId() || String(params.chatId || process.env.FEISHU_ADMIN_CHAT_ID || '')
     if (chatId) {
       try {
         const summary = newQuestions

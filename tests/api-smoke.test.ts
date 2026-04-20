@@ -264,23 +264,23 @@ describe('User Management (admin)', () => {
   it('POST /api/users creates a new user with personal space', async () => {
     const res = await api('/api/users', {
       method: 'POST',
-      body: JSON.stringify({ username: 'yingyun', password: 'test456', displayName: '盈韵' }),
+      body: JSON.stringify({ username: 'testuser', password: 'test456', displayName: '测试用户' }),
     })
     expect(res.status).toBe(200)
     const data = await res.json() as any
-    expect(data.user.username).toBe('yingyun')
-    expect(data.user.displayName).toBe('盈韵')
+    expect(data.user.username).toBe('testuser')
+    expect(data.user.displayName).toBe('测试用户')
     expect(data.user.role).toBe('user')
     expect(data.user.id).toBeTruthy()
     expect(data.space.id).toBeTruthy()
-    expect(data.space.name).toBe('盈韵')
+    expect(data.space.name).toBe('测试用户')
     createdUserId = data.user.id
   })
 
   it('POST /api/users rejects duplicate username', async () => {
     const res = await api('/api/users', {
       method: 'POST',
-      body: JSON.stringify({ username: 'yingyun', password: 'test456', displayName: '盈韵2' }),
+      body: JSON.stringify({ username: 'testuser', password: 'test456', displayName: '测试用户2' }),
     })
     expect(res.status).toBe(409)
   })
@@ -324,7 +324,7 @@ describe('User Management (admin)', () => {
     expect(Array.isArray(data.users)).toBe(true)
     const usernames = data.users.map((u: any) => u.username)
     expect(usernames).toContain('bobi')
-    expect(usernames).toContain('yingyun')
+    expect(usernames).toContain('testuser')
   })
 
   it('GET /api/users never exposes password_hash', async () => {
@@ -340,11 +340,11 @@ describe('User Management (admin)', () => {
     const res = await api(`/api/users/${createdUserId}`)
     expect(res.status).toBe(200)
     const data = await res.json() as any
-    expect(data.user.username).toBe('yingyun')
-    expect(data.user.displayName).toBe('盈韵')
+    expect(data.user.username).toBe('testuser')
+    expect(data.user.displayName).toBe('测试用户')
     expect(Array.isArray(data.user.spaces)).toBe(true)
     expect(data.user.spaces.length).toBeGreaterThanOrEqual(1)
-    expect(data.user.spaces[0].name).toBe('盈韵')
+    expect(data.user.spaces[0].name).toBe('测试用户')
   })
 
   it('GET /api/users/:id returns 404 for non-existent user', async () => {
@@ -397,20 +397,20 @@ describe('User Management (admin)', () => {
   it('login with new password works after reset', async () => {
     const res = await api('/api/login', {
       method: 'POST',
-      body: JSON.stringify({ username: 'yingyun', password: 'newpass789' }),
+      body: JSON.stringify({ username: 'testuser', password: 'newpass789' }),
     })
     expect(res.status).toBe(200)
     const data = await res.json() as any
-    expect(data.user.username).toBe('yingyun')
+    expect(data.user.username).toBe('testuser')
     expect(data.user.role).toBe('user')
     expect(data.user.spaceIds.length).toBeGreaterThanOrEqual(1)
   })
 
   it('non-admin user cannot access user management', async () => {
-    // Login as yingyun (regular user)
+    // Login as testuser (regular user)
     const loginRes = await api('/api/login', {
       method: 'POST',
-      body: JSON.stringify({ username: 'yingyun', password: 'newpass789' }),
+      body: JSON.stringify({ username: 'testuser', password: 'newpass789' }),
     })
     const loginData = await loginRes.json() as any
     const userToken = loginData.token

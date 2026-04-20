@@ -151,8 +151,8 @@ describe('translatePurchaseRow', () => {
   const fullRow = {
     '采购日期': 46087,
     '入库单号': 'RK-2026-001',
-    '供应商': '马台',
-    '品牌': '桂鑫',
+    '供应商': '供应商A',
+    '品牌': '品牌A',
     '商品名称': '螺纹钢',
     '规格': '25*12',
     '件数': 10,
@@ -160,45 +160,45 @@ describe('translatePurchaseRow', () => {
     '单价(元/吨)': 3650,
     '金额(元)': 85775,
     '付款状态': '已付',
-    '关联项目': '汉浦路项目',
+    '关联项目': '示例项目A',
     '发票状态': '已开票',
   }
 
   it('translates a full purchase row with all fields', () => {
     const result = translatePurchaseRow(fullRow)
     expect(result.content).toContain('2026-03-05')
-    expect(result.content).toContain('示例公司通过马台采购桂鑫牌螺纹钢')
+    expect(result.content).toContain('示例公司通过供应商A采购品牌A牌螺纹钢')
     expect(result.content).toContain('规格Φ25×12m')
     expect(result.content).toContain('入库单号RK-2026-001')
     expect(result.content).toContain('共10件23.5吨')
     expect(result.content).toContain('单价3650元/吨')
     expect(result.content).toContain('金额85775元')
     expect(result.content).toContain('货款已付')
-    expect(result.content).toContain('该批材料供汉浦路项目使用')
+    expect(result.content).toContain('该批材料供示例项目A使用')
   })
 
   it('generates correct tags', () => {
     const result = translatePurchaseRow(fullRow)
     expect(result.tags).toContain('采购')
-    expect(result.tags).toContain('马台')
-    expect(result.tags).toContain('桂鑫')
+    expect(result.tags).toContain('供应商A')
+    expect(result.tags).toContain('品牌A')
     expect(result.tags).toContain('螺纹钢')
     expect(result.tags).toContain('25*12')
-    expect(result.tags).toContain('汉浦路项目')
+    expect(result.tags).toContain('示例项目A')
   })
 
   it('generates meaningful title', () => {
     const result = translatePurchaseRow(fullRow)
     expect(result.title).toContain('采购')
-    expect(result.title).toContain('马台')
+    expect(result.title).toContain('供应商A')
     expect(result.title).toContain('Φ25×12m')
     expect(result.title).toContain('23.5吨')
   })
 
   it('handles minimal row with missing fields', () => {
-    const minRow = { '供应商': '博诺耀', '商品名称': '线材', '吨位': 5 }
+    const minRow = { '供应商': '供应商B', '商品名称': '线材', '吨位': 5 }
     const result = translatePurchaseRow(minRow)
-    expect(result.content).toContain('博诺耀')
+    expect(result.content).toContain('供应商B')
     expect(result.content).toContain('线材')
     expect(result.content).toContain('5吨')
     expect(result.content).not.toContain('undefined')
@@ -213,7 +213,7 @@ describe('translatePurchaseRow', () => {
 
   it('handles custom company name', () => {
     const result = translatePurchaseRow(fullRow, '测试公司')
-    expect(result.content).toContain('测试公司通过马台采购')
+    expect(result.content).toContain('测试公司通过供应商A采购')
   })
 
   it('handles unpaid status', () => {
@@ -228,9 +228,9 @@ describe('translateSalesRow', () => {
   const fullRow = {
     '销售日期': 46090,
     '销售单号': 'XS-2026-088',
-    '供应商': '马台',
-    '客户/项目': '汉浦路项目',
-    '品牌': '桂鑫',
+    '供应商': '供应商A',
+    '客户/项目': '示例项目A',
+    '品牌': '品牌A',
     '商品名称': '螺纹钢',
     '规格': '25*12',
     '件数': 5,
@@ -244,14 +244,14 @@ describe('translateSalesRow', () => {
 
   it('translates a full sales row', () => {
     const result = translateSalesRow(fullRow)
-    expect(result.content).toContain('示例公司向汉浦路项目销售桂鑫牌螺纹钢')
+    expect(result.content).toContain('示例公司向示例项目A销售品牌A牌螺纹钢')
     expect(result.content).toContain('规格Φ25×12m')
     expect(result.content).toContain('共5件11.75吨')
     expect(result.content).toContain('售价3780元/吨')
     expect(result.content).toContain('销售额44415元')
     expect(result.content).toContain('成本3650元/吨')
     expect(result.content).toContain('单笔毛利1527.5元')
-    expect(result.content).toContain('货源来自马台')
+    expect(result.content).toContain('货源来自供应商A')
     expect(result.content).toContain('物流由顺达物流承运')
   })
 
@@ -271,14 +271,14 @@ describe('translateSalesRow', () => {
   it('generates correct tags for sales', () => {
     const result = translateSalesRow(fullRow)
     expect(result.tags).toContain('销售')
-    expect(result.tags).toContain('汉浦路项目')
-    expect(result.tags).toContain('马台')
-    expect(result.tags).toContain('桂鑫')
+    expect(result.tags).toContain('示例项目A')
+    expect(result.tags).toContain('供应商A')
+    expect(result.tags).toContain('品牌A')
   })
 
   it('handles minimal row', () => {
-    const result = translateSalesRow({ '客户/项目': '玉山雅集' })
-    expect(result.content).toContain('玉山雅集')
+    const result = translateSalesRow({ '客户/项目': '示例项目C' })
+    expect(result.content).toContain('示例项目C')
     expect(result.content).not.toContain('undefined')
   })
 })
@@ -288,8 +288,8 @@ describe('translateLogisticsRow', () => {
   const fullRow = {
     '装车日期': 46090,
     '运单号': 'YD-2026-005',
-    '托运公司': '鑫通物流',
-    '目的地/项目': '汉浦路项目',
+    '托运公司': '物流公司A',
+    '目的地/项目': '示例项目A',
     '车牌号': '沪A12345',
     '司机': '张三',
     '吨位': 30,
@@ -301,7 +301,7 @@ describe('translateLogisticsRow', () => {
 
   it('translates a full logistics row', () => {
     const result = translateLogisticsRow(fullRow)
-    expect(result.content).toContain('鑫通物流承运货物至汉浦路项目')
+    expect(result.content).toContain('物流公司A承运货物至示例项目A')
     expect(result.content).toContain('运单号YD-2026-005')
     expect(result.content).toContain('30吨')
     expect(result.content).toContain('司机张三')
@@ -322,8 +322,8 @@ describe('translateLogisticsRow', () => {
   it('generates correct tags', () => {
     const result = translateLogisticsRow(fullRow)
     expect(result.tags).toContain('物流')
-    expect(result.tags).toContain('鑫通物流')
-    expect(result.tags).toContain('汉浦路项目')
+    expect(result.tags).toContain('物流公司A')
+    expect(result.tags).toContain('示例项目A')
     expect(result.tags).toContain('张三')
   })
 })
@@ -335,34 +335,34 @@ describe('translatePaymentRow', () => {
       '日期': 46087,
       '单据号': 'FK-001',
       '类型': '付款',
-      '对象(客户/供应商)': '马台',
+      '对象(客户/供应商)': '供应商A',
       '关联项目': '',
       '金额(元)': 500000,
       '方式': '银行转账',
       '摘要': '2月采购货款',
     }
     const result = translatePaymentRow(row)
-    expect(result.content).toContain('示例公司向马台付款500000元')
+    expect(result.content).toContain('示例公司向供应商A付款500000元')
     expect(result.content).toContain('银行转账')
     expect(result.content).toContain('摘要：2月采购货款')
     expect(result.tags).toContain('付款')
-    expect(result.tags).toContain('马台')
+    expect(result.tags).toContain('供应商A')
   })
 
   it('translates a receipt (收款) row', () => {
     const row = {
       '日期': 46090,
       '类型': '收款',
-      '对象(客户/供应商)': '汉浦路项目',
-      '关联项目': '汉浦路项目',
+      '对象(客户/供应商)': '示例项目A',
+      '关联项目': '示例项目A',
       '金额(元)': 200000,
       '方式': '承兑汇票',
     }
     const result = translatePaymentRow(row)
-    expect(result.content).toContain('示例公司收到汉浦路项目回款200000元')
+    expect(result.content).toContain('示例公司收到示例项目A回款200000元')
     expect(result.content).toContain('承兑汇票')
     expect(result.tags).toContain('收款')
-    expect(result.tags).toContain('汉浦路项目')
+    expect(result.tags).toContain('示例项目A')
   })
 
   it('handles empty row', () => {
@@ -393,30 +393,30 @@ describe('translateGenericRow', () => {
 // ========== translateRow dispatcher ==========
 describe('translateRow', () => {
   it('dispatches to purchase translator', () => {
-    const row = { '供应商': '马台', '吨位': 10 }
+    const row = { '供应商': '供应商A', '吨位': 10 }
     const result = translateRow(row, '采购录入', 'purchase')
-    expect(result.content).toContain('马台')
+    expect(result.content).toContain('供应商A')
     expect(result.metadata._sheetType).toBe('purchase')
   })
 
   it('dispatches to sales translator', () => {
-    const row = { '客户/项目': '汉浦路项目' }
+    const row = { '客户/项目': '示例项目A' }
     const result = translateRow(row, '销售录入', 'sales')
-    expect(result.content).toContain('汉浦路项目')
+    expect(result.content).toContain('示例项目A')
     expect(result.metadata._sheetType).toBe('sales')
   })
 
   it('dispatches to logistics translator', () => {
-    const row = { '托运公司': '鑫通物流' }
+    const row = { '托运公司': '物流公司A' }
     const result = translateRow(row, '物流录入', 'logistics')
-    expect(result.content).toContain('鑫通物流')
+    expect(result.content).toContain('物流公司A')
     expect(result.metadata._sheetType).toBe('logistics')
   })
 
   it('dispatches to payment translator', () => {
-    const row = { '类型': '付款', '对象(客户/供应商)': '马台', '金额(元)': 10000 }
+    const row = { '类型': '付款', '对象(客户/供应商)': '供应商A', '金额(元)': 10000 }
     const result = translateRow(row, '收付款', 'payment')
-    expect(result.content).toContain('马台')
+    expect(result.content).toContain('供应商A')
     expect(result.metadata._sheetType).toBe('payment')
   })
 
@@ -431,8 +431,8 @@ describe('translateRow', () => {
 describe('generateSupplierCard', () => {
   it('generates supplier card with full info', () => {
     const row = {
-      '供应商名称': '马台',
-      '经销品牌': '桂鑫',
+      '供应商名称': '供应商A',
+      '经销品牌': '品牌A',
       '提货地址': '吴淞江仓库',
       '联系人': '李总',
       '联系电话': '138-0000-0001',
@@ -441,9 +441,9 @@ describe('generateSupplierCard', () => {
     }
     const card = generateSupplierCard(row)
     expect(card).not.toBeNull()
-    expect(card!.title).toBe('供应商: 马台')
-    expect(card!.content).toContain('马台是示例公司的钢材供应商')
-    expect(card!.content).toContain('经销桂鑫品牌')
+    expect(card!.title).toBe('供应商: 供应商A')
+    expect(card!.content).toContain('供应商A是示例公司的钢材供应商')
+    expect(card!.content).toContain('经销品牌A品牌')
     expect(card!.content).toContain('提货地点在吴淞江仓库')
     expect(card!.content).toContain('联系人李总')
     expect(card!.content).toContain('138-0000-0001')
@@ -452,15 +452,15 @@ describe('generateSupplierCard', () => {
     expect(card!.pinned).toBe(true)
     expect(card!.abstractionLevel).toBe(1)
     expect(card!.tags).toContain('供应商')
-    expect(card!.tags).toContain('马台')
-    expect(card!.tags).toContain('桂鑫')
+    expect(card!.tags).toContain('供应商A')
+    expect(card!.tags).toContain('品牌A')
   })
 
   it('handles supplier with multiple brands', () => {
-    const row = { '供应商名称': '筑岳', '经销品牌': '桂鑫、中新' }
+    const row = { '供应商名称': '供应商C', '经销品牌': '品牌A、品牌B' }
     const card = generateSupplierCard(row)
-    expect(card!.tags).toContain('桂鑫')
-    expect(card!.tags).toContain('中新')
+    expect(card!.tags).toContain('品牌A')
+    expect(card!.tags).toContain('品牌B')
   })
 
   it('detects overpayment', () => {
@@ -483,9 +483,9 @@ describe('generateSupplierCard', () => {
 describe('generateCustomerCard', () => {
   it('generates customer/project card with full info', () => {
     const row = {
-      '项目名称': '汉浦路项目',
+      '项目名称': '示例项目A',
       '合同编号': 'HT-2026-001',
-      '工程地址': '上海市嘉定区汉浦路',
+      '工程地址': '示例市示例区示例路',
       '施工单位': '万路建设',
       '建设单位': '嘉定城投',
       '联系人': '王工',
@@ -497,10 +497,10 @@ describe('generateCustomerCard', () => {
     }
     const card = generateCustomerCard(row)
     expect(card).not.toBeNull()
-    expect(card!.title).toBe('项目: 汉浦路项目')
-    expect(card!.content).toContain('汉浦路项目是示例公司的销售项目')
+    expect(card!.title).toBe('项目: 示例项目A')
+    expect(card!.content).toContain('示例项目A是示例公司的销售项目')
     expect(card!.content).toContain('当前状态：在建')
-    expect(card!.content).toContain('上海市嘉定区汉浦路')
+    expect(card!.content).toContain('示例市示例区示例路')
     expect(card!.content).toContain('施工单位：万路建设')
     expect(card!.content).toContain('建设单位：嘉定城投')
     expect(card!.content).toContain('联系人王工')
@@ -509,7 +509,7 @@ describe('generateCustomerCard', () => {
     expect(card!.content).toContain('已回款200.0万元')
     expect(card!.pinned).toBe(true)
     expect(card!.tags).toContain('项目')
-    expect(card!.tags).toContain('汉浦路项目')
+    expect(card!.tags).toContain('示例项目A')
     expect(card!.tags).toContain('万路建设')
   })
 
@@ -522,7 +522,7 @@ describe('generateProductCard', () => {
   it('generates product card with full info', () => {
     const row = {
       '商品代码': 'GX-LW-25-12',
-      '品牌': '桂鑫',
+      '品牌': '品牌A',
       '商品名称': '螺纹钢',
       '规格': '25*12',
       '规格(调整格式)': 'Φ25×12m',
@@ -534,7 +534,7 @@ describe('generateProductCard', () => {
     }
     const card = generateProductCard(row)
     expect(card).not.toBeNull()
-    expect(card!.content).toContain('桂鑫螺纹钢 Φ25×12m')
+    expect(card!.content).toContain('品牌A螺纹钢 Φ25×12m')
     expect(card!.content).toContain('热轧')
     expect(card!.content).toContain('商品代码GX-LW-25-12')
     expect(card!.content).toContain('过磅计量')
@@ -543,7 +543,7 @@ describe('generateProductCard', () => {
     expect(card!.content).toContain('吊费标准30元/吨')
     expect(card!.pinned).toBe(false) // Products are not pinned
     expect(card!.tags).toContain('产品')
-    expect(card!.tags).toContain('桂鑫')
+    expect(card!.tags).toContain('品牌A')
   })
 
   it('returns null for empty row', () => {
@@ -554,23 +554,23 @@ describe('generateProductCard', () => {
 describe('generateLogisticsInfoCard', () => {
   it('generates logistics info card', () => {
     const row = {
-      '托运公司': '鑫通物流',
-      '常送目的地': '汉浦路项目',
+      '托运公司': '物流公司A',
+      '常送目的地': '示例项目A',
       '车牌号': '沪A12345',
       '司机': '张三',
       '司机电话': '137-0000-0003',
     }
     const card = generateLogisticsInfoCard(row)
     expect(card).not.toBeNull()
-    expect(card!.title).toBe('物流: 鑫通物流')
-    expect(card!.content).toContain('鑫通物流是示例公司使用的物流运输方')
-    expect(card!.content).toContain('常送目的地：汉浦路项目')
+    expect(card!.title).toBe('物流: 物流公司A')
+    expect(card!.content).toContain('物流公司A是示例公司使用的物流运输方')
+    expect(card!.content).toContain('常送目的地：示例项目A')
     expect(card!.content).toContain('司机张三')
     expect(card!.content).toContain('137-0000-0003')
     expect(card!.content).toContain('车牌沪A12345')
     expect(card!.pinned).toBe(true)
     expect(card!.tags).toContain('物流')
-    expect(card!.tags).toContain('鑫通物流')
+    expect(card!.tags).toContain('物流公司A')
   })
 
   it('handles card with only plate (no driver)', () => {
@@ -587,46 +587,46 @@ describe('generateLogisticsInfoCard', () => {
 describe('generateKnowledgeCards', () => {
   it('generates multiple supplier cards', () => {
     const rows = [
-      { '供应商名称': '马台', '经销品牌': '桂鑫' },
-      { '供应商名称': '博诺耀', '经销品牌': '中新' },
+      { '供应商名称': '供应商A', '经销品牌': '品牌A' },
+      { '供应商名称': '供应商B', '经销品牌': '品牌B' },
       {},  // Should be skipped
     ]
     const cards = generateKnowledgeCards(rows, 'supplier_info')
     expect(cards).toHaveLength(2)
-    expect(cards[0].title).toBe('供应商: 马台')
-    expect(cards[1].title).toBe('供应商: 博诺耀')
+    expect(cards[0].title).toBe('供应商: 供应商A')
+    expect(cards[1].title).toBe('供应商: 供应商B')
   })
 
   it('generates customer cards', () => {
-    const rows = [{ '项目名称': '玉山雅集' }]
+    const rows = [{ '项目名称': '示例项目C' }]
     const cards = generateKnowledgeCards(rows, 'customer_info')
     expect(cards).toHaveLength(1)
-    expect(cards[0].title).toBe('项目: 玉山雅集')
+    expect(cards[0].title).toBe('项目: 示例项目C')
   })
 })
 
 // ========== Pre-computed Aggregations ==========
 describe('computePurchaseAggregations', () => {
   const purchaseRows = [
-    { '供应商': '马台', '关联项目': '汉浦路项目', '吨位': 23.5, '金额(元)': 85775, '规格': '25*12' },
-    { '供应商': '马台', '关联项目': '汉浦路项目', '吨位': 15.0, '金额(元)': 54750, '规格': '22*12' },
-    { '供应商': '马台', '关联项目': '玉山雅集', '吨位': 10.0, '金额(元)': 36500, '规格': '25*12' },
-    { '供应商': '博诺耀', '关联项目': '汉浦路项目', '吨位': 20.0, '金额(元)': 73000, '规格': '25*9' },
-    { '供应商': '博诺耀', '关联项目': '玉山雅集', '吨位': 8.0, '金额(元)': 29200, '规格': '6mm' },
+    { '供应商': '供应商A', '关联项目': '示例项目A', '吨位': 23.5, '金额(元)': 85775, '规格': '25*12' },
+    { '供应商': '供应商A', '关联项目': '示例项目A', '吨位': 15.0, '金额(元)': 54750, '规格': '22*12' },
+    { '供应商': '供应商A', '关联项目': '示例项目C', '吨位': 10.0, '金额(元)': 36500, '规格': '25*12' },
+    { '供应商': '供应商B', '关联项目': '示例项目A', '吨位': 20.0, '金额(元)': 73000, '规格': '25*9' },
+    { '供应商': '供应商B', '关联项目': '示例项目C', '吨位': 8.0, '金额(元)': 29200, '规格': '6mm' },
   ]
 
   it('aggregates by supplier', () => {
     const results = computePurchaseAggregations(purchaseRows)
-    const matai = results.find(r => r.title === '采购汇总: 马台')
+    const matai = results.find(r => r.title === '采购汇总: 供应商A')
     expect(matai).toBeDefined()
     expect(matai!.content).toContain('3笔')
     expect(matai!.content).toContain('48.5吨')
     expect(matai!.content).toContain('177025元')
     expect(matai!.abstractionLevel).toBe(1)
     expect(matai!.tags).toContain('采购汇总')
-    expect(matai!.tags).toContain('马台')
+    expect(matai!.tags).toContain('供应商A')
 
-    const bny = results.find(r => r.title === '采购汇总: 博诺耀')
+    const bny = results.find(r => r.title === '采购汇总: 供应商B')
     expect(bny).toBeDefined()
     expect(bny!.content).toContain('2笔')
     expect(bny!.content).toContain('28.0吨')
@@ -634,11 +634,11 @@ describe('computePurchaseAggregations', () => {
 
   it('aggregates by project', () => {
     const results = computePurchaseAggregations(purchaseRows)
-    const hanpu = results.find(r => r.title === '项目采购汇总: 汉浦路项目')
+    const hanpu = results.find(r => r.title === '项目采购汇总: 示例项目A')
     expect(hanpu).toBeDefined()
     expect(hanpu!.content).toContain('3笔')
     expect(hanpu!.content).toContain('58.5吨')
-    expect(hanpu!.content).toContain('供应商：马台、博诺耀')
+    expect(hanpu!.content).toContain('供应商：供应商A、供应商B')
   })
 
   it('returns empty for empty input', () => {
@@ -648,14 +648,14 @@ describe('computePurchaseAggregations', () => {
 
 describe('computeSalesAggregations', () => {
   const salesRows = [
-    { '客户/项目': '汉浦路项目', '吨位': 11.75, '销售金额': 44415, '单笔毛利': 1527.5 },
-    { '客户/项目': '汉浦路项目', '吨位': 8.0, '销售金额': 30240, '单笔毛利': 1040 },
-    { '客户/项目': '玉山雅集', '吨位': 5.0, '销售金额': 18900, '单笔毛利': 650 },
+    { '客户/项目': '示例项目A', '吨位': 11.75, '销售金额': 44415, '单笔毛利': 1527.5 },
+    { '客户/项目': '示例项目A', '吨位': 8.0, '销售金额': 30240, '单笔毛利': 1040 },
+    { '客户/项目': '示例项目C', '吨位': 5.0, '销售金额': 18900, '单笔毛利': 650 },
   ]
 
   it('aggregates by customer/project', () => {
     const results = computeSalesAggregations(salesRows)
-    const hanpu = results.find(r => r.title === '销售汇总: 汉浦路项目')
+    const hanpu = results.find(r => r.title === '销售汇总: 示例项目A')
     expect(hanpu).toBeDefined()
     expect(hanpu!.content).toContain('2笔')
     expect(hanpu!.content).toContain('19.8吨')
@@ -708,7 +708,7 @@ describe('edge cases', () => {
   })
 
   it('handles rows with numeric strings', () => {
-    const row = { '供应商': '马台', '吨位': '23.5', '单价(元/吨)': '3650' }
+    const row = { '供应商': '供应商A', '吨位': '23.5', '单价(元/吨)': '3650' }
     const result = translatePurchaseRow(row)
     expect(result.content).toContain('23.5吨')
     expect(result.content).toContain('单价3650元/吨')
@@ -716,9 +716,9 @@ describe('edge cases', () => {
 
   it('deduplicates tags', () => {
     // If supplier and brand are the same
-    const row = { '供应商': '桂鑫', '品牌': '桂鑫', '商品名称': '螺纹钢' }
+    const row = { '供应商': '品牌A', '品牌': '品牌A', '商品名称': '螺纹钢' }
     const result = translatePurchaseRow(row)
-    const guixin = result.tags.filter(t => t === '桂鑫')
+    const guixin = result.tags.filter(t => t === '品牌A')
     expect(guixin).toHaveLength(1) // No duplicates
   })
 

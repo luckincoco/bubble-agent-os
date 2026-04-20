@@ -3,10 +3,10 @@
  * Zero LLM calls — pure regex matching.
  *
  * Detects patterns like:
- *   "泡泡记住：桂鑫没有盘螺产品"
- *   "泡泡注意：汉浦路项目回款一直拖延"
- *   "泡泡更新：马台联系人换成张总"
- *   "泡泡忘记：桂鑫没有盘螺"
+ *   "泡泡记住：品牌A没有盘螺产品"
+ *   "泡泡注意：示例项目A回款一直拖延"
+ *   "泡泡更新：供应商A联系人换成张总"
+ *   "泡泡忘记：品牌A没有盘螺"
  */
 
 export type TeachAction = 'remember' | 'note' | 'update' | 'forget'

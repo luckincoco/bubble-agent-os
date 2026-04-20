@@ -43,5 +43,5 @@ priority: 10
 | quantity | 数量 | 50吨 |
 | price | 单价 | 3850元/吨 |
 | supplier | 供应商 | 示例公司 |
-| project | 关联项目 | 滨江一号 |
+| project | 关联项目 | 示例项目B |
 | date | 日期 | 2026-03-24 |

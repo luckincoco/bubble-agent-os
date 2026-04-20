@@ -8,26 +8,26 @@ import { detectTeachIntent, type TeachAction } from '../src/connector/teach/dete
 describe('detectTeachIntent', () => {
   // ── Remember action ─────────────────────────────────────
   it('detects "泡泡记住：" with Chinese colon', () => {
-    const r = detectTeachIntent('泡泡记住：桂鑫没有盘螺产品')
+    const r = detectTeachIntent('泡泡记住：品牌A没有盘螺产品')
     expect(r.detected).toBe(true)
     expect(r.action).toBe('remember')
-    expect(r.bodyText).toBe('桂鑫没有盘螺产品')
+    expect(r.bodyText).toBe('品牌A没有盘螺产品')
   })
 
   it('detects "泡泡记住:" with English colon', () => {
-    const r = detectTeachIntent('泡泡记住:桂鑫没有盘螺产品')
+    const r = detectTeachIntent('泡泡记住:品牌A没有盘螺产品')
     expect(r.detected).toBe(true)
     expect(r.action).toBe('remember')
   })
 
   it('detects "泡泡记下：" as remember', () => {
-    const r = detectTeachIntent('泡泡记下：马台联系人是张三')
+    const r = detectTeachIntent('泡泡记下：供应商A联系人是张三')
     expect(r.detected).toBe(true)
     expect(r.action).toBe('remember')
   })
 
   it('detects "泡泡学习：" as remember', () => {
-    const r = detectTeachIntent('泡泡学习：汉浦路项目需要特别注意回款')
+    const r = detectTeachIntent('泡泡学习：示例项目A需要特别注意回款')
     expect(r.detected).toBe(true)
     expect(r.action).toBe('remember')
   })
@@ -40,10 +40,10 @@ describe('detectTeachIntent', () => {
 
   // ── Note action ─────────────────────────────────────────
   it('detects "泡泡注意：" as note', () => {
-    const r = detectTeachIntent('泡泡注意：汉浦路项目回款一直拖延')
+    const r = detectTeachIntent('泡泡注意：示例项目A回款一直拖延')
     expect(r.detected).toBe(true)
     expect(r.action).toBe('note')
-    expect(r.bodyText).toBe('汉浦路项目回款一直拖延')
+    expect(r.bodyText).toBe('示例项目A回款一直拖延')
   })
 
   it('detects "泡泡留意：" as note', () => {
@@ -60,14 +60,14 @@ describe('detectTeachIntent', () => {
 
   // ── Update action ───────────────────────────────────────
   it('detects "泡泡更新：" as update', () => {
-    const r = detectTeachIntent('泡泡更新：马台联系人换成张总了')
+    const r = detectTeachIntent('泡泡更新：供应商A联系人换成张总了')
     expect(r.detected).toBe(true)
     expect(r.action).toBe('update')
-    expect(r.bodyText).toBe('马台联系人换成张总了')
+    expect(r.bodyText).toBe('供应商A联系人换成张总了')
   })
 
   it('detects "泡泡修改：" as update', () => {
-    const r = detectTeachIntent('泡泡修改：桂鑫的电话变更为13800138000')
+    const r = detectTeachIntent('泡泡修改：品牌A的电话变更为13800138000')
     expect(r.detected).toBe(true)
     expect(r.action).toBe('update')
   })
@@ -79,17 +79,17 @@ describe('detectTeachIntent', () => {
   })
 
   it('detects "泡泡纠正：" as update', () => {
-    const r = detectTeachIntent('泡泡纠正：桂鑫其实有盘螺产品了')
+    const r = detectTeachIntent('泡泡纠正：品牌A其实有盘螺产品了')
     expect(r.detected).toBe(true)
     expect(r.action).toBe('update')
   })
 
   // ── Forget action ───────────────────────────────────────
   it('detects "泡泡忘记：" as forget', () => {
-    const r = detectTeachIntent('泡泡忘记：桂鑫没有盘螺这个事')
+    const r = detectTeachIntent('泡泡忘记：品牌A没有盘螺这个事')
     expect(r.detected).toBe(true)
     expect(r.action).toBe('forget')
-    expect(r.bodyText).toBe('桂鑫没有盘螺这个事')
+    expect(r.bodyText).toBe('品牌A没有盘螺这个事')
   })
 
   it('detects "泡泡忘掉：" as forget', () => {
@@ -99,7 +99,7 @@ describe('detectTeachIntent', () => {
   })
 
   it('detects "泡泡删除：" as forget', () => {
-    const r = detectTeachIntent('泡泡删除：关于马台的旧联系人信息')
+    const r = detectTeachIntent('泡泡删除：关于供应商A的旧联系人信息')
     expect(r.detected).toBe(true)
     expect(r.action).toBe('forget')
   })
@@ -118,21 +118,21 @@ describe('detectTeachIntent', () => {
 
   // ── Whitespace tolerance ────────────────────────────────
   it('handles spaces between 泡泡 and verb', () => {
-    const r = detectTeachIntent('泡泡 记住：桂鑫没有盘螺产品')
+    const r = detectTeachIntent('泡泡 记住：品牌A没有盘螺产品')
     expect(r.detected).toBe(true)
     expect(r.action).toBe('remember')
   })
 
   it('handles spaces between verb and colon', () => {
-    const r = detectTeachIntent('泡泡记住 ：桂鑫没有盘螺产品')
+    const r = detectTeachIntent('泡泡记住 ：品牌A没有盘螺产品')
     expect(r.detected).toBe(true)
     expect(r.action).toBe('remember')
   })
 
   it('handles leading/trailing whitespace', () => {
-    const r = detectTeachIntent('  泡泡记住：桂鑫没有盘螺产品  ')
+    const r = detectTeachIntent('  泡泡记住：品牌A没有盘螺产品  ')
     expect(r.detected).toBe(true)
-    expect(r.bodyText).toBe('桂鑫没有盘螺产品')
+    expect(r.bodyText).toBe('品牌A没有盘螺产品')
   })
 
   // ── Rejection cases ─────────────────────────────────────
@@ -150,7 +150,7 @@ describe('detectTeachIntent', () => {
   })
 
   it('rejects text without 泡泡', () => {
-    expect(detectTeachIntent('记住：桂鑫没有盘螺产品').detected).toBe(false)
+    expect(detectTeachIntent('记住：品牌A没有盘螺产品').detected).toBe(false)
   })
 
   it('rejects text with 泡泡 but no action verb', () => {
@@ -158,7 +158,7 @@ describe('detectTeachIntent', () => {
   })
 
   it('rejects text with 泡泡 and verb but no colon', () => {
-    expect(detectTeachIntent('泡泡记住桂鑫没有盘螺产品').detected).toBe(false)
+    expect(detectTeachIntent('泡泡记住品牌A没有盘螺产品').detected).toBe(false)
   })
 
   it('rejects when body text is too short (< 4 chars)', () => {
@@ -201,43 +201,43 @@ function createMockLLM(responseContent: string): LLMProvider {
 describe('TeachParser', () => {
   it('parses a complete supplier knowledge record', async () => {
     const llm = createMockLLM(JSON.stringify({
-      entityName: '桂鑫',
+      entityName: '品牌A',
       entityType: 'supplier',
       attribute: '产品线',
       value: '无盘螺',
-      factText: '桂鑫没有盘螺产品',
-      tags: ['桂鑫', '盘螺', '产品线'],
+      factText: '品牌A没有盘螺产品',
+      tags: ['品牌A', '盘螺', '产品线'],
     }))
 
     const parser = new TeachParser(llm)
-    const record = await parser.parse('桂鑫没有盘螺产品', 'remember', '泡泡记住：桂鑫没有盘螺产品')
+    const record = await parser.parse('品牌A没有盘螺产品', 'remember', '泡泡记住：品牌A没有盘螺产品')
 
     expect(record).not.toBeNull()
-    expect(record!.entityName).toBe('桂鑫')
+    expect(record!.entityName).toBe('品牌A')
     expect(record!.entityType).toBe('supplier')
     expect(record!.attribute).toBe('产品线')
     expect(record!.value).toBe('无盘螺')
-    expect(record!.factText).toBe('桂鑫没有盘螺产品')
+    expect(record!.factText).toBe('品牌A没有盘螺产品')
     expect(record!.action).toBe('remember')
-    expect(record!.tags).toContain('桂鑫')
-    expect(record!.rawInput).toBe('泡泡记住：桂鑫没有盘螺产品')
+    expect(record!.tags).toContain('品牌A')
+    expect(record!.rawInput).toBe('泡泡记住：品牌A没有盘螺产品')
   })
 
   it('parses record from markdown code block response', async () => {
     const llm = createMockLLM('```json\n' + JSON.stringify({
-      entityName: '马台',
+      entityName: '供应商A',
       entityType: 'customer',
       attribute: '联系人',
       value: '张总',
-      factText: '马台的联系人是张总',
-      tags: ['马台', '联系人'],
+      factText: '供应商A的联系人是张总',
+      tags: ['供应商A', '联系人'],
     }) + '\n```')
 
     const parser = new TeachParser(llm)
-    const record = await parser.parse('马台联系人是张总', 'remember', '泡泡记住：马台联系人是张总')
+    const record = await parser.parse('供应商A联系人是张总', 'remember', '泡泡记住：供应商A联系人是张总')
 
     expect(record).not.toBeNull()
-    expect(record!.entityName).toBe('马台')
+    expect(record!.entityName).toBe('供应商A')
     expect(record!.entityType).toBe('customer')
   })
 
@@ -271,13 +271,13 @@ describe('TeachParser', () => {
 
   it('returns null if factText is missing', async () => {
     const llm = createMockLLM(JSON.stringify({
-      entityName: '桂鑫',
+      entityName: '品牌A',
       entityType: 'supplier',
-      tags: ['桂鑫'],
+      tags: ['品牌A'],
     }))
 
     const parser = new TeachParser(llm)
-    const record = await parser.parse('桂鑫相关信息', 'remember', '泡泡记住：桂鑫相关信息')
+    const record = await parser.parse('品牌A相关信息', 'remember', '泡泡记住：品牌A相关信息')
 
     expect(record).toBeNull()
   })
@@ -306,14 +306,14 @@ describe('TeachParser', () => {
 
   it('preserves action from input', async () => {
     const llm = createMockLLM(JSON.stringify({
-      entityName: '桂鑫',
+      entityName: '品牌A',
       entityType: 'supplier',
-      factText: '桂鑫的信息需要更新',
-      tags: ['桂鑫'],
+      factText: '品牌A的信息需要更新',
+      tags: ['品牌A'],
     }))
 
     const parser = new TeachParser(llm)
-    const record = await parser.parse('桂鑫的信息需要更新', 'update', '泡泡更新：桂鑫的信息需要更新')
+    const record = await parser.parse('品牌A的信息需要更新', 'update', '泡泡更新：品牌A的信息需要更新')
 
     expect(record).not.toBeNull()
     expect(record!.action).toBe('update')
@@ -321,14 +321,14 @@ describe('TeachParser', () => {
 
   it('handles tags as non-array gracefully', async () => {
     const llm = createMockLLM(JSON.stringify({
-      entityName: '桂鑫',
+      entityName: '品牌A',
       entityType: 'supplier',
-      factText: '桂鑫信息',
+      factText: '品牌A信息',
       tags: 'not_an_array',
     }))
 
     const parser = new TeachParser(llm)
-    const record = await parser.parse('桂鑫信息', 'remember', '泡泡记住：桂鑫信息')
+    const record = await parser.parse('品牌A信息', 'remember', '泡泡记住：品牌A信息')
 
     expect(record).not.toBeNull()
     expect(record!.tags).toEqual([])
@@ -336,17 +336,17 @@ describe('TeachParser', () => {
 
   it('filters non-string entries from tags', async () => {
     const llm = createMockLLM(JSON.stringify({
-      entityName: '桂鑫',
+      entityName: '品牌A',
       entityType: 'supplier',
-      factText: '桂鑫信息',
-      tags: ['桂鑫', 123, null, '盘螺'],
+      factText: '品牌A信息',
+      tags: ['品牌A', 123, null, '盘螺'],
     }))
 
     const parser = new TeachParser(llm)
-    const record = await parser.parse('桂鑫信息', 'remember', '泡泡记住：桂鑫信息')
+    const record = await parser.parse('品牌A信息', 'remember', '泡泡记住：品牌A信息')
 
     expect(record).not.toBeNull()
-    expect(record!.tags).toEqual(['桂鑫', '盘螺'])
+    expect(record!.tags).toEqual(['品牌A', '盘螺'])
   })
 
   it('accepts all valid entityTypes', async () => {
@@ -412,13 +412,13 @@ describe('TeachStore', () => {
 
   const baseRecord: TeachRecord = {
     action: 'remember',
-    entityName: '桂鑫',
+    entityName: '品牌A',
     entityType: 'supplier',
     attribute: '产品线',
     value: '无盘螺',
-    factText: '桂鑫没有盘螺产品',
-    tags: ['桂鑫', '盘螺'],
-    rawInput: '泡泡记住：桂鑫没有盘螺产品',
+    factText: '品牌A没有盘螺产品',
+    tags: ['品牌A', '盘螺'],
+    rawInput: '泡泡记住：品牌A没有盘螺产品',
   }
 
   it('creates a pinned entity bubble for remember action', async () => {
@@ -429,7 +429,7 @@ describe('TeachStore', () => {
     expect(result.action).toBe('remember')
     expect(result.expired).toEqual([])
     expect(result.confirmation).toContain('已记住')
-    expect(result.confirmation).toContain('桂鑫没有盘螺产品')
+    expect(result.confirmation).toContain('品牌A没有盘螺产品')
 
     expect(mockedCreateBubble).toHaveBeenCalledOnce()
     const call = mockedCreateBubble.mock.calls[0][0]
@@ -439,12 +439,12 @@ describe('TeachStore', () => {
     expect(call.abstractionLevel).toBe(1)
     expect(call.source).toBe('teach')
     expect(call.confidence).toBe(1.0)
-    expect(call.content).toBe('桂鑫没有盘螺产品')
-    expect(call.title).toBe('知识: 桂鑫 - 产品线')
+    expect(call.content).toBe('品牌A没有盘螺产品')
+    expect(call.title).toBe('知识: 品牌A - 产品线')
     expect(call.tags).toContain('知识')
     expect(call.tags).toContain('教学')
     expect(call.tags).toContain('供应商')
-    expect(call.tags).toContain('桂鑫')
+    expect(call.tags).toContain('品牌A')
     expect((call.metadata as Record<string, unknown>).source).toBe('teach')
   })
 
@@ -454,7 +454,7 @@ describe('TeachStore', () => {
     await store.store(recordNoAttr)
 
     const call = mockedCreateBubble.mock.calls[0][0]
-    expect(call.title).toBe('知识: 桂鑫')
+    expect(call.title).toBe('知识: 品牌A')
   })
 
   it('returns "已标记注意" confirmation for note action', async () => {
@@ -478,10 +478,10 @@ describe('TeachStore', () => {
       {
         id: 'old-bubble-1',
         type: 'entity',
-        title: '知识: 桂鑫 - 产品线',
+        title: '知识: 品牌A - 产品线',
         content: '旧的知识',
         metadata: { source: 'teach', attribute: '产品线' },
-        tags: ['桂鑫', '知识'],
+        tags: ['品牌A', '知识'],
         links: [],
         source: 'teach',
         confidence: 1.0,
@@ -507,10 +507,10 @@ describe('TeachStore', () => {
       {
         id: 'old-1',
         type: 'entity',
-        title: '知识: 桂鑫',
+        title: '知识: 品牌A',
         content: '旧知识',
         metadata: { source: 'teach', attribute: '产品线' },
-        tags: ['桂鑫'],
+        tags: ['品牌A'],
         links: [],
         source: 'teach',
         confidence: 1.0,
@@ -536,10 +536,10 @@ describe('TeachStore', () => {
       {
         id: 'memory-bubble',
         type: 'memory',  // not entity
-        title: '桂鑫相关记忆',
+        title: '品牌A相关记忆',
         content: '...',
         metadata: { source: 'teach' },
-        tags: ['桂鑫'],
+        tags: ['品牌A'],
         links: [],
         source: 'teach',
         confidence: 1.0,
@@ -563,10 +563,10 @@ describe('TeachStore', () => {
       {
         id: 'unpinned-bubble',
         type: 'entity',
-        title: '知识: 桂鑫',
+        title: '知识: 品牌A',
         content: '...',
         metadata: { source: 'teach' },
-        tags: ['桂鑫'],
+        tags: ['品牌A'],
         links: [],
         source: 'teach',
         confidence: 1.0,
@@ -590,10 +590,10 @@ describe('TeachStore', () => {
       {
         id: 'other-source-bubble',
         type: 'entity',
-        title: '桂鑫',
+        title: '品牌A',
         content: '...',
         metadata: { source: 'excel-import' },  // not teach
-        tags: ['桂鑫'],
+        tags: ['品牌A'],
         links: [],
         source: 'excel-import',
         confidence: 1.0,
@@ -618,10 +618,10 @@ describe('TeachStore', () => {
       {
         id: 'to-forget-1',
         type: 'entity',
-        title: '知识: 桂鑫',
-        content: '桂鑫没有盘螺产品',
+        title: '知识: 品牌A',
+        content: '品牌A没有盘螺产品',
         metadata: { source: 'teach' },
-        tags: ['桂鑫'],
+        tags: ['品牌A'],
         links: [],
         source: 'teach',
         confidence: 1.0,
@@ -646,7 +646,7 @@ describe('TeachStore', () => {
     expect(result.expired).toEqual(['to-forget-1'])
     expect(result.bubbleId).toBe('')
     expect(result.confirmation).toContain('已遗忘')
-    expect(result.confirmation).toContain('桂鑫')
+    expect(result.confirmation).toContain('品牌A')
     expect(result.confirmation).toContain('1 条知识')
 
     expect(mockedUpdateBubble).toHaveBeenCalledWith('to-forget-1', { pinned: false, decayRate: 0.5 })
@@ -665,14 +665,14 @@ describe('TeachStore', () => {
 
     expect(result.expired).toEqual([])
     expect(result.confirmation).toContain('没有找到')
-    expect(result.confirmation).toContain('桂鑫')
+    expect(result.confirmation).toContain('品牌A')
   })
 
   it('passes spaceId to searchBubbles and createBubble', async () => {
     const store = new TeachStore()
     await store.store(baseRecord, 'space-123')
 
-    expect(mockedSearchBubbles).toHaveBeenCalledWith('桂鑫', 20, ['space-123'])
+    expect(mockedSearchBubbles).toHaveBeenCalledWith('品牌A', 20, ['space-123'])
 
     const createCall = mockedCreateBubble.mock.calls[0][0]
     expect(createCall.spaceId).toBe('space-123')
@@ -682,7 +682,7 @@ describe('TeachStore', () => {
     const store = new TeachStore()
     const recordDupTags: TeachRecord = {
       ...baseRecord,
-      tags: ['桂鑫', '知识', '供应商', '桂鑫'], // 桂鑫 appears twice
+      tags: ['品牌A', '知识', '供应商', '品牌A'], // 品牌A appears twice
     }
     await store.store(recordDupTags)
 
@@ -717,23 +717,23 @@ describe('TeachHandler', () => {
     // LLM returns something that can't be parsed into a valid record
     const llm = createMockLLM('我不理解')
     const handler = new TeachHandler(llm)
-    const result = await handler.tryHandle('泡泡记住：桂鑫没有盘螺产品')
+    const result = await handler.tryHandle('泡泡记住：品牌A没有盘螺产品')
 
     expect(result.handled).toBe(false)
   })
 
   it('handles successful remember flow end-to-end', async () => {
     const llm = createMockLLM(JSON.stringify({
-      entityName: '桂鑫',
+      entityName: '品牌A',
       entityType: 'supplier',
       attribute: '产品线',
       value: '无盘螺',
-      factText: '桂鑫没有盘螺产品',
-      tags: ['桂鑫', '盘螺'],
+      factText: '品牌A没有盘螺产品',
+      tags: ['品牌A', '盘螺'],
     }))
 
     const handler = new TeachHandler(llm)
-    const result = await handler.tryHandle('泡泡记住：桂鑫没有盘螺产品')
+    const result = await handler.tryHandle('泡泡记住：品牌A没有盘螺产品')
 
     expect(result.handled).toBe(true)
     expect(result.response).toContain('已记住')
@@ -745,10 +745,10 @@ describe('TeachHandler', () => {
       {
         id: 'to-forget',
         type: 'entity',
-        title: '知识: 桂鑫',
-        content: '桂鑫没有盘螺产品',
+        title: '知识: 品牌A',
+        content: '品牌A没有盘螺产品',
         metadata: { source: 'teach' },
-        tags: ['桂鑫'],
+        tags: ['品牌A'],
         links: [],
         source: 'teach',
         confidence: 1.0,
@@ -762,14 +762,14 @@ describe('TeachHandler', () => {
     ] as any)
 
     const llm = createMockLLM(JSON.stringify({
-      entityName: '桂鑫',
+      entityName: '品牌A',
       entityType: 'supplier',
-      factText: '桂鑫没有盘螺',
-      tags: ['桂鑫'],
+      factText: '品牌A没有盘螺',
+      tags: ['品牌A'],
     }))
 
     const handler = new TeachHandler(llm)
-    const result = await handler.tryHandle('泡泡忘记：桂鑫没有盘螺这个事')
+    const result = await handler.tryHandle('泡泡忘记：品牌A没有盘螺这个事')
 
     expect(result.handled).toBe(true)
     expect(result.response).toContain('已遗忘')
@@ -777,16 +777,16 @@ describe('TeachHandler', () => {
 
   it('passes spaceId through the full flow', async () => {
     const llm = createMockLLM(JSON.stringify({
-      entityName: '桂鑫',
+      entityName: '品牌A',
       entityType: 'supplier',
-      factText: '桂鑫没有盘螺产品',
-      tags: ['桂鑫'],
+      factText: '品牌A没有盘螺产品',
+      tags: ['品牌A'],
     }))
 
     const handler = new TeachHandler(llm)
-    await handler.tryHandle('泡泡记住：桂鑫没有盘螺产品', 'space-abc')
+    await handler.tryHandle('泡泡记住：品牌A没有盘螺产品', 'space-abc')
 
-    expect(mockedSearchBubbles).toHaveBeenCalledWith('桂鑫', 20, ['space-abc'])
+    expect(mockedSearchBubbles).toHaveBeenCalledWith('品牌A', 20, ['space-abc'])
     const createCall = mockedCreateBubble.mock.calls[0][0]
     expect(createCall.spaceId).toBe('space-abc')
   })

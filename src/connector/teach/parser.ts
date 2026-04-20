@@ -32,7 +32,7 @@ const SYSTEM_PROMPT = `你是知识卡片解析器。将用户教给泡泡的业
 }
 
 规则：
-- entityName 必填，是知识的主语（桂鑫、马台、汉浦路项目...）
+- entityName 必填，是知识的主语（品牌A、供应商A、示例项目A...）
 - entityType 根据语境判断：供应商=supplier、客户/项目=customer或project、产品=product、人=person
 - 否定事实（没有/不做/不接）要在 factText 中保留否定含义
 - tags 包含实体名和关键主题词，便于检索

@@ -104,7 +104,7 @@ function col(row: Record<string, unknown>, ...names: string[]): unknown {
 function str(v: unknown): string { return v != null ? String(v) : '' }
 function num(v: unknown): number { return v != null && !isNaN(Number(v)) ? Number(v) : 0 }
 
-export function translatePurchaseRow(row: Record<string, unknown>, companyName = '华瑞隆'): TranslatedRow {
+export function translatePurchaseRow(row: Record<string, unknown>, companyName = '示例公司'): TranslatedRow {
   const date = col(row, '采购日期')
   const dateStr = date ? excelDateToISO(date as number | string) : ''
   const docNo = str(col(row, '入库单号'))
@@ -144,7 +144,7 @@ export function translatePurchaseRow(row: Record<string, unknown>, companyName =
   }
 }
 
-export function translateSalesRow(row: Record<string, unknown>, companyName = '华瑞隆'): TranslatedRow {
+export function translateSalesRow(row: Record<string, unknown>, companyName = '示例公司'): TranslatedRow {
   const date = col(row, '销售日期')
   const dateStr = date ? excelDateToISO(date as number | string) : ''
   const docNo = str(col(row, '销售单号'))
@@ -223,7 +223,7 @@ export function translateLogisticsRow(row: Record<string, unknown>): TranslatedR
   }
 }
 
-export function translatePaymentRow(row: Record<string, unknown>, companyName = '华瑞隆'): TranslatedRow {
+export function translatePaymentRow(row: Record<string, unknown>, companyName = '示例公司'): TranslatedRow {
   const date = col(row, '日期')
   const dateStr = date ? excelDateToISO(date as number | string) : ''
   const docNo = str(col(row, '单据号'))
@@ -313,7 +313,7 @@ export function generateSupplierCard(row: Record<string, unknown>): KnowledgeCar
   const paid = num(col(row, '已付金额'))
   const unpaid = num(col(row, '未付余款'))
 
-  const parts: string[] = [`${name}是华瑞隆的钢材供应商`]
+  const parts: string[] = [`${name}是示例公司的钢材供应商`]
   if (brands) parts.push(`，经销${brands}品牌`)
   parts.push('。')
   if (address) parts.push(`提货地点在${address}。`)
@@ -361,7 +361,7 @@ export function generateCustomerCard(row: Record<string, unknown>): KnowledgeCar
   const received = num(col(row, '已回款'))
   const unpaid = num(col(row, '未回款余额'))
 
-  const parts: string[] = [`${name}是华瑞隆的销售项目`]
+  const parts: string[] = [`${name}是示例公司的销售项目`]
   if (status) parts.push(`，当前状态：${status}`)
   parts.push('。')
   if (address) parts.push(`工程地址：${address}。`)
@@ -441,7 +441,7 @@ export function generateLogisticsInfoCard(row: Record<string, unknown>): Knowled
   const driver = str(col(row, '司机'))
   const phone = str(col(row, '司机电话'))
 
-  const parts: string[] = [`${company}是华瑞隆使用的物流运输方`]
+  const parts: string[] = [`${company}是示例公司使用的物流运输方`]
   if (dest) parts.push(`，常送目的地：${dest}`)
   parts.push('。')
   if (driver) {
@@ -529,7 +529,7 @@ export function computePurchaseAggregations(rows: Record<string, unknown>[]): Ag
     const specs = [...data.specs].map(s => normalizeSpec(s)).join('、')
     results.push({
       title: `采购汇总: ${supplier}`,
-      content: `华瑞隆通过${supplier}共采购${data.count}笔，合计${data.tons.toFixed(1)}吨，总金额${data.amount.toFixed(0)}元（约${(data.amount / 10000).toFixed(1)}万元），吨均价约${avgPrice}元/吨。涉及规格：${specs}。`,
+      content: `示例公司通过${supplier}共采购${data.count}笔，合计${data.tons.toFixed(1)}吨，总金额${data.amount.toFixed(0)}元（约${(data.amount / 10000).toFixed(1)}万元），吨均价约${avgPrice}元/吨。涉及规格：${specs}。`,
       tags: ['采购汇总', supplier],
       abstractionLevel: 1,
       metadata: { aggregationType: 'purchase_by_supplier', supplier, tons: data.tons, amount: data.amount, count: data.count, avgPrice },
@@ -576,7 +576,7 @@ export function computeSalesAggregations(rows: Record<string, unknown>[]): Aggre
     const profitRate = data.amount > 0 ? ((data.profit / data.amount) * 100).toFixed(1) : '0'
     results.push({
       title: `销售汇总: ${customer}`,
-      content: `华瑞隆向${customer}累计销售${data.count}笔，合计${data.tons.toFixed(1)}吨，销售额${data.amount.toFixed(0)}元（约${(data.amount / 10000).toFixed(1)}万元），吨均售价约${avgPrice}元/吨。累计毛利${data.profit.toFixed(0)}元，毛利率${profitRate}%。`,
+      content: `示例公司向${customer}累计销售${data.count}笔，合计${data.tons.toFixed(1)}吨，销售额${data.amount.toFixed(0)}元（约${(data.amount / 10000).toFixed(1)}万元），吨均售价约${avgPrice}元/吨。累计毛利${data.profit.toFixed(0)}元，毛利率${profitRate}%。`,
       tags: ['销售汇总', customer],
       abstractionLevel: 1,
       metadata: { aggregationType: 'sales_by_customer', customer, tons: data.tons, amount: data.amount, profit: data.profit, count: data.count, avgPrice },

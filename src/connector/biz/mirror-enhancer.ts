@@ -95,7 +95,7 @@ export async function enhanceMirrorText(
   const typeLabel = input.counterpartyType === 'supplier' ? '供应商'
     : input.counterpartyType === 'customer' ? '客户' : '物流商'
 
-  const systemPrompt = `你是华瑞隆钢贸的对外通知助手。请将以下业务模板信息改写为一段自然、温暖的客户通知消息。
+  const systemPrompt = `你是示例钢贸的对外通知助手。请将以下业务模板信息改写为一段自然、温暖的客户通知消息。
 
 要求：
 1. 保留模板中所有数字事实（金额、吨位、日期），不可篡改

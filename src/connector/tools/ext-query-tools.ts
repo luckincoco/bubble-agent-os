@@ -158,7 +158,7 @@ function createExtMyLogisticsTool(): ToolDefinition {
 function createExtPriceInquiryTool(): ToolDefinition {
   return {
     name: 'ext_price_inquiry',
-    description: '向华瑞隆提交询价请求。请说明品名、规格和需要的数量。',
+    description: '向示例公司提交询价请求。请说明品名、规格和需要的数量。',
     parameters: {
       product: { type: 'string', description: '品名（如 HRB400E 螺纹钢）', required: true },
       spec: { type: 'string', description: '规格（如 Φ25）' },
@@ -170,7 +170,7 @@ function createExtPriceInquiryTool(): ToolDefinition {
       if (!ec) return '身份验证失败'
       const { ext } = ec
       const detail = `品名: ${args.product || '-'}, 规格: ${args.spec || '-'}, 数量: ${args.quantity || '-'}, 备注: ${args.notes || '-'}`
-      const result = `已收到您的询价请求，华瑞隆会尽快回复。\n\n询价详情：${detail}`
+      const result = `已收到您的询价请求，示例公司会尽快回复。\n\n询价详情：${detail}`
       logExternalAction({
         counterpartyId: ext.counterpartyId,
         action: 'price_inquiry',
@@ -198,10 +198,10 @@ function createExtConfirmReceiptTool(): ToolDefinition {
       if (!ec) return '身份验证失败'
       const { ext } = ec
       if (ext.permissionLevel !== 'query_confirm') {
-        return '您当前没有确认权限，如需开通请联系华瑞隆业务员。'
+        return '您当前没有确认权限，如需开通请联系示例公司业务员。'
       }
       const detail = `日期: ${args.date || '-'}, 品名: ${args.product || '-'}, 说明: ${args.notes || '-'}`
-      const result = `已记录您的收货确认，华瑞隆会同步更新。\n\n确认详情：${detail}`
+      const result = `已记录您的收货确认，示例公司会同步更新。\n\n确认详情：${detail}`
       logExternalAction({
         counterpartyId: ext.counterpartyId,
         action: 'confirm_receipt',
@@ -218,7 +218,7 @@ function createExtConfirmReceiptTool(): ToolDefinition {
 function createExtPaymentStatusTool(): ToolDefinition {
   return {
     name: 'ext_payment_status',
-    description: '查询您与华瑞隆之间的对账单和款项往来汇总。',
+    description: '查询您与示例公司之间的对账单和款项往来汇总。',
     parameters: {
       date_from: { type: 'string', description: '开始日期 YYYY-MM-DD（可选）' },
       date_to: { type: 'string', description: '结束日期 YYYY-MM-DD（可选）' },

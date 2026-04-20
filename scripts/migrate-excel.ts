@@ -1,12 +1,12 @@
 #!/usr/bin/env npx tsx
 /**
- * 华瑞隆进销存 Excel → 结构化 biz_* 表迁移脚本
+ * 示例公司进销存 Excel → 结构化 biz_* 表迁移脚本
  * 读取 Excel 各工作表，通过 /api/biz/* 端点写入结构化数据库。
  *
  * Usage:
  *   npx tsx scripts/migrate-excel.ts [excel-path]
  *
- * Default Excel path: ~/Desktop/2026年华瑞隆资料互导（win-mac)/2026华瑞隆进销存管理（终版）_1.0.0(1).0.0.xlsx
+ * Default Excel path: ~/Desktop/2026年示例公司资料互导（win-mac)/2026示例公司进销存管理（终版）_1.0.0(1).0.0.xlsx
  */
 
 import XLSX from 'xlsx'
@@ -411,7 +411,7 @@ async function migratePayments(wb: XLSX.WorkBook) {
 // ── Main ─────────────────────────────────────────────────────────
 
 async function main() {
-  console.log(`\n📊 华瑞隆 Excel → 结构化数据库 迁移工具`)
+  console.log(`\n📊 示例公司 Excel → 结构化数据库 迁移工具`)
   console.log(`Excel: ${excelPath}`)
   console.log(`API:   ${API_BASE}\n`)
 

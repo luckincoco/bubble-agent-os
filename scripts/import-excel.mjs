@@ -1,5 +1,5 @@
 /**
- * 华瑞隆 Excel 进销存数据 → Bubble SQLite 一次性导入脚本
+ * 示例公司 Excel 进销存数据 → Bubble SQLite 一次性导入脚本
  * 
  * 运行方式: node scripts/import-excel.mjs <excel文件路径>
  * 
@@ -50,7 +50,7 @@ function now() { return Date.now() }
 
 // ── Main ──────────────────────────────────────────────────────────
 
-console.log('=== 华瑞隆 Excel 数据导入 ===')
+console.log('=== 示例公司 Excel 数据导入 ===')
 console.log('数据库:', DB_PATH)
 console.log('Excel:', EXCEL_PATH)
 console.log('')

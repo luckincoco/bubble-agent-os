@@ -42,6 +42,6 @@ priority: 10
 | spec | 规格 | Φ12/HRB400E/Q235B |
 | quantity | 数量 | 50吨 |
 | price | 单价 | 3850元/吨 |
-| supplier | 供应商 | 华瑞隆 |
+| supplier | 供应商 | 示例公司 |
 | project | 关联项目 | 滨江一号 |
 | date | 日期 | 2026-03-24 |

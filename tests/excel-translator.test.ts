@@ -167,7 +167,7 @@ describe('translatePurchaseRow', () => {
   it('translates a full purchase row with all fields', () => {
     const result = translatePurchaseRow(fullRow)
     expect(result.content).toContain('2026-03-05')
-    expect(result.content).toContain('华瑞隆通过马台采购桂鑫牌螺纹钢')
+    expect(result.content).toContain('示例公司通过马台采购桂鑫牌螺纹钢')
     expect(result.content).toContain('规格Φ25×12m')
     expect(result.content).toContain('入库单号RK-2026-001')
     expect(result.content).toContain('共10件23.5吨')
@@ -244,7 +244,7 @@ describe('translateSalesRow', () => {
 
   it('translates a full sales row', () => {
     const result = translateSalesRow(fullRow)
-    expect(result.content).toContain('华瑞隆向汉浦路项目销售桂鑫牌螺纹钢')
+    expect(result.content).toContain('示例公司向汉浦路项目销售桂鑫牌螺纹钢')
     expect(result.content).toContain('规格Φ25×12m')
     expect(result.content).toContain('共5件11.75吨')
     expect(result.content).toContain('售价3780元/吨')
@@ -342,7 +342,7 @@ describe('translatePaymentRow', () => {
       '摘要': '2月采购货款',
     }
     const result = translatePaymentRow(row)
-    expect(result.content).toContain('华瑞隆向马台付款500000元')
+    expect(result.content).toContain('示例公司向马台付款500000元')
     expect(result.content).toContain('银行转账')
     expect(result.content).toContain('摘要：2月采购货款')
     expect(result.tags).toContain('付款')
@@ -359,7 +359,7 @@ describe('translatePaymentRow', () => {
       '方式': '承兑汇票',
     }
     const result = translatePaymentRow(row)
-    expect(result.content).toContain('华瑞隆收到汉浦路项目回款200000元')
+    expect(result.content).toContain('示例公司收到汉浦路项目回款200000元')
     expect(result.content).toContain('承兑汇票')
     expect(result.tags).toContain('收款')
     expect(result.tags).toContain('汉浦路项目')
@@ -442,7 +442,7 @@ describe('generateSupplierCard', () => {
     const card = generateSupplierCard(row)
     expect(card).not.toBeNull()
     expect(card!.title).toBe('供应商: 马台')
-    expect(card!.content).toContain('马台是华瑞隆的钢材供应商')
+    expect(card!.content).toContain('马台是示例公司的钢材供应商')
     expect(card!.content).toContain('经销桂鑫品牌')
     expect(card!.content).toContain('提货地点在吴淞江仓库')
     expect(card!.content).toContain('联系人李总')
@@ -498,7 +498,7 @@ describe('generateCustomerCard', () => {
     const card = generateCustomerCard(row)
     expect(card).not.toBeNull()
     expect(card!.title).toBe('项目: 汉浦路项目')
-    expect(card!.content).toContain('汉浦路项目是华瑞隆的销售项目')
+    expect(card!.content).toContain('汉浦路项目是示例公司的销售项目')
     expect(card!.content).toContain('当前状态：在建')
     expect(card!.content).toContain('上海市嘉定区汉浦路')
     expect(card!.content).toContain('施工单位：万路建设')
@@ -563,7 +563,7 @@ describe('generateLogisticsInfoCard', () => {
     const card = generateLogisticsInfoCard(row)
     expect(card).not.toBeNull()
     expect(card!.title).toBe('物流: 鑫通物流')
-    expect(card!.content).toContain('鑫通物流是华瑞隆使用的物流运输方')
+    expect(card!.content).toContain('鑫通物流是示例公司使用的物流运输方')
     expect(card!.content).toContain('常送目的地：汉浦路项目')
     expect(card!.content).toContain('司机张三')
     expect(card!.content).toContain('137-0000-0003')

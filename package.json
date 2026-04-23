@@ -32,7 +32,10 @@
     "onlyBuiltDependencies": [
       "esbuild",
       "better-sqlite3"
-    ]
+    ],
+    "overrides": {
+      "fast-jwt": ">=6.2.2"
+    }
   },
   "lint-staged": {
     "*.{ts,tsx,js,mjs}": [

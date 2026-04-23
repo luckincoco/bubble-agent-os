@@ -92,9 +92,20 @@ function sanitizeSheetRows(rawRows: Record<string, unknown>[]): Record<string, u
     })
 }
 
-export async function startServer(brain: Brain, memory: MemoryManager, port = 3000, jwtSecret = 'bubble-agent-secret', modules?: ServerModules, serviceApiKey?: string, router?: MessageRouter) {
+export async function startServer(brain: Brain, memory: MemoryManager, port = 3000, jwtSecret = '', modules?: ServerModules, serviceApiKey?: string, router?: MessageRouter) {
+  if (!jwtSecret || jwtSecret === 'bubble-agent-default-secret-change-me' || jwtSecret === 'bubble-agent-secret') {
+    throw new Error('SECURITY: JWT_SECRET 未设置或使用了默认值。请在 .env 中设置一个强随机密钥后再启动。')
+  }
+
   const app = Fastify()
-  await app.register(fastifyCors, { origin: true })
+
+  const allowedOrigins = process.env.CORS_ORIGIN
+    ? process.env.CORS_ORIGIN.split(',').map(s => s.trim())
+    : [`http://localhost:${port}`]
+  await app.register(fastifyCors, {
+    origin: allowedOrigins,
+    credentials: true,
+  })
   await app.register(fastifyWebsocket)
   await app.register(fastifyMultipart, { limits: { fileSize: 50 * 1024 * 1024 } })
   await app.register(fastifyJwt, { secret: jwtSecret, sign: { expiresIn: '7d' } })
@@ -1069,12 +1080,16 @@ export async function startServer(brain: Brain, memory: MemoryManager, port = 30
 
   // --- Scheduled Tasks CRUD ---
 
-  app.get('/api/tasks', async () => {
+  app.get('/api/tasks', async (req, reply) => {
+    const payload = req.user as JwtPayload
+    if (requireAdmin(payload, reply)) return
     if (!modules?.scheduler) return { tasks: [] }
     return { tasks: modules.scheduler.listTasks() }
   })
 
   app.post('/api/tasks', async (req, reply) => {
+    const payload = req.user as JwtPayload
+    if (requireAdmin(payload, reply)) return
     if (!modules?.scheduler) return reply.code(503).send({ error: '调度器未启用' })
 
     const { name, type, cron: cronExpr, params } = req.body as {
@@ -1093,6 +1108,8 @@ export async function startServer(brain: Brain, memory: MemoryManager, port = 30
   })
 
   app.put('/api/tasks/:id', async (req, reply) => {
+    const payload = req.user as JwtPayload
+    if (requireAdmin(payload, reply)) return
     if (!modules?.scheduler) return reply.code(503).send({ error: '调度器未启用' })
 
     const { id } = req.params as { id: string }
@@ -1107,6 +1124,8 @@ export async function startServer(brain: Brain, memory: MemoryManager, port = 30
   })
 
   app.delete('/api/tasks/:id', async (req, reply) => {
+    const payload = req.user as JwtPayload
+    if (requireAdmin(payload, reply)) return
     if (!modules?.scheduler) return reply.code(503).send({ error: '调度器未启用' })
 
     const { id } = req.params as { id: string }
@@ -1119,6 +1138,8 @@ export async function startServer(brain: Brain, memory: MemoryManager, port = 30
   })
 
   app.post('/api/tasks/:id/run', async (req, reply) => {
+    const payload = req.user as JwtPayload
+    if (requireAdmin(payload, reply)) return
     if (!modules?.scheduler) return reply.code(503).send({ error: '调度器未启用' })
 
     const { id } = req.params as { id: string }

@@ -4,6 +4,7 @@ import { addLink } from '../../bubble/links.js'
 import { calcSurprise } from '../../memory/manager.js'
 import { getDatabase } from '../../storage/database.js'
 import { logger } from '../../shared/logger.js'
+import { isObscuraAvailable, renderPage } from '../../connector/tools/obscura-client.js'
 
 // ── Stop words: filtered out before query construction ──────────────
 const STOP_WORDS = new Set([
@@ -43,6 +44,7 @@ interface SearchStats {
   created: number
   skipped: number
   contradictions: number
+  deepReads: number
 }
 
 export async function executeInterestSearch(
@@ -121,6 +123,7 @@ export async function executeInterestSearch(
     created: 0,
     skipped: 0,
     contradictions: 0,
+    deepReads: 0,
   }
 
   if (dedupedQueries.length === 0) {
@@ -188,6 +191,41 @@ export async function executeInterestSearch(
       }
 
       logger.debug(`InterestSearch: "${query}" → bubble ${bubble.id} (surprise=${score.toFixed(2)})`)
+
+      // Step 6b: Deep-read top URL for high-surprise results via Obscura
+      if (score >= 0.6 && isObscuraAvailable()) {
+        const urls = extractUrlsFromSearchResult(result)
+        const topUrl = urls[0]
+        if (topUrl) {
+          try {
+            const deep = await renderPage(topUrl, { timeout: 20000, stealth: true })
+            if (deep.text.length > 200) {
+              const deepBubble = createBubble({
+                type: 'event',
+                title: `深度阅读: ${deep.text.slice(0, 50).replace(/\n/g, ' ')}`,
+                content: deep.text.slice(0, 6000),
+                tags: ['deep-read', 'interest-search', ...queryTags],
+                source: 'interest-search-deep',
+                confidence: 0.8,
+                decayRate: 0.10,
+                metadata: {
+                  sourceUrl: topUrl,
+                  originalQuery: query,
+                  surpriseScore: score,
+                  readAt: Date.now(),
+                  source: 'interest-search-deep',
+                },
+              })
+              addLink(bubble.id, deepBubble.id, 'deep_read', 0.9, 'system')
+              allBubbleIds.push(deepBubble.id)
+              stats.deepReads++
+              logger.info(`InterestSearch: 深度阅读 "${topUrl}" → bubble ${deepBubble.id} (${deep.text.length} chars)`)
+            }
+          } catch (err) {
+            logger.debug(`InterestSearch: 深度阅读失败 "${topUrl}": ${err instanceof Error ? err.message : String(err)}`)
+          }
+        }
+      }
     } catch (err) {
       stats.skipped++
       logger.error(`InterestSearch: search "${query}" failed: ${err instanceof Error ? err.message : String(err)}`)
@@ -207,7 +245,7 @@ export async function executeInterestSearch(
     }
   }
 
-  const message = `兴趣搜索: 生成 ${stats.queriesGenerated} 个查询, 去重 ${stats.queriesDeduped} 个, 搜索 ${stats.searched} 个, 新增 ${stats.created} 条, 跳过 ${stats.skipped} 条${stats.contradictions > 0 ? `, 矛盾 ${stats.contradictions} 条` : ''}`
+  const message = `兴趣搜索: 生成 ${stats.queriesGenerated} 个查询, 去重 ${stats.queriesDeduped} 个, 搜索 ${stats.searched} 个, 新增 ${stats.created} 条, 跳过 ${stats.skipped} 条${stats.contradictions > 0 ? `, 矛盾 ${stats.contradictions} 条` : ''}${stats.deepReads > 0 ? `, 深度阅读 ${stats.deepReads} 条` : ''}`
   logger.info(`InterestSearch: ${message}`)
 
   return {
@@ -237,4 +275,18 @@ function getRecentSearchedQueries(): string[] {
   } catch {
     return []
   }
+}
+
+/** Extract URLs from Tavily search result text */
+function extractUrlsFromSearchResult(text: string): string[] {
+  const urlRegex = /https?:\/\/[^\s),]+/g
+  const matches = text.match(urlRegex) || []
+  // Deduplicate and skip Tavily's own domain
+  const seen = new Set<string>()
+  return matches.filter(url => {
+    if (seen.has(url)) return false
+    if (url.includes('tavily.com')) return false
+    seen.add(url)
+    return true
+  })
 }

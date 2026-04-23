@@ -56,7 +56,7 @@ export function isObscuraAvailable(): boolean {
   // Otherwise try to execute it
   try {
     const { execFileSync } = require('node:child_process')
-    execFileSync(OBSCURA_BIN, ['--version'], {
+    execFileSync(OBSCURA_BIN, ['--help'], {
       timeout: 5000,
       stdio: 'pipe',
     })
@@ -93,17 +93,17 @@ export async function renderPage(
   const waitUntil = options?.waitUntil ?? 'networkidle0'
   const proxy = options?.proxy || OBSCURA_PROXY
 
-  const args: string[] = ['fetch', url, '--dump', 'text', '--wait-until', waitUntil, '--quiet']
+  // Global options (before subcommand): --proxy must precede fetch
+  const args: string[] = []
+  if (proxy) {
+    args.push('--proxy', proxy)
+  }
+
+  // Subcommand + options
+  args.push('fetch', url, '--dump', 'text', '--wait-until', waitUntil, '--quiet')
 
   if (stealth) {
     args.push('--stealth')
-  }
-
-  // Build environment: inherit current env + optional proxy
-  const env: Record<string, string> = { ...process.env as Record<string, string> }
-  if (proxy) {
-    env.HTTP_PROXY = proxy
-    env.HTTPS_PROXY = proxy
   }
 
   return new Promise<ObscuraResult>((resolve, reject) => {
@@ -113,7 +113,6 @@ export async function renderPage(
       {
         timeout,
         maxBuffer: 10 * 1024 * 1024, // 10MB
-        env,
       },
       (error, stdout, stderr) => {
         if (error) {

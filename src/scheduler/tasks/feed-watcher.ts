@@ -6,6 +6,7 @@ import { addLink } from '../../bubble/links.js'
 import { calcSurprise } from '../../memory/manager.js'
 import { getDatabase } from '../../storage/database.js'
 import { logger } from '../../shared/logger.js'
+import { isObscuraAvailable, renderPage } from '../../connector/tools/obscura-client.js'
 import type { BubbleType } from '../../shared/types.js'
 
 // ── Interfaces ──────────────────────────────────────────────
@@ -116,27 +117,39 @@ async function processSingleFeed(
 ): Promise<SingleFeedResult> {
   const result: SingleFeedResult = { fetched: 0, created: 0, skipped: 0, contradictions: 0, bubbleIds: [] }
 
-  // Fetch
-  const res = await fetch(feed.url, {
-    headers: { 'User-Agent': USER_AGENT, Accept: 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8' },
-    signal: AbortSignal.timeout(FETCH_TIMEOUT),
-  })
-
-  if (!res.ok) {
-    throw new Error(`HTTP ${res.status}`)
-  }
-
-  const body = await res.text()
-  if (!body.trim()) {
-    throw new Error('空响应')
-  }
-
-  // Parse
+  // Parse items: Obscura-rendered path for web_scrape, standard HTTP for rss
   let items: FeedItem[]
-  if (feed.type === 'rss') {
-    items = parseRSSItems(body, feed.id, cfg.maxContentLength)
+
+  if (feed.type === 'web_scrape' && isObscuraAvailable()) {
+    // Render dynamic page via Obscura for richer content extraction
+    const rendered = await renderPage(feed.url, { timeout: FETCH_TIMEOUT, stealth: true })
+    const content = rendered.text.slice(0, cfg.maxContentLength)
+    if (!content) throw new Error('Obscura 渲染后内容为空')
+    const titleMatch = content.match(/^(.+)/)?.[1]?.slice(0, 100) || feed.name
+    items = [{
+      id: feed.url,
+      title: titleMatch,
+      content,
+      url: feed.url,
+      publishedAt: Date.now(),
+      sourceId: feed.id,
+    }]
+    logger.debug(`FeedWatcher: Obscura 渲染 "${feed.name}" → ${content.length} chars`)
   } else {
-    items = parseWebPage(body, feed, cfg.maxContentLength)
+    // Standard HTTP fetch
+    const res = await fetch(feed.url, {
+      headers: { 'User-Agent': USER_AGENT, Accept: 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8' },
+      signal: AbortSignal.timeout(FETCH_TIMEOUT),
+    })
+    if (!res.ok) throw new Error(`HTTP ${res.status}`)
+    const body = await res.text()
+    if (!body.trim()) throw new Error('空响应')
+
+    if (feed.type === 'rss') {
+      items = parseRSSItems(body, feed.id, cfg.maxContentLength)
+    } else {
+      items = parseWebPage(body, feed, cfg.maxContentLength)
+    }
   }
 
   // Limit per feed

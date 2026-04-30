@@ -1,5 +1,23 @@
 # Changelog
 
+## [1.0.6] - 2026-04-30
+
+### Added
+- **Knowledge Browser** (`web/src/components/knowledge/`): full-featured knowledge browsing UI replacing MemoryPanel, with search, filters, stats dashboard, pagination, detail view, evidence chain and links display
+- **Knowledge API** (`src/server/knowledge-routes.ts`): 6 REST endpoints (stats, index, search, detail, evidence chain, graph subset)
+- **Evidence Chain** (`src/memory/evidence-chain.ts`): BFS recursive walk of composed_of/references/supports links to build evidence trees
+- **Graph Subset** (`src/bubble/links.ts`): N-hop neighborhood extraction for knowledge graph visualization
+- **Query Feedback Loop** (`src/memory/conversation-insight-evaluator.ts`): post-think async evaluator that extracts novel insights from AI responses and persists them as L1 knowledge
+- **Anti-Confirmation Bias**: counter-query in interest-search generates reverse searches for high-confidence knowledge; causal-evaluator reduces target confidence on contradictions; reflector applies counter-evidence penalty
+
+### Changed
+- **MemoryManager** (`src/memory/manager.ts`): added `SearchFilters`, `getKnowledgeStats()`, `getKnowledgeIndex()` for paginated browsing with filters
+- **Brain** (`src/kernel/brain.ts`): added `setInsightEvaluator()` hook for conversation insight extraction
+- **Interest Search** (`src/scheduler/tasks/interest-search.ts`): added counter-search step with `COUNTER_QUERY_PROMPT`
+- **Causal Evaluator** (`src/memory/causal-evaluator.ts`): added confidence reduction for contradicted targets
+- **Reflector** (`src/memory/reflector.ts`): added `challenges` link check and counter-evidence penalty in validation phase
+- **Module Registry** (`web/src/modules/registry.ts`): memory tab renamed to knowledge, component swapped to KnowledgeBrowser
+
 ## [0.3.0] - 2026-03-27
 
 ### Added

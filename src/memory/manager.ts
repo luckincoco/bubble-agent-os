@@ -1,10 +1,11 @@
-import type { LLMProvider, EmbeddingProvider, Bubble, SourceRef } from '../shared/types.js'
+import type { LLMProvider, EmbeddingProvider, Bubble, BubbleType, SourceRef } from '../shared/types.js'
 import { MemoryExtractor } from './extractor.js'
 import { BubbleAggregator } from '../bubble/aggregator.js'
-import { createBubble, getAllMemoryBubbles, searchBubbles, updateBubble } from '../bubble/model.js'
+import { createBubble, getAllMemoryBubbles, searchBubbles, updateBubble, rowToBubble } from '../bubble/model.js'
 import { addLink } from '../bubble/links.js'
 import { FocusTracker, tokenize } from './focus-tracker.js'
 import { estimateTokens, truncateToTokenBudget, TOKEN_LIMITS } from '../shared/tokens.js'
+import { getDatabase, buildInClause } from '../storage/database.js'
 import { logger } from '../shared/logger.js'
 
 // Re-export for other modules
@@ -255,10 +256,163 @@ export class MemoryManager {
     return getAllMemoryBubbles(spaceIds)
   }
 
-  async search(query: string, limit = 15, spaceIds?: string[], userId?: string) {
+  async search(query: string, limit = 15, spaceIds?: string[], userId?: string, filters?: SearchFilters) {
     const focusBoostFn = this.focusEnabled && userId
       ? (content: string) => this.focusTracker.computeFocusBoost(userId, content)
       : undefined
+
+    // If filters are provided, apply post-filter on aggregated results
+    if (filters && hasActiveFilters(filters)) {
+      const results = await this.aggregator.aggregate(query, limit * 3, spaceIds, focusBoostFn)
+      return applyFilters(results, filters).slice(0, limit)
+    }
+
     return this.aggregator.aggregate(query, limit, spaceIds, focusBoostFn)
   }
+
+  /** Get knowledge statistics for the dashboard summary */
+  getKnowledgeStats(spaceIds?: string[]): KnowledgeStats {
+    const db = getDatabase()
+    const spaceFilter = buildSpaceFilter(spaceIds)
+
+    const totalRow = db.prepare(
+      `SELECT COUNT(*) as cnt FROM bubbles WHERE deleted_at IS NULL${spaceFilter.sql}`,
+    ).get(...spaceFilter.params) as { cnt: number }
+
+    const byTypeRows = db.prepare(
+      `SELECT type, COUNT(*) as cnt FROM bubbles WHERE deleted_at IS NULL${spaceFilter.sql} GROUP BY type`,
+    ).all(...spaceFilter.params) as Array<{ type: string; cnt: number }>
+
+    const bySourceRows = db.prepare(
+      `SELECT source, COUNT(*) as cnt FROM bubbles WHERE deleted_at IS NULL${spaceFilter.sql} GROUP BY source ORDER BY cnt DESC`,
+    ).all(...spaceFilter.params) as Array<{ source: string; cnt: number }>
+
+    const byLevelRows = db.prepare(
+      `SELECT abstraction_level, COUNT(*) as cnt FROM bubbles WHERE deleted_at IS NULL${spaceFilter.sql} GROUP BY abstraction_level`,
+    ).all(...spaceFilter.params) as Array<{ abstraction_level: number; cnt: number }>
+
+    const recentRow = db.prepare(
+      `SELECT COUNT(*) as cnt FROM bubbles WHERE deleted_at IS NULL AND created_at > ?${spaceFilter.sql}`,
+    ).get(Date.now() - 7 * 24 * 60 * 60 * 1000, ...spaceFilter.params) as { cnt: number }
+
+    const linkRow = db.prepare(
+      'SELECT COUNT(*) as cnt FROM bubble_links',
+    ).get() as { cnt: number }
+
+    return {
+      total: totalRow.cnt,
+      byType: Object.fromEntries(byTypeRows.map(r => [r.type, r.cnt])) as Record<string, number>,
+      bySource: Object.fromEntries(bySourceRows.map(r => [r.source, r.cnt])) as Record<string, number>,
+      byLevel: Object.fromEntries(byLevelRows.map(r => [String(r.abstraction_level), r.cnt])) as Record<string, number>,
+      recentWeek: recentRow.cnt,
+      totalLinks: linkRow.cnt,
+    }
+  }
+
+  /** Paginated knowledge index for the browser list view */
+  getKnowledgeIndex(
+    spaceIds?: string[],
+    filters?: SearchFilters,
+    page = 1,
+    pageSize = 30,
+  ): { items: Bubble[]; total: number; page: number; pageSize: number } {
+    const db = getDatabase()
+    const spaceFilter = buildSpaceFilter(spaceIds)
+
+    let whereClauses = `deleted_at IS NULL${spaceFilter.sql}`
+    const params: unknown[] = [...spaceFilter.params]
+
+    if (filters?.types?.length) {
+      const { placeholders, params: tp } = buildInClause(filters.types)
+      whereClauses += ` AND type IN (${placeholders})`
+      params.push(...tp)
+    }
+    if (filters?.sources?.length) {
+      const { placeholders, params: sp } = buildInClause(filters.sources)
+      whereClauses += ` AND source IN (${placeholders})`
+      params.push(...sp)
+    }
+    if (filters?.levels?.length) {
+      const levelPlaceholders = filters.levels.map(() => '?').join(',')
+      whereClauses += ` AND abstraction_level IN (${levelPlaceholders})`
+      params.push(...filters.levels)
+    }
+    if (filters?.tags?.length) {
+      for (const tag of filters.tags) {
+        whereClauses += ' AND tags LIKE ?'
+        params.push(`%"${tag}"%`)
+      }
+    }
+    if (filters?.minConfidence !== undefined) {
+      whereClauses += ' AND confidence >= ?'
+      params.push(filters.minConfidence)
+    }
+    if (filters?.since) {
+      whereClauses += ' AND created_at >= ?'
+      params.push(filters.since)
+    }
+
+    const countRow = db.prepare(
+      `SELECT COUNT(*) as cnt FROM bubbles WHERE ${whereClauses}`,
+    ).get(...params) as { cnt: number }
+
+    const sortCol = filters?.sortBy === 'confidence' ? 'confidence' : filters?.sortBy === 'created' ? 'created_at' : 'updated_at'
+    const sortDir = filters?.sortDir === 'asc' ? 'ASC' : 'DESC'
+    const offset = (page - 1) * pageSize
+
+    const rows = db.prepare(
+      `SELECT * FROM bubbles WHERE ${whereClauses} ORDER BY ${sortCol} ${sortDir} LIMIT ? OFFSET ?`,
+    ).all(...params, pageSize, offset) as any[]
+
+    return {
+      items: rows.map(rowToBubble),
+      total: countRow.cnt,
+      page,
+      pageSize,
+    }
+  }
+}
+
+// ── Search Filters ─────────────────────────────────────────────
+
+export interface SearchFilters {
+  types?: BubbleType[]
+  sources?: string[]
+  levels?: number[]
+  tags?: string[]
+  minConfidence?: number
+  since?: number
+  sortBy?: 'updated' | 'created' | 'confidence'
+  sortDir?: 'asc' | 'desc'
+}
+
+export interface KnowledgeStats {
+  total: number
+  byType: Record<string, number>
+  bySource: Record<string, number>
+  byLevel: Record<string, number>
+  recentWeek: number
+  totalLinks: number
+}
+
+function hasActiveFilters(f: SearchFilters): boolean {
+  return !!(f.types?.length || f.sources?.length || f.levels?.length || f.tags?.length || f.minConfidence !== undefined || f.since)
+}
+
+function applyFilters(bubbles: Bubble[], f: SearchFilters): Bubble[] {
+  return bubbles.filter(b => {
+    if (f.types?.length && !f.types.includes(b.type)) return false
+    if (f.sources?.length && !f.sources.includes(b.source)) return false
+    if (f.levels?.length && !f.levels.includes(b.abstractionLevel)) return false
+    if (f.tags?.length && !f.tags.every(t => b.tags.includes(t))) return false
+    if (f.minConfidence !== undefined && b.confidence < f.minConfidence) return false
+    if (f.since && b.createdAt < f.since) return false
+    return true
+  })
+}
+
+function buildSpaceFilter(spaceIds?: string[]): { sql: string; params: unknown[] } {
+  if (!spaceIds?.length) return { sql: '', params: [] }
+  const { placeholders, params } = buildInClause(spaceIds)
+  return { sql: ` AND space_id IN (${placeholders})`, params }
 }

@@ -29,6 +29,7 @@ import { parsePDF, parseDocx, parseTxt, splitIntoChunks, detectFileType } from '
 import { createAgent, getAgent, listAgents, updateAgent, deleteAgent } from '../agent/model.js'
 import type { WeComConnector } from '../connector/wecom.js'
 import type { MessageRouter } from '../connector/router.js'
+import { registerKnowledgeRoutes } from './knowledge-routes.js'
 import * as biz from '../connector/biz/structured-store.js'
 import * as docEngine from '../connector/biz/doc-engine.js'
 import * as reports from '../connector/biz/reports.js'
@@ -1343,15 +1344,17 @@ export async function startServer(brain: Brain, memory: MemoryManager, port = 30
   })
 
   app.put('/api/biz/products/:id', async (req, reply) => {
+    const ctx = getBizCtx(req)
     const { id } = req.params as { id: string }
     if (!biz.getProductById(id)) return reply.code(404).send({ error: '产品不存在' })
-    biz.updateProduct(id, req.body as any)
+    biz.updateProduct(id, req.body as any, ctx.spaceId)
     return { data: biz.getProductById(id) }
   })
 
   app.delete('/api/biz/products/:id', async (req) => {
+    const ctx = getBizCtx(req)
     const { id } = req.params as { id: string }
-    biz.deleteProduct(id)
+    biz.deleteProduct(id, ctx.spaceId)
     return { ok: true }
   })
 
@@ -1371,14 +1374,16 @@ export async function startServer(brain: Brain, memory: MemoryManager, port = 30
   })
 
   app.put('/api/biz/counterparties/:id', async (req) => {
+    const ctx = getBizCtx(req)
     const { id } = req.params as { id: string }
-    biz.updateCounterparty(id, req.body as any)
+    biz.updateCounterparty(id, req.body as any, ctx.spaceId)
     return { ok: true }
   })
 
   app.delete('/api/biz/counterparties/:id', async (req) => {
+    const ctx = getBizCtx(req)
     const { id } = req.params as { id: string }
-    biz.deleteCounterparty(id)
+    biz.deleteCounterparty(id, ctx.spaceId)
     return { ok: true }
   })
 
@@ -1397,14 +1402,16 @@ export async function startServer(brain: Brain, memory: MemoryManager, port = 30
   })
 
   app.put('/api/biz/projects/:id', async (req) => {
+    const ctx = getBizCtx(req)
     const { id } = req.params as { id: string }
-    biz.updateProject(id, req.body as any)
+    biz.updateProject(id, req.body as any, ctx.spaceId)
     return { ok: true }
   })
 
   app.delete('/api/biz/projects/:id', async (req) => {
+    const ctx = getBizCtx(req)
     const { id } = req.params as { id: string }
-    biz.deleteProject(id)
+    biz.deleteProject(id, ctx.spaceId)
     return { ok: true }
   })
 
@@ -1427,18 +1434,20 @@ export async function startServer(brain: Brain, memory: MemoryManager, port = 30
   })
 
   app.put('/api/biz/purchases/:id', async (req, reply) => {
+    const ctx = getBizCtx(req)
     const { id } = req.params as { id: string }
     const guard = docEngine.assertDraft('purchase', id)
     if (!guard.ok) return reply.code(400).send({ error: guard.error })
-    biz.updatePurchase(id, req.body as any)
+    biz.updatePurchase(id, req.body as any, ctx.spaceId)
     return { ok: true }
   })
 
   app.delete('/api/biz/purchases/:id', async (req, reply) => {
+    const ctx = getBizCtx(req)
     const { id } = req.params as { id: string }
     const guard = docEngine.assertDraftForDelete('purchase', id)
     if (!guard.ok) return reply.code(400).send({ error: guard.error })
-    biz.deletePurchase(id)
+    biz.deletePurchase(id, ctx.spaceId)
     return { ok: true }
   })
 
@@ -1469,18 +1478,20 @@ export async function startServer(brain: Brain, memory: MemoryManager, port = 30
   })
 
   app.put('/api/biz/sales/:id', async (req, reply) => {
+    const ctx = getBizCtx(req)
     const { id } = req.params as { id: string }
     const guard = docEngine.assertDraft('sale', id)
     if (!guard.ok) return reply.code(400).send({ error: guard.error })
-    biz.updateSale(id, req.body as any)
+    biz.updateSale(id, req.body as any, ctx.spaceId)
     return { ok: true }
   })
 
   app.delete('/api/biz/sales/:id', async (req, reply) => {
+    const ctx = getBizCtx(req)
     const { id } = req.params as { id: string }
     const guard = docEngine.assertDraftForDelete('sale', id)
     if (!guard.ok) return reply.code(400).send({ error: guard.error })
-    biz.deleteSale(id)
+    biz.deleteSale(id, ctx.spaceId)
     return { ok: true }
   })
 
@@ -1501,10 +1512,11 @@ export async function startServer(brain: Brain, memory: MemoryManager, port = 30
   })
 
   app.delete('/api/biz/logistics/:id', async (req, reply) => {
+    const ctx = getBizCtx(req)
     const { id } = req.params as { id: string }
     const guard = docEngine.assertDraftForDelete('logistics', id)
     if (!guard.ok) return reply.code(400).send({ error: guard.error })
-    biz.deleteLogistics(id)
+    biz.deleteLogistics(id, ctx.spaceId)
     return { ok: true }
   })
 
@@ -1527,10 +1539,11 @@ export async function startServer(brain: Brain, memory: MemoryManager, port = 30
   })
 
   app.delete('/api/biz/payments/:id', async (req, reply) => {
+    const ctx = getBizCtx(req)
     const { id } = req.params as { id: string }
     const guard = docEngine.assertDraftForDelete('payment', id)
     if (!guard.ok) return reply.code(400).send({ error: guard.error })
-    biz.deletePayment(id)
+    biz.deletePayment(id, ctx.spaceId)
     return { ok: true }
   })
 
@@ -1553,10 +1566,11 @@ export async function startServer(brain: Brain, memory: MemoryManager, port = 30
   })
 
   app.delete('/api/biz/invoices/:id', async (req, reply) => {
+    const ctx = getBizCtx(req)
     const { id } = req.params as { id: string }
     const guard = docEngine.assertDraftForDelete('invoice', id)
     if (!guard.ok) return reply.code(400).send({ error: guard.error })
-    biz.deleteInvoice(id)
+    biz.deleteInvoice(id, ctx.spaceId)
     return { ok: true }
   })
 
@@ -1829,6 +1843,9 @@ export async function startServer(brain: Brain, memory: MemoryManager, port = 30
       return reply.code(500).send({ error: `OCR 识别失败: ${msg}` })
     }
   })
+
+  // Register Knowledge Browser API routes
+  registerKnowledgeRoutes(app, { memory, getUserCtx })
 
   // Register WeCom callback routes (before SPA fallback to avoid being caught by it)
   if (modules?.wecom) {

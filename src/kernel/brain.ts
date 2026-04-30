@@ -1,6 +1,7 @@
 import type { LLMProvider, LLMMessage, UserContext, ThinkResult, CustomAgent, SourceRef } from '../shared/types.js'
 import { isExternalContext } from '../shared/types.js'
 import type { MemoryManager } from '../memory/manager.js'
+import type { ConversationInsightEvaluator } from '../memory/conversation-insight-evaluator.js'
 import type { ToolRegistry } from '../connector/registry.js'
 import { runToolLoop } from './tool-loop.js'
 import { estimateTokens, truncateToTokenBudget, TOKEN_LIMITS } from '../shared/tokens.js'
@@ -86,6 +87,7 @@ export class Brain {
   private memory: MemoryManager | null = null
   private tools: ToolRegistry | null = null
   private agentConfigs: Map<string, CustomAgent> = new Map()
+  private insightEvaluator: ConversationInsightEvaluator | null = null
 
   constructor(llm: LLMProvider) {
     this.llm = llm
@@ -99,6 +101,11 @@ export class Brain {
   setTools(tools: ToolRegistry) {
     this.tools = tools
     logger.info('Brain: tool system connected')
+  }
+
+  setInsightEvaluator(evaluator: ConversationInsightEvaluator) {
+    this.insightEvaluator = evaluator
+    logger.info('Brain: conversation insight evaluator connected')
   }
 
   /** Set or clear the active agent for a user */
@@ -284,6 +291,13 @@ export class Brain {
       if (!isExt && this.memory) {
         this.memory.extractAndStore(userInput, response, ctx?.activeSpaceId).catch((err) => {
           logger.debug('Memory extraction error:', err instanceof Error ? err.message : String(err))
+        })
+      }
+
+      // Query feedback loop: evaluate conversation for novel insights (async, non-blocking)
+      if (!isExt && this.insightEvaluator) {
+        this.insightEvaluator.evaluate(userInput, response, ctx?.activeSpaceId).catch((err) => {
+          logger.debug('Insight evaluation error:', err instanceof Error ? err.message : String(err))
         })
       }
 

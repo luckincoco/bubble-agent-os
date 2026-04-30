@@ -21,14 +21,17 @@ import { executeInterestSearch } from './tasks/interest-search.js'
 import { executeLearningDigest } from './tasks/learning-digest.js'
 import { executeSilenceScan } from './tasks/silence-scan.js'
 import { executeConcentrationScan } from './tasks/concentration-scan.js'
+import { executeCausalEval } from './tasks/causal-eval.js'
+import type { ModelRouter } from '../ai/model-router.js'
 
-export type ScheduledTaskType = 'daily_digest' | 'keyword_monitor' | 'memory_decay' | 'bubble_compaction' | 'steel_price' | 'question_generator' | 'reflection' | 'pressure_sim' | 'self_dialogue' | 'feed_watcher' | 'interest_search' | 'learning_digest' | 'silence_scan' | 'concentration_scan'
+export type ScheduledTaskType = 'daily_digest' | 'keyword_monitor' | 'memory_decay' | 'bubble_compaction' | 'steel_price' | 'question_generator' | 'reflection' | 'pressure_sim' | 'self_dialogue' | 'feed_watcher' | 'interest_search' | 'learning_digest' | 'silence_scan' | 'concentration_scan' | 'causal_eval'
 
 export interface TaskDeps {
   brain: Brain
   memory: MemoryManager
   tools: ToolRegistry
   llm: LLMProvider
+  llmRouter?: ModelRouter
   feishu?: FeishuConnector
 }
 
@@ -68,6 +71,7 @@ const EXECUTORS: Record<ScheduledTaskType, TaskExecutor> = {
   learning_digest: executeLearningDigest,
   silence_scan: executeSilenceScan,
   concentration_scan: executeConcentrationScan,
+  causal_eval: executeCausalEval,
 }
 
 export class TaskScheduler {
@@ -145,6 +149,18 @@ export class TaskScheduler {
       const row = db.prepare("SELECT * FROM scheduled_tasks WHERE type = 'reflection'").get() as ScheduledTaskRow
       this.scheduleJob(row)
       logger.info('Scheduler: seeded reflection task (daily 5:00)')
+    }
+
+    // Ensure causal_eval task exists (daily 4:30 AM — between compaction and reflection)
+    const hasCausalEval = db.prepare("SELECT id FROM scheduled_tasks WHERE type = 'causal_eval'").get()
+    if (!hasCausalEval) {
+      const now = Date.now()
+      db.prepare(
+        'INSERT INTO scheduled_tasks (id, name, type, cron, params, enabled, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)',
+      ).run(ulid(), '因果评估器', 'causal_eval', '30 4 * * *', '{}', 1, now, now)
+      const row = db.prepare("SELECT * FROM scheduled_tasks WHERE type = 'causal_eval'").get() as ScheduledTaskRow
+      this.scheduleJob(row)
+      logger.info('Scheduler: seeded causal_eval task (daily 4:30)')
     }
 
     // Ensure pressure_sim task exists (disabled, manual-only)

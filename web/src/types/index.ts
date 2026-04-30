@@ -37,6 +37,10 @@ export interface BubbleMemory {
   pinned: boolean
   createdAt: number
   updatedAt: number
+  abstractionLevel?: number
+  decayRate?: number
+  summary?: string
+  spaceId?: string
 }
 
 export interface UserPreferences {
@@ -425,4 +429,63 @@ export interface MonthlyOverviewRow {
   paymentsOut: number
   invoicesIn: number
   invoicesOut: number
+}
+
+// ── Knowledge Browser Types ───────────────────────────────────────
+
+export interface KnowledgeStats {
+  total: number
+  byType: Record<string, number>
+  bySource: Record<string, number>
+  byLevel: Record<string, number>
+  recentWeek: number
+  totalLinks: number
+}
+
+export interface KnowledgeFilters {
+  types?: string[]
+  sources?: string[]
+  levels?: number[]
+  tags?: string[]
+  minConfidence?: number
+  since?: number
+  sortBy?: 'updated' | 'created' | 'confidence'
+  sortDir?: 'asc' | 'desc'
+}
+
+export interface KnowledgeIndexResult {
+  items: BubbleMemory[]
+  total: number
+  page: number
+  pageSize: number
+}
+
+export interface BubbleLink {
+  targetId: string
+  relation: string
+  weight: number
+  source: string
+  createdAt: number
+}
+
+export interface EvidenceNode {
+  bubble: BubbleMemory
+  relation: string
+  depth: number
+  children: EvidenceNode[]
+}
+
+export interface EvidenceTree {
+  root: BubbleMemory
+  nodes: EvidenceNode[]
+  totalCount: number
+  oldestEvidence: number
+  newestEvidence: number
+  sourceBreakdown: Record<string, number>
+}
+
+export interface GraphSubset {
+  center: BubbleMemory | null
+  nodes: BubbleMemory[]
+  links: Array<{ sourceId: string; targetId: string; relation: string; weight: number }>
 }

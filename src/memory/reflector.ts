@@ -17,6 +17,7 @@
 import type { LLMProvider, LLMMessage, Bubble, BubbleType } from '../shared/types.js'
 import { createBubble, findBubblesByType, getChildBubbles, searchBubbles, updateBubble } from '../bubble/model.js'
 import { addLink, findLinksByRelation } from '../bubble/links.js'
+import { getDatabase } from '../storage/database.js'
 import { logger } from '../shared/logger.js'
 import type { QualitySignal, SynthesisQualityAssessment } from './compactor.js'
 
@@ -81,6 +82,7 @@ const MIN_EVIDENCE_FOR_STABLE = 3
 
 export class Reflector {
   private llm: LLMProvider
+  private lastValidatedAt = 0
 
   constructor(llm: LLMProvider) {
     this.llm = llm
@@ -197,6 +199,20 @@ export class Reflector {
    * Phase 2: Validate — re-evaluate existing observations.
    */
   private async validate(spaceId?: string): Promise<{ validated: number; staled: number }> {
+    // Token short-circuit: skip LLM validation if no new memories since last run
+    if (this.lastValidatedAt > 0) {
+      const db = getDatabase()
+      let sql = "SELECT COUNT(*) as cnt FROM bubbles WHERE type = 'memory' AND created_at > ? AND deleted_at IS NULL"
+      const params: unknown[] = [this.lastValidatedAt]
+      if (spaceId) { sql += ' AND space_id = ?'; params.push(spaceId) }
+      const { cnt } = db.prepare(sql).get(...params) as { cnt: number }
+      if (cnt === 0) {
+        logger.debug('Reflector: no new memories since last validation, skipping LLM calls')
+        return { validated: 0, staled: 0 }
+      }
+    }
+    this.lastValidatedAt = Date.now()
+
     const spaceIds = spaceId ? [spaceId] : undefined
     const observations = findBubblesByType('observation' as BubbleType, MAX_OBSERVATIONS_PER_RUN, spaceIds)
     let validated = 0
@@ -221,6 +237,10 @@ export class Reflector {
         .filter(b => b.type === 'memory' && b.createdAt > (meta.lastSeen || 0))
 
       if (newMemories.length === 0) continue
+
+      // Check counter-evidence: look for 'challenges' links from counter-search
+      const challengeLinks = findLinksByRelation('challenges').filter(l => l.targetId === obs.id)
+      const hasCounterEvidence = challengeLinks.length > 0
 
       // Ask LLM to validate
       const prompt = VALIDATE_PROMPT
@@ -264,10 +284,20 @@ export class Reflector {
           meta.lastSeen = now
           meta.reviewCount = (meta.reviewCount || 0) + 1
 
-          // Adjust confidence based on trend
+          // Adjust confidence based on trend + counter-evidence
           let newConfidence = obs.confidence
           if (newTrend === 'strengthening') newConfidence = Math.min(1.0, obs.confidence + 0.1)
           else if (newTrend === 'weakening') newConfidence = Math.max(0.1, obs.confidence - 0.15)
+
+          // Counter-evidence penalty: if challenges links exist, further reduce confidence
+          if (hasCounterEvidence) {
+            const penalty = Math.min(0.2, challengeLinks.length * 0.08)
+            newConfidence = Math.max(0.1, newConfidence - penalty)
+            if (newTrend === 'strengthening' && challengeLinks.length >= 2) {
+              meta.trend = 'stable' // Can't strengthen when counter-evidence exists
+            }
+            logger.debug(`Reflector: counter-evidence penalty for "${obs.title}": ${challengeLinks.length} challenges, -${penalty.toFixed(2)} confidence`)
+          }
 
           updateBubble(obs.id, {
             metadata: meta as unknown as Record<string, unknown>,

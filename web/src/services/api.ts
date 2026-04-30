@@ -1,5 +1,5 @@
 import { useAuthStore } from '../stores/authStore'
-import type { SpaceMember, SpaceRole, CustomAgent, BizProduct, BizCounterparty, BizProject, BizPurchase, BizSale, BizLogisticsRecord, BizPayment, BizInvoice, InventoryItem, ReceivableItem, PayableItem, BizDashboardData, ProjectReconciliationItem, UserPreferences, DocStatus, DocLink, ProfitReportRow, CounterpartyStatementResult, MonthlyOverviewRow } from '../types'
+import type { SpaceMember, SpaceRole, CustomAgent, BizProduct, BizCounterparty, BizProject, BizPurchase, BizSale, BizLogisticsRecord, BizPayment, BizInvoice, InventoryItem, ReceivableItem, PayableItem, BizDashboardData, ProjectReconciliationItem, UserPreferences, DocStatus, DocLink, ProfitReportRow, CounterpartyStatementResult, MonthlyOverviewRow, KnowledgeStats, KnowledgeFilters, KnowledgeIndexResult, BubbleMemory, BubbleLink, EvidenceTree, GraphSubset } from '../types'
 
 const BASE = import.meta.env.DEV ? 'http://localhost:3000' : ''
 
@@ -527,4 +527,67 @@ export async function updatePreferences(preferences: UserPreferences): Promise<v
     const err = await res.json().catch(() => ({ error: `HTTP ${res.status}` }))
     throw new Error(err.error || `HTTP ${res.status}`)
   }
+}
+
+// ── Knowledge Browser API ─────────────────────────────────────────
+
+function filtersToQs(filters?: KnowledgeFilters): string {
+  if (!filters) return ''
+  const parts: string[] = []
+  if (filters.types?.length) parts.push(`types=${filters.types.join(',')}`)
+  if (filters.sources?.length) parts.push(`sources=${filters.sources.join(',')}`)
+  if (filters.levels?.length) parts.push(`levels=${filters.levels.join(',')}`)
+  if (filters.tags?.length) parts.push(`tags=${filters.tags.join(',')}`)
+  if (filters.minConfidence !== undefined) parts.push(`minConfidence=${filters.minConfidence}`)
+  if (filters.since) parts.push(`since=${filters.since}`)
+  if (filters.sortBy) parts.push(`sortBy=${filters.sortBy}`)
+  if (filters.sortDir) parts.push(`sortDir=${filters.sortDir}`)
+  return parts.length ? `&${parts.join('&')}` : ''
+}
+
+export async function fetchKnowledgeStats(spaceId?: string): Promise<KnowledgeStats> {
+  const qs = spaceId ? `?spaceId=${spaceId}` : ''
+  const res = await authFetch(`${BASE}/api/knowledge/stats${qs}`)
+  if (!res.ok) throw new Error(`HTTP ${res.status}`)
+  return res.json()
+}
+
+export async function fetchKnowledgeIndex(
+  page = 1, pageSize = 30, spaceId?: string, filters?: KnowledgeFilters,
+): Promise<KnowledgeIndexResult> {
+  const qs = `?page=${page}&pageSize=${pageSize}${spaceId ? `&spaceId=${spaceId}` : ''}${filtersToQs(filters)}`
+  const res = await authFetch(`${BASE}/api/knowledge${qs}`)
+  if (!res.ok) throw new Error(`HTTP ${res.status}`)
+  return res.json()
+}
+
+export async function searchKnowledge(
+  q: string, limit = 20, spaceId?: string, filters?: KnowledgeFilters,
+): Promise<BubbleMemory[]> {
+  const qs = `?q=${encodeURIComponent(q)}&limit=${limit}${spaceId ? `&spaceId=${spaceId}` : ''}${filtersToQs(filters)}`
+  const res = await authFetch(`${BASE}/api/knowledge/search${qs}`)
+  if (!res.ok) throw new Error(`HTTP ${res.status}`)
+  const data = await res.json()
+  return data.results
+}
+
+export async function fetchBubbleDetail(id: string, spaceId?: string): Promise<{ bubble: BubbleMemory; links: BubbleLink[] }> {
+  const qs = spaceId ? `?spaceId=${spaceId}` : ''
+  const res = await authFetch(`${BASE}/api/knowledge/${id}${qs}`)
+  if (!res.ok) throw new Error(`HTTP ${res.status}`)
+  return res.json()
+}
+
+export async function fetchEvidenceChain(id: string, spaceId?: string): Promise<EvidenceTree> {
+  const qs = spaceId ? `?spaceId=${spaceId}` : ''
+  const res = await authFetch(`${BASE}/api/knowledge/${id}/evidence${qs}`)
+  if (!res.ok) throw new Error(`HTTP ${res.status}`)
+  return res.json()
+}
+
+export async function fetchGraphSubset(id: string, depth = 2, spaceId?: string): Promise<GraphSubset> {
+  const qs = `?depth=${depth}${spaceId ? `&spaceId=${spaceId}` : ''}`
+  const res = await authFetch(`${BASE}/api/knowledge/${id}/graph${qs}`)
+  if (!res.ok) throw new Error(`HTTP ${res.status}`)
+  return res.json()
 }

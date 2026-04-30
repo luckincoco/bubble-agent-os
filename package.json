@@ -1,6 +1,6 @@
 {
   "name": "bubble-agent-os",
-  "version": "1.0.5",
+  "version": "1.0.6",
   "description": "Personal AI Agent powered by Bubble Theory",
   "type": "module",
   "main": "dist/index.js",

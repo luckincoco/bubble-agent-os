@@ -1,5 +1,6 @@
 import type { Bubble, LLMProvider, LLMMessage } from '../shared/types.js'
 import { createBubble, findCompactionCandidates, updateBubble } from '../bubble/model.js'
+import { getDatabase } from '../storage/database.js'
 import { addLink, getNeighborIds } from '../bubble/links.js'
 import { logger } from '../shared/logger.js'
 
@@ -149,6 +150,7 @@ const MAX_CLUSTER_SIZE = 12
 export class BubbleCompactor {
   private llm: LLMProvider
   private qualitySignals: Map<string, QualitySignal>
+  private lastCompactedAt = 0
 
   constructor(llm: LLMProvider) {
     this.llm = llm
@@ -206,6 +208,21 @@ export class BubbleCompactor {
   async compact(spaceId?: string, qualitySignals?: Map<string, QualitySignal>): Promise<CompactionResult> {
     this.qualitySignals = qualitySignals ?? new Map()
     const result: CompactionResult = { synthesized: 0, portrayed: 0, clustersFound: 0, skipped: 0, newBubbleIds: [] }
+
+    // Token short-circuit: skip if no new L0 bubbles since last compaction
+    if (this.lastCompactedAt > 0) {
+      const db = getDatabase()
+      let sql = 'SELECT COUNT(*) as cnt FROM bubbles WHERE abstraction_level = 0 AND created_at > ? AND deleted_at IS NULL'
+      const params: unknown[] = [this.lastCompactedAt]
+      if (spaceId) { sql += ' AND space_id = ?'; params.push(spaceId) }
+      else { sql += ' AND space_id IS NULL' }
+      const { cnt } = db.prepare(sql).get(...params) as { cnt: number }
+      if (cnt === 0) {
+        logger.debug('Compactor: no new L0 bubbles since last run, skipping LLM calls')
+        return result
+      }
+    }
+    this.lastCompactedAt = Date.now()
 
     if (this.qualitySignals.size > 0) {
       logger.info(`Compactor: received ${this.qualitySignals.size} quality signals from Reflector`)

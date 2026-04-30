@@ -7,7 +7,8 @@ export async function executeReflection(
   _params: Record<string, unknown>,
   deps: TaskDeps,
 ): Promise<TaskResult> {
-  const reflector = new Reflector(deps.llm)
+  const memoryLlm = deps.llmRouter?.forCategory('memory') ?? deps.llm
+  const reflector = new Reflector(memoryLlm)
   const db = getDatabase()
 
   // Get all distinct space IDs

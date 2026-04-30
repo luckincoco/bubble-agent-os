@@ -103,7 +103,21 @@ export async function executeLearningDigest(
     contradictionNote = `\n\n注意：有 ${contradictions.length} 条矛盾/惊讶发现：\n${contradictions.slice(0, 3).map(c => `- ${c.title}`).join('\n')}`
   }
 
-  // Step 4: LLM generates natural digest
+  // Step 4: LLM generates natural digest (skip if same sources as last digest)
+  const lastDigest = db.prepare(
+    "SELECT metadata FROM bubbles WHERE source = 'learning-digest' AND deleted_at IS NULL ORDER BY created_at DESC LIMIT 1",
+  ).get() as { metadata: string } | undefined
+  if (lastDigest) {
+    try {
+      const lastMeta = JSON.parse(lastDigest.metadata)
+      const lastIds = new Set<string>(lastMeta.sourceBubbleIds || [])
+      if (allSourceIds.length > 0 && allSourceIds.length === lastIds.size && allSourceIds.every(id => lastIds.has(id))) {
+        logger.debug('LearningDigest: source bubble IDs unchanged since last digest, skipping LLM')
+        return { success: true, message: '学习日报: 数据与上次相同，跳过生成' }
+      }
+    } catch { /* ignore parse error */ }
+  }
+
   const inputText = `以下是过去24小时的学习数据（共 ${rows.length} 条）：\n\n${summaryParts.join('\n\n')}${contradictionNote}`
 
   let digestText: string

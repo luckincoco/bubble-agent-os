@@ -9,8 +9,9 @@ export async function executeBubbleCompaction(
   _params: Record<string, unknown>,
   deps: TaskDeps,
 ): Promise<TaskResult> {
-  const compactor = new BubbleCompactor(deps.llm)
-  const reflector = new Reflector(deps.llm)
+  const memoryLlm = deps.llmRouter?.forCategory('memory') ?? deps.llm
+  const compactor = new BubbleCompactor(memoryLlm)
+  const reflector = new Reflector(memoryLlm)
   const db = getDatabase()
 
   // Get all distinct space IDs

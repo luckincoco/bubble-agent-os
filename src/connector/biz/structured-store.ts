@@ -29,6 +29,15 @@ export interface BizContext {
 
 function now(): number { return Date.now() }
 
+/**
+ * Build a WHERE clause scoped by space_id when provided.
+ * Returns [clause, params] to append to existing query params.
+ */
+function scopedWhere(id: string, spaceId?: string): { clause: string; params: unknown[] } {
+  if (spaceId) return { clause: 'WHERE id = ? AND space_id = ?', params: [id, spaceId] }
+  return { clause: 'WHERE id = ?', params: [id] }
+}
+
 /** Convert snake_case DB row to camelCase TS object */
 function toCamel<T>(row: Record<string, unknown>): T {
   const result: Record<string, unknown> = {}
@@ -95,7 +104,7 @@ export function getProductById(id: string): BizProduct | undefined {
   return row ? toCamel<BizProduct>(row) : undefined
 }
 
-export function updateProduct(id: string, updates: Partial<BizProduct>): void {
+export function updateProduct(id: string, updates: Partial<BizProduct>, spaceId?: string): void {
   const db = getDatabase()
   const fields: string[] = []
   const values: unknown[] = []
@@ -112,12 +121,14 @@ export function updateProduct(id: string, updates: Partial<BizProduct>): void {
   }
   if (fields.length === 0) return
   fields.push('updated_at = ?')
-  values.push(now(), id)
-  db.prepare(`UPDATE biz_products SET ${fields.join(', ')} WHERE id = ?`).run(...values)
+  values.push(now())
+  const { clause, params } = scopedWhere(id, spaceId)
+  db.prepare(`UPDATE biz_products SET ${fields.join(', ')} ${clause}`).run(...values, ...params)
 }
 
-export function deleteProduct(id: string): void {
-  getDatabase().prepare('DELETE FROM biz_products WHERE id = ?').run(id)
+export function deleteProduct(id: string, spaceId?: string): void {
+  const { clause, params } = scopedWhere(id, spaceId)
+  getDatabase().prepare(`DELETE FROM biz_products ${clause}`).run(...params)
 }
 
 // ── Counterparties ──────────────────────────────────────────────────
@@ -156,7 +167,7 @@ export function findCounterpartyByName(ctx: BizContext, name: string, type?: str
   return row ? toCamel<BizCounterparty>(row) : undefined
 }
 
-export function updateCounterparty(id: string, updates: Partial<BizCounterparty>): void {
+export function updateCounterparty(id: string, updates: Partial<BizCounterparty>, spaceId?: string): void {
   const db = getDatabase()
   const fields: string[] = []
   const values: unknown[] = []
@@ -173,12 +184,14 @@ export function updateCounterparty(id: string, updates: Partial<BizCounterparty>
   }
   if (fields.length === 0) return
   fields.push('updated_at = ?')
-  values.push(now(), id)
-  db.prepare(`UPDATE biz_counterparties SET ${fields.join(', ')} WHERE id = ?`).run(...values)
+  values.push(now())
+  const { clause, params } = scopedWhere(id, spaceId)
+  db.prepare(`UPDATE biz_counterparties SET ${fields.join(', ')} ${clause}`).run(...values, ...params)
 }
 
-export function deleteCounterparty(id: string): void {
-  getDatabase().prepare('DELETE FROM biz_counterparties WHERE id = ?').run(id)
+export function deleteCounterparty(id: string, spaceId?: string): void {
+  const { clause, params } = scopedWhere(id, spaceId)
+  getDatabase().prepare(`DELETE FROM biz_counterparties ${clause}`).run(...params)
 }
 
 // ── Projects ────────────────────────────────────────────────────────
@@ -206,7 +219,7 @@ export function findProjectByName(ctx: BizContext, name: string): BizProject | u
   return row ? toCamel<BizProject>(row) : undefined
 }
 
-export function updateProject(id: string, updates: Partial<BizProject>): void {
+export function updateProject(id: string, updates: Partial<BizProject>, spaceId?: string): void {
   const db = getDatabase()
   const fields: string[] = []
   const values: unknown[] = []
@@ -223,12 +236,14 @@ export function updateProject(id: string, updates: Partial<BizProject>): void {
   }
   if (fields.length === 0) return
   fields.push('updated_at = ?')
-  values.push(now(), id)
-  db.prepare(`UPDATE biz_projects SET ${fields.join(', ')} WHERE id = ?`).run(...values)
+  values.push(now())
+  const { clause, params } = scopedWhere(id, spaceId)
+  db.prepare(`UPDATE biz_projects SET ${fields.join(', ')} ${clause}`).run(...values, ...params)
 }
 
-export function deleteProject(id: string): void {
-  getDatabase().prepare('DELETE FROM biz_projects WHERE id = ?').run(id)
+export function deleteProject(id: string, spaceId?: string): void {
+  const { clause, params } = scopedWhere(id, spaceId)
+  getDatabase().prepare(`DELETE FROM biz_projects ${clause}`).run(...params)
 }
 
 // ── Purchases ───────────────────────────────────────────────────────
@@ -306,7 +321,7 @@ export function getPurchases(ctx: BizContext, filter: BizQueryFilter = {}): BizP
   return rows.map(r => toCamel<BizPurchase>(r))
 }
 
-export function updatePurchase(id: string, updates: Partial<BizPurchase>): void {
+export function updatePurchase(id: string, updates: Partial<BizPurchase>, spaceId?: string): void {
   const db = getDatabase()
   const map: Record<string, string> = {
     date: 'date', orderNo: 'order_no', supplierId: 'supplier_id', productId: 'product_id',
@@ -323,12 +338,14 @@ export function updatePurchase(id: string, updates: Partial<BizPurchase>): void 
   }
   if (fields.length === 0) return
   fields.push('updated_at = ?')
-  values.push(now(), id)
-  db.prepare(`UPDATE biz_purchases SET ${fields.join(', ')} WHERE id = ?`).run(...values)
+  values.push(now())
+  const { clause, params } = scopedWhere(id, spaceId)
+  db.prepare(`UPDATE biz_purchases SET ${fields.join(', ')} ${clause}`).run(...values, ...params)
 }
 
-export function deletePurchase(id: string): void {
-  getDatabase().prepare('UPDATE biz_purchases SET deleted_at = ? WHERE id = ?').run(now(), id)
+export function deletePurchase(id: string, spaceId?: string): void {
+  const { clause, params } = scopedWhere(id, spaceId)
+  getDatabase().prepare(`UPDATE biz_purchases SET deleted_at = ? ${clause}`).run(now(), ...params)
 }
 
 // ── Sales ───────────────────────────────────────────────────────────
@@ -389,7 +406,7 @@ export function getSales(ctx: BizContext, filter: BizQueryFilter = {}): BizSale[
   return rows.map(r => toCamel<BizSale>(r))
 }
 
-export function updateSale(id: string, updates: Partial<BizSale>): void {
+export function updateSale(id: string, updates: Partial<BizSale>, spaceId?: string): void {
   const db = getDatabase()
   const map: Record<string, string> = {
     date: 'date', orderNo: 'order_no', customerId: 'customer_id', supplierId: 'supplier_id',
@@ -408,12 +425,14 @@ export function updateSale(id: string, updates: Partial<BizSale>): void {
   }
   if (fields.length === 0) return
   fields.push('updated_at = ?')
-  values.push(now(), id)
-  db.prepare(`UPDATE biz_sales SET ${fields.join(', ')} WHERE id = ?`).run(...values)
+  values.push(now())
+  const { clause, params } = scopedWhere(id, spaceId)
+  db.prepare(`UPDATE biz_sales SET ${fields.join(', ')} ${clause}`).run(...values, ...params)
 }
 
-export function deleteSale(id: string): void {
-  getDatabase().prepare('UPDATE biz_sales SET deleted_at = ? WHERE id = ?').run(now(), id)
+export function deleteSale(id: string, spaceId?: string): void {
+  const { clause, params } = scopedWhere(id, spaceId)
+  getDatabase().prepare(`UPDATE biz_sales SET deleted_at = ? ${clause}`).run(now(), ...params)
 }
 
 // ── Logistics ───────────────────────────────────────────────────────
@@ -472,8 +491,9 @@ export function getLogistics(ctx: BizContext, filter: BizQueryFilter = {}): BizL
   return rows.map(r => toCamel<BizLogisticsRecord>(r))
 }
 
-export function deleteLogistics(id: string): void {
-  getDatabase().prepare('UPDATE biz_logistics SET deleted_at = ? WHERE id = ?').run(now(), id)
+export function deleteLogistics(id: string, spaceId?: string): void {
+  const { clause, params } = scopedWhere(id, spaceId)
+  getDatabase().prepare(`UPDATE biz_logistics SET deleted_at = ? ${clause}`).run(now(), ...params)
 }
 
 // ── Payments ────────────────────────────────────────────────────────
@@ -527,8 +547,9 @@ export function getPayments(ctx: BizContext, filter: BizQueryFilter = {}): BizPa
   return rows.map(r => toCamel<BizPayment>(r))
 }
 
-export function deletePayment(id: string): void {
-  getDatabase().prepare('UPDATE biz_payments SET deleted_at = ? WHERE id = ?').run(now(), id)
+export function deletePayment(id: string, spaceId?: string): void {
+  const { clause, params } = scopedWhere(id, spaceId)
+  getDatabase().prepare(`UPDATE biz_payments SET deleted_at = ? ${clause}`).run(now(), ...params)
 }
 
 // ── Invoices ────────────────────────────────────────────────────────
@@ -583,8 +604,9 @@ export function getInvoices(ctx: BizContext, filter: BizQueryFilter = {}): BizIn
   return rows.map(r => toCamel<BizInvoice>(r))
 }
 
-export function deleteInvoice(id: string): void {
-  getDatabase().prepare('UPDATE biz_invoices SET deleted_at = ? WHERE id = ?').run(now(), id)
+export function deleteInvoice(id: string, spaceId?: string): void {
+  const { clause, params } = scopedWhere(id, spaceId)
+  getDatabase().prepare(`UPDATE biz_invoices SET deleted_at = ? ${clause}`).run(now(), ...params)
 }
 
 // ── Computed Views ──────────────────────────────────────────────────

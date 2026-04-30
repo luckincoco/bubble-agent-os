@@ -35,6 +35,13 @@ const QUERY_GEN_PROMPT = `你是搜索查询构造器。以下是用户最近对
 4. 如果词汇中没有值得搜索的话题，返回空数组
 5. 输出严格 JSON：["query1", "query2"]（最多3个）`
 
+const COUNTER_QUERY_PROMPT = `你是反确认偏差引擎。给定一条已有知识，生成一个搜索查询来寻找可能的反面证据或替代观点。
+
+要求：
+1. 查询应该能找到与已有结论相反或至少不同的证据
+2. 使用"争议""质疑""反对""替代""风险""局限"等关键词
+3. 输出严格 JSON：{"counterQuery": "查询内容"} 或 {"counterQuery": null}（如果不适合反向搜索）`
+
 const DEDUP_WINDOW_MS = 24 * 60 * 60 * 1000 // 24 hours
 
 interface SearchStats {
@@ -51,6 +58,8 @@ export async function executeInterestSearch(
   _params: Record<string, unknown>,
   deps: TaskDeps,
 ): Promise<TaskResult> {
+  const searchLlm = deps.llmRouter?.forCategory('search') ?? deps.llm
+
   // Step 1: Get active users with focus data
   const userIds = deps.memory.getActiveFocusUserIds()
   if (userIds.length === 0) {
@@ -78,11 +87,23 @@ export async function executeInterestSearch(
 
   logger.info(`InterestSearch: ${userIds.length} 用户, ${filteredTerms.length} 个焦点词: ${filteredTerms.map(([t, f]) => `${t}(${f})`).join(', ')}`)
 
+  // Pre-flight dedup: if all focus terms are covered by recent searches, skip LLM call entirely
+  const recentQueriesPreCheck = getRecentSearchedQueries()
+  if (recentQueriesPreCheck.length > 0) {
+    const allCovered = filteredTerms.every(([term]) =>
+      recentQueriesPreCheck.some(rq => rq.toLowerCase().includes(term.toLowerCase())),
+    )
+    if (allCovered) {
+      logger.debug(`InterestSearch: all ${filteredTerms.length} focus terms already covered by recent searches, skipping LLM`)
+      return { success: true, message: `兴趣搜索: ${filteredTerms.length} 个焦点词近期已全部搜索过，跳过 LLM` }
+    }
+  }
+
   // Step 4: LLM constructs search queries (single call, ~200 tokens)
   const termsList = filteredTerms.map(([term, freq]) => `${term} (频率${freq})`).join('\n')
   let queries: string[] = []
   try {
-    const response = await deps.llm.chat([
+    const response = await searchLlm.chat([
       { role: 'system', content: QUERY_GEN_PROMPT },
       { role: 'user', content: termsList },
     ])
@@ -232,7 +253,62 @@ export async function executeInterestSearch(
     }
   }
 
-  // Step 7: Optional Feishu notification
+  // Step 7: Anti-confirmation bias — counter-query for high-confidence knowledge
+  let counterSearched = 0
+  try {
+    const db = getDatabase()
+    // Find high-confidence synthesis/portrait bubbles that haven't been counter-searched
+    const highConfRows = db.prepare(
+      "SELECT * FROM bubbles WHERE abstraction_level >= 1 AND confidence >= 0.8 AND deleted_at IS NULL AND json_extract(metadata, '$.counterSearched') IS NULL ORDER BY updated_at DESC LIMIT 3",
+    ).all() as any[]
+
+    for (const row of highConfRows) {
+      try {
+        const counterResp = await searchLlm.chat([
+          { role: 'system', content: COUNTER_QUERY_PROMPT },
+          { role: 'user', content: `标题: ${row.title}\n内容: ${String(row.content).slice(0, 500)}` },
+        ])
+        const counterMatch = counterResp.content.match(/\{[\s\S]*\}/)
+        if (!counterMatch) continue
+        const { counterQuery } = JSON.parse(counterMatch[0]) as { counterQuery: string | null }
+        if (!counterQuery) continue
+
+        // Execute counter-search
+        const counterResult = await deps.tools.execute('web_search', { query: counterQuery, limit: '2' })
+        if (counterResult.startsWith('未找到') || counterResult.startsWith('搜索出错') || counterResult.startsWith('未配置')) continue
+
+        const counterBubble = createBubble({
+          type: 'observation',
+          title: `反向验证: ${counterQuery.slice(0, 40)}`,
+          content: counterResult,
+          tags: ['counter-search', 'anti-bias'],
+          source: 'counter-search',
+          confidence: 0.65,
+          decayRate: 0.10,
+          metadata: { originalBubbleId: row.id, counterQuery, searchedAt: Date.now() },
+        })
+        addLink(counterBubble.id, row.id, 'challenges', 0.6, 'counter-search')
+        allBubbleIds.push(counterBubble.id)
+        counterSearched++
+
+        // Mark original bubble as counter-searched
+        const existingMeta = row.metadata ? JSON.parse(row.metadata) : {}
+        db.prepare('UPDATE bubbles SET metadata = ?, updated_at = ? WHERE id = ?').run(
+          JSON.stringify({ ...existingMeta, counterSearched: Date.now() }),
+          Date.now(),
+          row.id,
+        )
+
+        logger.info(`InterestSearch: counter-search for "${row.title}" → "${counterQuery}"`)
+      } catch (err) {
+        logger.debug(`InterestSearch: counter-search failed for ${row.id}: ${err instanceof Error ? err.message : String(err)}`)
+      }
+    }
+  } catch (err) {
+    logger.debug(`InterestSearch: counter-search phase error: ${err instanceof Error ? err.message : String(err)}`)
+  }
+
+  // Step 8: Optional Feishu notification
   if (deps.feishu && stats.created > 0) {
     const chatId = deps.feishu?.getAdminChatId() || String(_params.chatId || process.env.FEISHU_ADMIN_CHAT_ID || '')
     if (chatId) {
@@ -245,7 +321,7 @@ export async function executeInterestSearch(
     }
   }
 
-  const message = `兴趣搜索: 生成 ${stats.queriesGenerated} 个查询, 去重 ${stats.queriesDeduped} 个, 搜索 ${stats.searched} 个, 新增 ${stats.created} 条, 跳过 ${stats.skipped} 条${stats.contradictions > 0 ? `, 矛盾 ${stats.contradictions} 条` : ''}${stats.deepReads > 0 ? `, 深度阅读 ${stats.deepReads} 条` : ''}`
+  const message = `兴趣搜索: 生成 ${stats.queriesGenerated} 个查询, 去重 ${stats.queriesDeduped} 个, 搜索 ${stats.searched} 个, 新增 ${stats.created} 条, 跳过 ${stats.skipped} 条${stats.contradictions > 0 ? `, 矛盾 ${stats.contradictions} 条` : ''}${stats.deepReads > 0 ? `, 深度阅读 ${stats.deepReads} 条` : ''}${counterSearched > 0 ? `, 反向验证 ${counterSearched} 条` : ''}`
   logger.info(`InterestSearch: ${message}`)
 
   return {

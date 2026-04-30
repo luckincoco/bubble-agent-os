@@ -1,11 +1,13 @@
 import { getConfig } from './shared/config.js'
 import { resolve } from 'node:path'
 import { createLLM } from './ai/llm.js'
+import { ModelRouter } from './ai/model-router.js'
 import { createEmbeddingProvider } from './ai/embeddings.js'
 import { Brain } from './kernel/brain.js'
 import { MemoryManager } from './memory/manager.js'
 import { SemanticBridge } from './memory/semantic-bridge.js'
 import { SurpriseDetector } from './memory/surprise-detector.js'
+import { ConversationInsightEvaluator } from './memory/conversation-insight-evaluator.js'
 import { ToolRegistry } from './connector/registry.js'
 import { createWeatherTool } from './connector/tools/weather.js'
 import { createTimeTool } from './connector/tools/time.js'
@@ -37,8 +39,9 @@ async function main() {
   // Seed built-in agents (「问」cognitive framework)
   seedAskAgent()
 
-  const llm = createLLM(config.llm)
-  const memory = new MemoryManager(llm, config.features.focusTracking)
+  const llmRouter = new ModelRouter(config.llm)
+  const llm = llmRouter.default
+  const memory = new MemoryManager(llmRouter.forCategory('memory'), config.features.focusTracking)
 
   let embeddingProvider: import('./shared/types.js').EmbeddingProvider | undefined
   if (config.llm.apiKey && config.llm.baseUrl) {
@@ -73,9 +76,10 @@ async function main() {
     tools.register(tool)
   }
 
-  const brain = new Brain(llm)
+  const brain = new Brain(llmRouter.forCategory('chat'))
   brain.setMemory(memory)
   brain.setTools(tools)
+  brain.setInsightEvaluator(new ConversationInsightEvaluator(llmRouter.forCategory('memory')))
 
   // Initialize event-driven modules based on feature flags
   const semanticBridge = config.features.semanticBridge ? new SemanticBridge() : undefined
@@ -86,8 +90,9 @@ async function main() {
   if (config.features.focusTracking) logger.info('Module: FocusTracker enabled')
 
   // Initialize biz entry handler, teach handler, skill system, and unified message router
-  const bizHandler = new BizEntryHandler(llm, embeddingProvider)
-  const teachHandler = new TeachHandler(llm, embeddingProvider)
+  const bizLlm = llmRouter.forCategory('biz')
+  const bizHandler = new BizEntryHandler(bizLlm, embeddingProvider)
+  const teachHandler = new TeachHandler(bizLlm, embeddingProvider)
   const skillsDir = resolve(config.storage.dataDir, '..', 'skills')
   const skillLoader = new SkillLoader(skillsDir)
   const skillRouter = new SkillRouter(skillLoader, bizHandler, teachHandler)
@@ -109,14 +114,14 @@ async function main() {
   }
 
   // Wire up event notifier for pushing mirror events to external contacts
-  const eventNotifier = new EventNotifier(wecom ?? null, llm)
+  const eventNotifier = new EventNotifier(wecom ?? null, bizLlm)
   bizHandler.setEventNotifier(eventNotifier)
   logger.info('Module: EventNotifier enabled')
 
   // Initialize scheduler
   let scheduler: TaskScheduler | undefined
   try {
-    scheduler = new TaskScheduler({ brain, memory, tools, llm, feishu })
+    scheduler = new TaskScheduler({ brain, memory, tools, llm, llmRouter, feishu })
     await scheduler.init()
     logger.info('Module: TaskScheduler enabled')
   } catch (err) {

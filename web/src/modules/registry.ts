@@ -1,6 +1,6 @@
 import type { ComponentType } from 'react'
 import { ChatView } from '../components/chat/ChatView'
-import { MemoryPanel } from '../components/memory/MemoryPanel'
+import { KnowledgeBrowser } from '../components/knowledge/KnowledgeBrowser'
 import { BusinessFlow } from '../components/biz/BusinessFlow'
 
 export interface ModuleDefinition {
@@ -52,12 +52,12 @@ const MODULES: ModuleDefinition[] = [
     id: 'memory',
     tab: {
       key: 'memory',
-      label: '记忆',
+      label: '知识',
       icon: 'M12 2a10 10 0 100 20 10 10 0 000-20zM12 8a4 4 0 100 8 4 4 0 000-8z',
       order: 40,
     },
     locked: true,
-    component: MemoryPanel,
+    component: KnowledgeBrowser,
   },
 ]
 

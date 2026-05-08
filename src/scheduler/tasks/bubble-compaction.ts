@@ -11,6 +11,7 @@ export async function executeBubbleCompaction(
 ): Promise<TaskResult> {
   const memoryLlm = deps.llmRouter?.forCategory('memory') ?? deps.llm
   const compactor = new BubbleCompactor(memoryLlm)
+  if (deps.eventBus) compactor.setEventBus(deps.eventBus)
   const reflector = new Reflector(memoryLlm)
   const db = getDatabase()
 

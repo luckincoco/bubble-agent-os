@@ -744,6 +744,157 @@ function runMigrations(database: Database.Database, defaultPassword: string) {
     )
   `)
 
+  // ── v0.7.0: Temporal Knowledge Graph + Event Sourcing + Memory Views + Working Memory ──
+
+  // 7.0-1: Episodes table (immutable raw records)
+  database.exec(`
+    CREATE TABLE IF NOT EXISTS episodes (
+      id TEXT PRIMARY KEY,
+      type TEXT NOT NULL,
+      source TEXT NOT NULL,
+      actor_id TEXT,
+      space_id TEXT,
+      content TEXT NOT NULL,
+      summary TEXT,
+      metadata TEXT DEFAULT '{}',
+      parent_episode_id TEXT,
+      created_at INTEGER NOT NULL
+    )
+  `)
+  database.exec('CREATE INDEX IF NOT EXISTS idx_episodes_type ON episodes(type)')
+  database.exec('CREATE INDEX IF NOT EXISTS idx_episodes_actor ON episodes(actor_id)')
+  database.exec('CREATE INDEX IF NOT EXISTS idx_episodes_created ON episodes(created_at)')
+  database.exec('CREATE INDEX IF NOT EXISTS idx_episodes_space ON episodes(space_id)')
+
+  // 7.0-2: Events table (append-only event log with hash chain)
+  database.exec(`
+    CREATE TABLE IF NOT EXISTS events (
+      id TEXT PRIMARY KEY,
+      type TEXT NOT NULL,
+      timestamp INTEGER NOT NULL,
+      actor TEXT NOT NULL,
+      space_id TEXT,
+      payload TEXT NOT NULL,
+      metadata TEXT DEFAULT '{}',
+      hash TEXT NOT NULL,
+      prev_hash TEXT,
+      version INTEGER NOT NULL DEFAULT 1
+    )
+  `)
+  database.exec('CREATE INDEX IF NOT EXISTS idx_events_type ON events(type)')
+  database.exec('CREATE INDEX IF NOT EXISTS idx_events_timestamp ON events(timestamp)')
+  database.exec('CREATE INDEX IF NOT EXISTS idx_events_actor ON events(actor)')
+  database.exec('CREATE INDEX IF NOT EXISTS idx_events_space ON events(space_id)')
+
+  // 7.0-3: Event snapshots (periodic checkpoints for replay optimization)
+  database.exec(`
+    CREATE TABLE IF NOT EXISTS event_snapshots (
+      id TEXT PRIMARY KEY,
+      event_id TEXT NOT NULL,
+      table_name TEXT NOT NULL,
+      state TEXT NOT NULL,
+      created_at INTEGER NOT NULL
+    )
+  `)
+  database.exec('CREATE INDEX IF NOT EXISTS idx_snapshots_event ON event_snapshots(event_id)')
+
+  // 7.0-4: Memory views (role-based data projection)
+  database.exec(`
+    CREATE TABLE IF NOT EXISTS memory_views (
+      id TEXT PRIMARY KEY,
+      name TEXT NOT NULL UNIQUE,
+      description TEXT,
+      role_pattern TEXT NOT NULL,
+      filters TEXT NOT NULL,
+      priority INTEGER DEFAULT 0,
+      created_at INTEGER NOT NULL
+    )
+  `)
+
+  // 7.0-5: View bindings (maps entity to their active view)
+  database.exec(`
+    CREATE TABLE IF NOT EXISTS view_bindings (
+      id TEXT PRIMARY KEY,
+      entity_type TEXT NOT NULL,
+      entity_id TEXT NOT NULL,
+      view_id TEXT NOT NULL REFERENCES memory_views(id),
+      created_at INTEGER NOT NULL,
+      UNIQUE(entity_type, entity_id, view_id)
+    )
+  `)
+
+  // 7.0-6: Working memory (autonomous memory scheduling)
+  database.exec(`
+    CREATE TABLE IF NOT EXISTS working_memory (
+      id TEXT PRIMARY KEY,
+      session_id TEXT NOT NULL,
+      bubble_id TEXT NOT NULL,
+      tier TEXT NOT NULL,
+      priority_score REAL NOT NULL,
+      pinned INTEGER DEFAULT 0,
+      loaded_at INTEGER NOT NULL,
+      last_accessed INTEGER NOT NULL,
+      token_cost INTEGER NOT NULL
+    )
+  `)
+  database.exec('CREATE INDEX IF NOT EXISTS idx_wm_session ON working_memory(session_id, tier)')
+  database.exec('CREATE INDEX IF NOT EXISTS idx_wm_priority ON working_memory(session_id, priority_score DESC)')
+
+  // 7.0-7: Temporal columns on bubbles
+  const bubbleColsTemporal = database.pragma('table_info(bubbles)') as Array<{ name: string }>
+  if (!bubbleColsTemporal.some(c => c.name === 'valid_from')) {
+    database.exec('ALTER TABLE bubbles ADD COLUMN valid_from INTEGER')
+    database.exec('ALTER TABLE bubbles ADD COLUMN valid_until INTEGER')
+    database.exec('ALTER TABLE bubbles ADD COLUMN episode_id TEXT')
+    // Backfill: valid_from = created_at for all existing bubbles
+    database.exec('UPDATE bubbles SET valid_from = created_at WHERE valid_from IS NULL')
+    database.exec('CREATE INDEX IF NOT EXISTS idx_bubbles_valid ON bubbles(valid_from, valid_until)')
+    database.exec('CREATE INDEX IF NOT EXISTS idx_bubbles_episode ON bubbles(episode_id)')
+    logger.info('Migration v0.7.0: added temporal columns to bubbles with backfill')
+  }
+
+  // 7.0-8: Temporal columns on bubble_links
+  const linkColsTemporal = database.pragma('table_info(bubble_links)') as Array<{ name: string }>
+  if (!linkColsTemporal.some(c => c.name === 'valid_from')) {
+    database.exec('ALTER TABLE bubble_links ADD COLUMN valid_from INTEGER')
+    database.exec('ALTER TABLE bubble_links ADD COLUMN valid_until INTEGER')
+    database.exec('ALTER TABLE bubble_links ADD COLUMN episode_id TEXT')
+    database.exec("ALTER TABLE bubble_links ADD COLUMN metadata TEXT DEFAULT '{}'")
+    // Backfill: valid_from = created_at for all existing links
+    database.exec('UPDATE bubble_links SET valid_from = created_at WHERE valid_from IS NULL')
+    database.exec('CREATE INDEX IF NOT EXISTS idx_links_temporal ON bubble_links(valid_from, valid_until)')
+    logger.info('Migration v0.7.0: added temporal columns to bubble_links with backfill')
+  }
+
+  // 7.0-9: Seed default memory views
+  const viewCount = (database.prepare('SELECT COUNT(*) as cnt FROM memory_views').get() as { cnt: number }).cnt
+  if (viewCount === 0) {
+    const now = Date.now()
+    database.prepare(`INSERT INTO memory_views (id, name, description, role_pattern, filters, priority, created_at) VALUES (?, ?, ?, ?, ?, ?, ?)`).run(
+      ulid(), 'admin', 'Full access view for administrators', 'admin',
+      JSON.stringify({ allowedTypes: '*', maxAbstractionLevel: 2, counterpartyFilter: 'none', timeWindow: null, tagFilter: null }),
+      100, now
+    )
+    database.prepare(`INSERT INTO memory_views (id, name, description, role_pattern, filters, priority, created_at) VALUES (?, ?, ?, ?, ?, ?, ?)`).run(
+      ulid(), 'supplier', 'Restricted view for suppliers', 'supplier',
+      JSON.stringify({ allowedTypes: ['memory', 'event'], maxAbstractionLevel: 0, counterpartyFilter: 'bound', timeWindow: null, tagFilter: null }),
+      50, now
+    )
+    database.prepare(`INSERT INTO memory_views (id, name, description, role_pattern, filters, priority, created_at) VALUES (?, ?, ?, ?, ?, ?, ?)`).run(
+      ulid(), 'customer', 'Restricted view for customers', 'customer',
+      JSON.stringify({ allowedTypes: ['memory', 'event'], maxAbstractionLevel: 0, counterpartyFilter: 'bound', timeWindow: null, tagFilter: null }),
+      50, now
+    )
+    database.prepare(`INSERT INTO memory_views (id, name, description, role_pattern, filters, priority, created_at) VALUES (?, ?, ?, ?, ?, ?, ?)`).run(
+      ulid(), 'logistics', 'Restricted view for logistics providers', 'logistics',
+      JSON.stringify({ allowedTypes: ['memory', 'event'], maxAbstractionLevel: 0, counterpartyFilter: 'bound', timeWindow: null, tagFilter: null }),
+      50, now
+    )
+    logger.info('Migration v0.7.0: seeded 4 default memory views')
+  }
+
+  logger.info('Migration v0.7.0: temporal + event sourcing + memory views + working memory — ready')
+
   // ── Phase 3: Multi-role expansion — relax UNIQUE + add is_active ──
   // Check if is_active column exists; if not, migrate the table
   const extColInfo = database.prepare("PRAGMA table_info(external_contacts)").all() as Array<{ name: string }>

@@ -3,8 +3,10 @@ import type { ToolRegistry } from './registry.js'
 import type { SurpriseDetector } from '../memory/surprise-detector.js'
 import type { BizEntryHandler } from './biz/handler.js'
 import type { SkillRouter as SkillRouterType } from './skills/skill-router.js'
+import type { EventBus } from '../event/event-bus.js'
 import type { UserContext, ThinkResult } from '../shared/types.js'
 import { isExternalContext } from '../shared/types.js'
+import { createEpisode, type EpisodeSource } from '../temporal/episode-store.js'
 import { findRecentBySource, getBubble, updateBubble } from '../bubble/model.js'
 import { logger } from '../shared/logger.js'
 
@@ -63,6 +65,7 @@ export class MessageRouter {
   private surpriseDetector: SurpriseDetector | null
   private bizHandler: BizEntryHandler | null
   private skillRouter: SkillRouterType | null
+  private eventBus: EventBus | null
 
   constructor(deps: {
     brain: Brain
@@ -70,12 +73,14 @@ export class MessageRouter {
     surpriseDetector?: SurpriseDetector
     bizHandler?: BizEntryHandler
     skillRouter?: SkillRouterType
+    eventBus?: EventBus
   }) {
     this.brain = deps.brain
     this.tools = deps.tools ?? null
     this.surpriseDetector = deps.surpriseDetector ?? null
     this.bizHandler = deps.bizHandler ?? null
     this.skillRouter = deps.skillRouter ?? null
+    this.eventBus = deps.eventBus ?? null
   }
 
   /**
@@ -89,8 +94,30 @@ export class MessageRouter {
   async handle(
     text: string,
     ctx: UserContext,
-    options?: { onChunk?: (text: string) => void },
+    options?: { onChunk?: (text: string) => void; source?: EpisodeSource },
   ): Promise<RouterResult> {
+    // ── Create Episode for this conversation turn ────────────────
+    let episodeId: string | undefined
+    if (this.eventBus) {
+      try {
+        const source: EpisodeSource = options?.source ?? 'api'
+        const episode = createEpisode({
+          type: 'conversation',
+          source,
+          actorId: ctx.userId,
+          spaceId: ctx.activeSpaceId,
+          content: text,
+        })
+        episodeId = episode.id
+        this.eventBus.emitFireAndForget(
+          { type: 'conversation.episode.created', payload: { episodeId: episode.id, episodeType: episode.type, source, actorId: ctx.userId } },
+          { actor: ctx.userId, spaceId: ctx.activeSpaceId, metadata: { episodeId: episode.id } },
+        )
+      } catch (err) {
+        logger.debug('Router: episode creation failed:', err instanceof Error ? err.message : String(err))
+      }
+    }
+
     // ── Layer 0: Reflex ────────────────────────────────────────────
     const reflex = await this.runReflexLayer(text, ctx)
 
@@ -100,6 +127,13 @@ export class MessageRouter {
       this.runAnticipationLayer(text, ctx).catch(err =>
         logger.error('Router L2 anticipation error:', err instanceof Error ? err.message : String(err)),
       )
+      // Emit response event
+      if (this.eventBus && episodeId) {
+        this.eventBus.emitFireAndForget(
+          { type: 'conversation.response.sent', payload: { episodeId, toolsUsed: [], tokenUsage: undefined } },
+          { actor: 'system', spaceId: ctx.activeSpaceId, metadata: { episodeId } },
+        )
+      }
       return { response: reflex.directResponse, sources: [] }
     }
 
@@ -111,6 +145,14 @@ export class MessageRouter {
     this.runAnticipationLayer(text, ctx).catch(err =>
       logger.error('Router L2 anticipation error:', err instanceof Error ? err.message : String(err)),
     )
+
+    // Emit response event
+    if (this.eventBus && episodeId) {
+      this.eventBus.emitFireAndForget(
+        { type: 'conversation.response.sent', payload: { episodeId, toolsUsed: [], tokenUsage: undefined } },
+        { actor: 'system', spaceId: ctx.activeSpaceId, metadata: { episodeId } },
+      )
+    }
 
     return {
       response: thinkResult.response,
@@ -190,6 +232,13 @@ export class MessageRouter {
             context: '',
             fullyHandled: true,
             directResponse: skillResult.response,
+          }
+        }
+        // Context injection: skill matched but delegates to Brain with enriched context
+        if (skillResult.matched && skillResult.contextInjection) {
+          return {
+            handled: true,
+            context: skillResult.contextInjection,
           }
         }
       } catch (err) {

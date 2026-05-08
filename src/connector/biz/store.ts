@@ -3,13 +3,15 @@
  */
 
 import type { EmbeddingProvider } from '../../shared/types.js'
-import type { BizRecord, BizType } from './schema.js'
+import type { BizRecord } from './schema.js'
 import { BIZ_TYPE_LABELS } from './schema.js'
 import { createBubble, searchBubbles } from '../../bubble/model.js'
 import { addLink } from '../../bubble/links.js'
 import { logger } from '../../shared/logger.js'
 import { renderMirror, getMirrorEventType } from './mirror-templates.js'
 import type { EventNotifier } from '../event-notifier.js'
+import type { EventBus } from '../../event/event-bus.js'
+import type { BubbleEventData } from '../../event/event-types.js'
 import {
   fuzzyFindCounterparty, fuzzyFindProduct, findProjectByName,
   createCounterparty, createProduct, createProject,
@@ -217,6 +219,7 @@ function buildMirrorData(record: BizRecord): Record<string, string | number> {
 export class BizStore {
   private embeddings: EmbeddingProvider | null = null
   private eventNotifier: EventNotifier | null = null
+  private eventBus: EventBus | null = null
 
   setEmbeddingProvider(provider: EmbeddingProvider) {
     this.embeddings = provider
@@ -224,6 +227,10 @@ export class BizStore {
 
   setEventNotifier(notifier: EventNotifier) {
     this.eventNotifier = notifier
+  }
+
+  setEventBus(bus: EventBus) {
+    this.eventBus = bus
   }
 
   async store(record: BizRecord, spaceId?: string): Promise<StoreResult> {
@@ -323,6 +330,14 @@ export class BizStore {
             logger.error('BizStore: event notification failed:', err instanceof Error ? err.message : String(err)),
           )
         }
+      }
+    }
+
+    // ── Emit business event through EventBus ────────────────────────
+    if (this.eventBus && structuredId) {
+      const bizEvent = this.buildBizEvent(record, structuredId, counterparty)
+      if (bizEvent) {
+        this.eventBus.emitFireAndForget(bizEvent, { actor: 'system', spaceId })
       }
     }
 
@@ -465,6 +480,60 @@ export class BizStore {
       }
     } catch (err) {
       logger.debug('BizStore autoLink error:', err instanceof Error ? err.message : String(err))
+    }
+  }
+
+  // ── Build typed event for EventBus ──────────────────────────────
+
+  private buildBizEvent(record: BizRecord, structuredId: string, counterparty: string): BubbleEventData | null {
+    switch (record.bizType) {
+      case 'procurement':
+        return {
+          type: 'biz.purchase.created',
+          payload: {
+            purchaseId: structuredId,
+            supplierId: counterparty,
+            productId: record.product,
+            tonnage: record.quantity,
+            unitPrice: record.unitPrice,
+            totalAmount: record.totalAmount ?? record.quantity * record.unitPrice,
+          },
+        }
+      case 'sales':
+        return {
+          type: 'biz.sale.created',
+          payload: {
+            saleId: structuredId,
+            customerId: counterparty,
+            productId: record.product,
+            tonnage: record.quantity,
+            unitPrice: record.unitPrice,
+            totalAmount: record.totalAmount ?? record.quantity * record.unitPrice,
+          },
+        }
+      case 'payment':
+        return {
+          type: 'biz.payment.recorded',
+          payload: {
+            paymentId: structuredId,
+            counterpartyId: counterparty,
+            amount: record.amount,
+            direction: record.direction === '收' ? 'in' : 'out',
+            method: record.method ?? '',
+          },
+        }
+      case 'logistics':
+        return {
+          type: 'biz.logistics.created',
+          payload: {
+            logisticsId: structuredId,
+            carrierId: record.carrier ?? '',
+            tonnage: record.tonnage,
+            freight: record.freight ?? 0,
+          },
+        }
+      default:
+        return null
     }
   }
 }

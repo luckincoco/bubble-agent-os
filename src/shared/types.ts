@@ -130,6 +130,58 @@ export interface EmbeddingProvider {
   embedBatch(texts: string[]): Promise<number[][]>
 }
 
+// ── v0.7.0: Temporal + Event + View + Working Memory types ─────
+
+export interface Episode {
+  id: string
+  type: 'conversation' | 'business' | 'system'
+  source: 'feishu' | 'wecom' | 'scheduler' | 'admin' | 'api' | 'cli'
+  actorId: string | null
+  spaceId: string | null
+  content: string
+  summary: string | null
+  metadata: Record<string, unknown>
+  parentEpisodeId: string | null
+  createdAt: number
+}
+
+export interface MemoryView {
+  id: string
+  name: string
+  description: string | null
+  rolePattern: string
+  filters: ViewFilter
+  priority: number
+  createdAt: number
+}
+
+export interface ViewFilter {
+  allowedTypes: string[] | '*'
+  maxAbstractionLevel: number
+  counterpartyFilter: 'none' | 'bound'
+  timeWindow: { since?: number; until?: number } | null
+  tagFilter: string[] | null
+}
+
+export interface WorkingMemoryEntry {
+  id: string
+  sessionId: string
+  bubbleId: string
+  tier: 'hot' | 'warm' | 'cold'
+  priorityScore: number
+  pinned: boolean
+  loadedAt: number
+  lastAccessed: number
+  tokenCost: number
+}
+
+export interface TemporalBubbleLink extends BubbleLink {
+  validFrom?: number
+  validUntil?: number
+  episodeId?: string
+  metadata?: Record<string, unknown>
+}
+
 // Config types
 export interface AppConfig {
   llm: {
@@ -166,5 +218,17 @@ export interface AppConfig {
     focusTracking: boolean
     semanticBridge: boolean
     surpriseDetection: boolean
+    codeTools: boolean
+    selfEvolution: boolean
+    markitdown: boolean
+    eventSourcing: boolean
+    temporalGraph: boolean
+    memoryViews: boolean
+    workingMemory: boolean
+    cognitionOrientation: boolean
+    cognitionEvaluator: boolean
+    cognitionInternalization: boolean
+    cognitionCascade: boolean
+    cognitionGapTrigger: boolean
   }
 }

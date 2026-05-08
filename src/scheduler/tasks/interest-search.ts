@@ -1,10 +1,12 @@
 import type { TaskDeps, TaskResult } from '../scheduler.js'
-import { createBubble, searchBubbles } from '../../bubble/model.js'
+import type { BubbleType } from '../../shared/types.js'
+import { createBubble, searchBubbles, findBubblesByType } from '../../bubble/model.js'
 import { addLink } from '../../bubble/links.js'
 import { calcSurprise } from '../../memory/manager.js'
 import { getDatabase } from '../../storage/database.js'
 import { logger } from '../../shared/logger.js'
 import { isObscuraAvailable, renderPage } from '../../connector/tools/obscura-client.js'
+import type { EvaluationInput } from '../../cognition/causal-evaluator.js'
 
 // ── Stop words: filtered out before query construction ──────────────
 const STOP_WORDS = new Set([
@@ -100,12 +102,50 @@ export async function executeInterestSearch(
   }
 
   // Step 4: LLM constructs search queries (single call, ~200 tokens)
+  // Inject cognitive orientation — use OrientationGraph if available, else fallback to flat domainWeight
+  const orientationGraph = deps.orientationGraph
+  const config = deps.config
+
+  let domainHint = ''
+  if (config?.features?.cognitionOrientation && orientationGraph) {
+    // v0.8: Use structured search guidance from orientation graph
+    const guidance = orientationGraph.getGuidanceForSearch(userIds[0] || 'default')
+    const parts: string[] = []
+    if (guidance.frontiers.length > 0) {
+      parts.push(`认知缺口（优先探索）：\n${guidance.frontiers.map(f => `- ${f.domain}: ${f.suggestedQuery}`).join('\n')}`)
+    }
+    if (guidance.tensions.length > 0) {
+      parts.push(`认知张力（需要澄清）：\n${guidance.tensions.map(t => `- ${t.pair[0]} vs ${t.pair[1]}: ${t.counterQuery}`).join('\n')}`)
+    }
+    if (guidance.avoidDomains.length > 0) {
+      parts.push(`已充分覆盖（避免重复）：${guidance.avoidDomains.join(', ')}`)
+    }
+    domainHint = parts.length > 0 ? '\n\n' + parts.join('\n\n') : ''
+  } else {
+    // Fallback: original flat domainWeight approach
+    const observations = findBubblesByType('observation' as BubbleType, 30)
+    const topDomains = observations
+      .map(obs => {
+        const meta = obs.metadata as Record<string, any> | undefined
+        const weight = meta?.domainWeight ?? ((meta?.evidenceCount ?? 1) * obs.confidence)
+        const keywords = obs.tags.filter((t: string) => t !== 'observation' && t !== 'auto-discovered')
+        return { title: obs.title, keywords, weight }
+      })
+      .filter(d => d.weight > 0 && d.keywords.length > 0)
+      .sort((a, b) => b.weight - a.weight)
+      .slice(0, 3)
+
+    domainHint = topDomains.length > 0
+      ? `\n\n认知深区（优先向这些方向深入搜索）：\n${topDomains.map(d => `- ${d.title} [${d.keywords.join(',')}] (权重${d.weight.toFixed(1)})`).join('\n')}`
+      : ''
+  }
+
   const termsList = filteredTerms.map(([term, freq]) => `${term} (频率${freq})`).join('\n')
   let queries: string[] = []
   try {
     const response = await searchLlm.chat([
       { role: 'system', content: QUERY_GEN_PROMPT },
-      { role: 'user', content: termsList },
+      { role: 'user', content: termsList + domainHint },
     ])
     const text = response.content.trim()
     // Extract JSON array from response (handle markdown code blocks)
@@ -151,10 +191,29 @@ export async function executeInterestSearch(
     return { success: true, message: `兴趣搜索: 生成 ${queries.length} 个查询, 全部近期已搜索过` }
   }
 
+  // Step 5b: Epistemic Gate — skip queries where existing knowledge is already sufficient
+  // If high-confidence observations (≥0.8) already cover this topic, the search is epistemically unnecessary
+  const epistemicallyNeeded = dedupedQueries.filter(query => {
+    const related = searchBubbles(query, 5)
+    const highConfObs = related.filter(b =>
+      b.abstractionLevel >= 1 && b.confidence >= 0.8 && b.type === 'observation',
+    )
+    if (highConfObs.length >= 2) {
+      logger.debug(`InterestSearch: epistemic gate blocked "${query}" — ${highConfObs.length} high-confidence observations exist`)
+      stats.skipped++
+      return false
+    }
+    return true
+  })
+
+  if (epistemicallyNeeded.length === 0) {
+    return { success: true, message: `兴趣搜索: ${dedupedQueries.length} 个查询已有充分认知覆盖，跳过搜索` }
+  }
+
   // Step 6: Search and store results
   const allBubbleIds: string[] = []
 
-  for (const query of dedupedQueries) {
+  for (const query of epistemicallyNeeded) {
     stats.searched++
     try {
       const result = await deps.tools.execute('web_search', { query, limit: '3' })
@@ -253,6 +312,71 @@ export async function executeInterestSearch(
     }
   }
 
+  // Step 6c: Cognitive evaluation — assess causal impact of new discoveries
+  const causalEvaluator = deps.causalEvaluator
+  const internalizationEngine = deps.internalizationEngine
+
+  if (config?.features?.cognitionEvaluator && causalEvaluator && allBubbleIds.length > 0) {
+    try {
+      // Build evaluation inputs from newly created bubbles
+      const db = getDatabase()
+      const evalInputs: EvaluationInput[] = []
+      for (const bId of allBubbleIds.slice(0, 5)) {
+        const row = db.prepare('SELECT id, content, tags, space_id FROM bubbles WHERE id = ?').get(bId) as
+          { id: string; content: string; tags: string; space_id: string | null } | undefined
+        if (!row) continue
+        const tags = row.tags ? JSON.parse(row.tags) as string[] : []
+        evalInputs.push({
+          bubbleId: row.id,
+          content: row.content.slice(0, 500),
+          source: 'interest-search',
+          tags,
+          spaceId: row.space_id || 'default',
+        })
+      }
+
+      if (evalInputs.length > 0) {
+        const results = await causalEvaluator.batchEvaluate(evalInputs)
+        let evaluated = 0
+        let proposals = 0
+
+        for (const { input, verdict } of results) {
+          if (!verdict) continue
+          evaluated++
+
+          // Attach verdict to bubble metadata
+          db.prepare('UPDATE bubbles SET metadata = json_set(COALESCE(metadata, "{}"), "$.causalVerdict", ?), updated_at = ? WHERE id = ?')
+            .run(JSON.stringify(verdict), Date.now(), input.bubbleId)
+
+          // Generate internalization proposal if applicable
+          if (config?.features?.cognitionInternalization && internalizationEngine && verdict.impactType !== 'novel') {
+            const proposal = internalizationEngine.generateProposal(verdict, input.bubbleId)
+            if (proposal) {
+              proposals++
+              // Push for approval via Feishu
+              if (deps.feishu) {
+                const chatId = deps.feishu.getAdminChatId() || String(process.env.FEISHU_ADMIN_CHAT_ID || '')
+                if (chatId) {
+                  try {
+                    await deps.feishu.pushMessage(chatId, internalizationEngine.formatApprovalMessage(proposal))
+                  } catch (err) {
+                    logger.debug(`InterestSearch: Feishu proposal push failed: ${err instanceof Error ? err.message : String(err)}`)
+                  }
+                }
+              }
+            }
+          }
+        }
+
+        if (evaluated > 0) {
+          logger.info(`InterestSearch: causal evaluation — ${evaluated} assessed, ${proposals} proposals generated`)
+        }
+      }
+    } catch (err) {
+      logger.debug(`InterestSearch: causal evaluation failed: ${err instanceof Error ? err.message : String(err)}`)
+    }
+  }
+
   // Step 7: Anti-confirmation bias — counter-query for high-confidence knowledge
   let counterSearched = 0
   try {
@@ -313,7 +437,7 @@ export async function executeInterestSearch(
     const chatId = deps.feishu?.getAdminChatId() || String(_params.chatId || process.env.FEISHU_ADMIN_CHAT_ID || '')
     if (chatId) {
       try {
-        const lines = dedupedQueries.slice(0, 3).map(q => `  - ${q}`)
+        const lines = epistemicallyNeeded.slice(0, 3).map(q => `  - ${q}`)
         await deps.feishu.pushMessage(chatId, `🔍 兴趣搜索完成\n\n搜索话题：\n${lines.join('\n')}\n\n新增 ${stats.created} 条发现${stats.contradictions > 0 ? `，其中 ${stats.contradictions} 条矛盾` : ''}`)
       } catch (err) {
         logger.error(`InterestSearch: Feishu push failed: ${err instanceof Error ? err.message : String(err)}`)

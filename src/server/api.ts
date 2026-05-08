@@ -11,7 +11,7 @@ import bcrypt from 'bcryptjs'
 import * as XLSX from 'xlsx'
 import type { Brain } from '../kernel/brain.js'
 import type { MemoryManager } from '../memory/manager.js'
-import type { BubbleType, UserContext, SpaceRole, LLMProvider } from '../shared/types.js'
+import type { BubbleType, UserContext, SpaceRole, LLMProvider, ExternalUserContext } from '../shared/types.js'
 import { createBubble, softDeleteBubble } from '../bubble/model.js'
 import { addLink } from '../bubble/links.js'
 import { getDatabase } from '../storage/database.js'
@@ -1851,6 +1851,77 @@ export async function startServer(brain: Brain, memory: MemoryManager, port = 30
   if (modules?.wecom) {
     modules.wecom.registerRoutes(app)
   }
+
+  // ── Test Role Endpoint (admin-only, for simulating external user queries) ──
+
+  app.post('/api/test-role', async (req, reply) => {
+    const payload = req.user as JwtPayload
+    if (requireAdmin(payload, reply)) return
+
+    const { counterpartyName, counterpartyType, message, spaceId } = req.body as {
+      counterpartyName?: string
+      counterpartyType?: 'supplier' | 'customer' | 'logistics'
+      message?: string
+      spaceId?: string
+    }
+
+    if (!counterpartyName || !counterpartyType || !message) {
+      return reply.code(400).send({ error: 'counterpartyName, counterpartyType, message 为必填项' })
+    }
+
+    const effectiveSpace = spaceId && (payload.spaceIds.length === 0 || payload.spaceIds.includes(spaceId))
+      ? spaceId
+      : payload.spaceIds[0] || ''
+    const bizCtx = { spaceId: effectiveSpace }
+
+    // Find counterparty by name
+    const counterparty = biz.findCounterpartyByName(bizCtx, counterpartyName, counterpartyType)
+      ?? biz.findCounterpartyByName(bizCtx, counterpartyName)
+    if (!counterparty) {
+      const all = biz.getCounterparties(bizCtx, counterpartyType)
+      const names = all.map(c => c.name).slice(0, 10)
+      return reply.code(404).send({
+        error: `未找到「${counterpartyName}」`,
+        available: names,
+      })
+    }
+
+    // Construct fake ExternalUserContext
+    const extCtx: ExternalUserContext = {
+      userId: payload.userId,
+      spaceIds: payload.spaceIds,
+      activeSpaceId: effectiveSpace,
+      isExternal: true,
+      counterpartyId: counterparty.id,
+      counterpartyName: counterparty.name,
+      counterpartyType: (counterparty.type === 'both' ? 'supplier' : counterparty.type) as 'supplier' | 'customer' | 'logistics',
+      permissionLevel: 'query',
+      platformUserId: `test-${payload.userId}`,
+      platform: 'wecom',
+    }
+
+    // Route through router (respects Layer bypass for external users)
+    if (router) {
+      const result = await router.handle(message, extCtx)
+      return {
+        role: counterpartyType,
+        counterparty: counterparty.name,
+        question: message,
+        response: result.response,
+        sources: result.sources,
+      }
+    }
+
+    // Fallback: direct brain.think
+    const { response, sources } = await brain.think(message, extCtx)
+    return {
+      role: counterpartyType,
+      counterparty: counterparty.name,
+      question: message,
+      response,
+      sources,
+    }
+  })
 
   // SPA fallback
   if (existsSync(webDist)) {

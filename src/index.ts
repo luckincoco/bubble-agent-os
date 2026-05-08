@@ -17,6 +17,8 @@ import { createFetchPageTool } from './connector/tools/fetch-page.js'
 import { createBizQueryTools } from './connector/tools/biz-query-tools.js'
 import { createExtQueryTools } from './connector/tools/ext-query-tools.js'
 import { createExtAdminTools } from './connector/tools/ext-admin-tools.js'
+import { createCodeTools } from './connector/tools/code-tools.js'
+import { createMarkitdownTool } from './connector/tools/markitdown-tool.js'
 import { FeishuConnector } from './connector/feishu.js'
 import { WeComConnector } from './connector/wecom.js'
 import { MessageRouter } from './connector/router.js'
@@ -31,6 +33,16 @@ import { startServer, type ServerModules } from './server/api.js'
 import { startREPL } from './cli/repl.js'
 import { seedAskAgent } from './agent/seed-agents.js'
 import { logger } from './shared/logger.js'
+// v0.7.0: Event Sourcing + Temporal Graph + Working Memory
+import { EventBus } from './event/event-bus.js'
+import { EventStore } from './event/event-store.js'
+import { Materializer } from './event/materializer.js'
+import { WorkingMemory } from './memory/working-memory.js'
+import { ContextBudget } from './memory/context-budget.js'
+// v0.8.0: Cognitive Evolution Layer
+import { OrientationGraph } from './cognition/orientation-graph.js'
+import { CausalEvaluator } from './cognition/causal-evaluator.js'
+import { InternalizationEngine } from './cognition/internalization.js'
 
 async function main() {
   const config = getConfig()
@@ -75,6 +87,18 @@ async function main() {
   for (const tool of createExtAdminTools()) {
     tools.register(tool)
   }
+  if (config.features.codeTools) {
+    for (const tool of createCodeTools()) {
+      tools.register(tool)
+    }
+    logger.info('Module: CodeTools enabled')
+  }
+  if (config.features.markitdown) {
+    for (const tool of createMarkitdownTool()) {
+      tools.register(tool)
+    }
+    logger.info('Module: MarkItDown enabled')
+  }
 
   const brain = new Brain(llmRouter.forCategory('chat'))
   brain.setMemory(memory)
@@ -89,6 +113,65 @@ async function main() {
   if (surpriseDetector) logger.info('Module: SurpriseDetector enabled')
   if (config.features.focusTracking) logger.info('Module: FocusTracker enabled')
 
+  // v0.7.0: Initialize Event Sourcing + Working Memory infrastructure (before Router)
+  let eventBus: EventBus | undefined
+  let eventStore: EventStore | undefined
+  let materializer: Materializer | undefined
+  let workingMem: WorkingMemory | undefined
+
+  if (config.features.eventSourcing) {
+    eventBus = new EventBus()
+    eventStore = new EventStore()
+    eventStore.init()
+    materializer = new Materializer()
+
+    // EventStore subscribes to all events for persistence
+    eventStore.subscribeToEventBus(eventBus)
+    // Materializer subscribes for state updates
+    materializer.subscribeTo(eventBus)
+
+    logger.info(`Module: EventSourcing enabled (${eventStore.count()} events in log)`)
+  }
+
+  if (config.features.workingMemory) {
+    workingMem = new WorkingMemory()
+    const ctxBudget = new ContextBudget(workingMem)
+    brain.setWorkingMemory(workingMem, ctxBudget)
+    logger.info('Module: WorkingMemory enabled')
+  }
+
+  if (config.features.temporalGraph) {
+    logger.info('Module: TemporalGraph enabled')
+  }
+
+  if (config.features.memoryViews) {
+    logger.info('Module: MemoryViews enabled')
+  }
+
+  // v0.8.0: Initialize Cognitive Evolution Layer
+  let orientationGraph: OrientationGraph | undefined
+  let causalEvaluator: CausalEvaluator | undefined
+  let internalizationEngine: InternalizationEngine | undefined
+
+  if (config.features.cognitionOrientation) {
+    const cogLlm = llmRouter.forCategory('memory')
+    orientationGraph = new OrientationGraph(cogLlm)
+    if (eventBus) orientationGraph.setEventBus(eventBus)
+    logger.info('Module: CognitionOrientationGraph enabled')
+  }
+
+  if (config.features.cognitionEvaluator) {
+    const cogLlm = llmRouter.forCategory('memory')
+    causalEvaluator = new CausalEvaluator(cogLlm)
+    logger.info('Module: CognitionCausalEvaluator enabled')
+  }
+
+  if (config.features.cognitionInternalization) {
+    internalizationEngine = new InternalizationEngine()
+    if (eventBus) internalizationEngine.setEventBus(eventBus)
+    logger.info('Module: CognitionInternalizationEngine enabled')
+  }
+
   // Initialize biz entry handler, teach handler, skill system, and unified message router
   const bizLlm = llmRouter.forCategory('biz')
   const bizHandler = new BizEntryHandler(bizLlm, embeddingProvider)
@@ -96,7 +179,7 @@ async function main() {
   const skillsDir = resolve(config.storage.dataDir, '..', 'skills')
   const skillLoader = new SkillLoader(skillsDir)
   const skillRouter = new SkillRouter(skillLoader, bizHandler, teachHandler)
-  const router = new MessageRouter({ brain, tools, surpriseDetector, bizHandler, skillRouter })
+  const router = new MessageRouter({ brain, tools, surpriseDetector, bizHandler, skillRouter, eventBus })
   logger.info('Module: SkillRouter + MessageRouter enabled')
 
   // Start Feishu connector if configured (lifted to outer scope for scheduler access)
@@ -116,12 +199,13 @@ async function main() {
   // Wire up event notifier for pushing mirror events to external contacts
   const eventNotifier = new EventNotifier(wecom ?? null, bizLlm)
   bizHandler.setEventNotifier(eventNotifier)
+  if (eventBus) bizHandler.setEventBus(eventBus)
   logger.info('Module: EventNotifier enabled')
 
   // Initialize scheduler
   let scheduler: TaskScheduler | undefined
   try {
-    scheduler = new TaskScheduler({ brain, memory, tools, llm, llmRouter, feishu })
+    scheduler = new TaskScheduler({ brain, memory, tools, llm, llmRouter, feishu, eventBus, config, orientationGraph, causalEvaluator, internalizationEngine })
     await scheduler.init()
     logger.info('Module: TaskScheduler enabled')
   } catch (err) {

@@ -9,6 +9,12 @@ export async function executeReflection(
 ): Promise<TaskResult> {
   const memoryLlm = deps.llmRouter?.forCategory('memory') ?? deps.llm
   const reflector = new Reflector(memoryLlm)
+
+  // Wire orientation graph for cognitive registration of new observations
+  if (deps.orientationGraph) {
+    reflector.setOrientationGraph(deps.orientationGraph)
+  }
+
   const db = getDatabase()
 
   // Get all distinct space IDs

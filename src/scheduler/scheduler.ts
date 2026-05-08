@@ -7,6 +7,9 @@ import type { MemoryManager } from '../memory/manager.js'
 import type { ToolRegistry } from '../connector/registry.js'
 import type { LLMProvider } from '../shared/types.js'
 import type { FeishuConnector } from '../connector/feishu.js'
+import type { OrientationGraph } from '../cognition/orientation-graph.js'
+import type { CausalEvaluator } from '../cognition/causal-evaluator.js'
+import type { InternalizationEngine } from '../cognition/internalization.js'
 import { executeDailyDigest } from './tasks/daily-digest.js'
 import { executeKeywordMonitor } from './tasks/keyword-monitor.js'
 import { executeMemoryDecay } from './tasks/memory-decay.js'
@@ -22,9 +25,11 @@ import { executeLearningDigest } from './tasks/learning-digest.js'
 import { executeSilenceScan } from './tasks/silence-scan.js'
 import { executeConcentrationScan } from './tasks/concentration-scan.js'
 import { executeCausalEval } from './tasks/causal-eval.js'
+import { executeSelfEvolution } from './tasks/self-evolution.js'
+import { executeOrientationSnapshot } from './tasks/orientation-snapshot.js'
 import type { ModelRouter } from '../ai/model-router.js'
 
-export type ScheduledTaskType = 'daily_digest' | 'keyword_monitor' | 'memory_decay' | 'bubble_compaction' | 'steel_price' | 'question_generator' | 'reflection' | 'pressure_sim' | 'self_dialogue' | 'feed_watcher' | 'interest_search' | 'learning_digest' | 'silence_scan' | 'concentration_scan' | 'causal_eval'
+export type ScheduledTaskType = 'daily_digest' | 'keyword_monitor' | 'memory_decay' | 'bubble_compaction' | 'steel_price' | 'question_generator' | 'reflection' | 'pressure_sim' | 'self_dialogue' | 'feed_watcher' | 'interest_search' | 'learning_digest' | 'silence_scan' | 'concentration_scan' | 'causal_eval' | 'self_evolution' | 'orientation_snapshot'
 
 export interface TaskDeps {
   brain: Brain
@@ -33,6 +38,11 @@ export interface TaskDeps {
   llm: LLMProvider
   llmRouter?: ModelRouter
   feishu?: FeishuConnector
+  eventBus?: import('../event/event-bus.js').EventBus
+  config?: import('../shared/types.js').AppConfig
+  orientationGraph?: OrientationGraph
+  causalEvaluator?: CausalEvaluator
+  internalizationEngine?: InternalizationEngine
 }
 
 export interface TaskResult {
@@ -72,6 +82,8 @@ const EXECUTORS: Record<ScheduledTaskType, TaskExecutor> = {
   silence_scan: executeSilenceScan,
   concentration_scan: executeConcentrationScan,
   causal_eval: executeCausalEval,
+  self_evolution: executeSelfEvolution,
+  orientation_snapshot: executeOrientationSnapshot,
 }
 
 export class TaskScheduler {
@@ -257,6 +269,30 @@ export class TaskScheduler {
       const row = db.prepare("SELECT * FROM scheduled_tasks WHERE type = 'concentration_scan'").get() as ScheduledTaskRow
       this.scheduleJob(row)
       logger.info('Scheduler: seeded concentration_scan task (monthly 1st 9:00)')
+    }
+
+    // Ensure self_evolution task exists (daily 3:00 AM — after compaction/reflection, requires SELF_EVOLUTION=true)
+    const hasSelfEvolution = db.prepare("SELECT id FROM scheduled_tasks WHERE type = 'self_evolution'").get()
+    if (!hasSelfEvolution && process.env.SELF_EVOLUTION === 'true') {
+      const now = Date.now()
+      db.prepare(
+        'INSERT INTO scheduled_tasks (id, name, type, cron, params, enabled, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)',
+      ).run(ulid(), '自进化引擎', 'self_evolution', '0 3 * * *', '{}', 1, now, now)
+      const row = db.prepare("SELECT * FROM scheduled_tasks WHERE type = 'self_evolution'").get() as ScheduledTaskRow
+      this.scheduleJob(row)
+      logger.info('Scheduler: seeded self_evolution task (daily 3:00)')
+    }
+
+    // Ensure orientation_snapshot task exists (daily 6:00 AM — builds cognitive landscape before interest-search)
+    const hasOrientationSnapshot = db.prepare("SELECT id FROM scheduled_tasks WHERE type = 'orientation_snapshot'").get()
+    if (!hasOrientationSnapshot && this.deps.config?.features?.cognitionOrientation) {
+      const now2 = Date.now()
+      db.prepare(
+        'INSERT INTO scheduled_tasks (id, name, type, cron, params, enabled, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)',
+      ).run(ulid(), '认知快照', 'orientation_snapshot', '0 6 * * *', '{}', 1, now2, now2)
+      const row = db.prepare("SELECT * FROM scheduled_tasks WHERE type = 'orientation_snapshot'").get() as ScheduledTaskRow
+      this.scheduleJob(row)
+      logger.info('Scheduler: seeded orientation_snapshot task (daily 6:00)')
     }
 
     logger.info(`Scheduler: ${this.jobs.size} active jobs loaded`)

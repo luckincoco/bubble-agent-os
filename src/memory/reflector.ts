@@ -20,6 +20,7 @@ import { addLink, findLinksByRelation } from '../bubble/links.js'
 import { getDatabase } from '../storage/database.js'
 import { logger } from '../shared/logger.js'
 import type { QualitySignal, SynthesisQualityAssessment } from './compactor.js'
+import type { OrientationGraph } from '../cognition/orientation-graph.js'
 
 export type ObservationTrend = 'new' | 'strengthening' | 'stable' | 'weakening' | 'stale'
 
@@ -30,6 +31,8 @@ export interface ObservationMetadata {
   firstSeen: number
   lastSeen: number
   reviewCount: number
+  domainWeight?: number        // Cognitive orientation score: evidence × recency × confidence
+  evolutionHistory?: Array<{ date: string; impact: string; sourceId: string }>
 }
 
 export interface ReflectResult {
@@ -83,9 +86,14 @@ const MIN_EVIDENCE_FOR_STABLE = 3
 export class Reflector {
   private llm: LLMProvider
   private lastValidatedAt = 0
+  private orientationGraph: OrientationGraph | null = null
 
   constructor(llm: LLMProvider) {
     this.llm = llm
+  }
+
+  setOrientationGraph(graph: OrientationGraph): void {
+    this.orientationGraph = graph
   }
 
   /**
@@ -187,6 +195,15 @@ export class Reflector {
 
         discovered++
         logger.info(`Reflector: discovered "${obs.title}" (evidence=${evidenceIds.length})`)
+
+        // Register with OrientationGraph for cognitive landscape tracking
+        if (this.orientationGraph) {
+          try {
+            this.orientationGraph.registerNewObservation(obs.id)
+          } catch {
+            // Non-critical, skip
+          }
+        }
       } catch (err) {
         logger.debug('Reflector discover LLM error:', err instanceof Error ? err.message : String(err))
       }
@@ -284,6 +301,11 @@ export class Reflector {
           meta.lastSeen = now
           meta.reviewCount = (meta.reviewCount || 0) + 1
 
+          // Compute domainWeight: evidence × recency × confidence
+          const daysSinceLastSeen = Math.max(1, (now - (meta.firstSeen || now)) / (24 * 60 * 60 * 1000))
+          const recencyFactor = Math.min(1.0, 7 / daysSinceLastSeen) // Decays after 7 days
+          meta.domainWeight = meta.evidenceCount * (1 + recencyFactor) * obs.confidence
+
           // Adjust confidence based on trend + counter-evidence
           let newConfidence = obs.confidence
           if (newTrend === 'strengthening') newConfidence = Math.min(1.0, obs.confidence + 0.1)
@@ -361,6 +383,31 @@ export class Reflector {
           && meta?.trend !== 'stale'
           && meta?.trend !== 'weakening'
       })
+  }
+
+  /**
+   * Get top cognitive domains sorted by domainWeight.
+   * Used by interest-search to bias queries toward areas where Bubble has deep understanding.
+   * Pure SQL/memory operation — no LLM calls.
+   */
+  getTopDomains(limit = 5, spaceId?: string): Array<{ title: string; keywords: string[]; weight: number }> {
+    const spaceIds = spaceId ? [spaceId] : undefined
+    const observations = findBubblesByType('observation' as BubbleType, 50, spaceIds)
+
+    const domains = observations
+      .map(obs => {
+        const meta = obs.metadata as unknown as ObservationMetadata
+        return {
+          title: obs.title,
+          keywords: obs.tags.filter(t => t !== 'observation' && t !== 'auto-discovered'),
+          weight: meta?.domainWeight ?? (meta?.evidenceCount ?? 1) * obs.confidence,
+        }
+      })
+      .filter(d => d.weight > 0 && d.keywords.length > 0)
+      .sort((a, b) => b.weight - a.weight)
+      .slice(0, limit)
+
+    return domains
   }
 
   /**

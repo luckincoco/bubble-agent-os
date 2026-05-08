@@ -16,6 +16,8 @@ export interface CreateBubbleInput {
   spaceId?: string
   abstractionLevel?: number
   summary?: string
+  validFrom?: number
+  episodeId?: string
 }
 
 export function createBubble(input: CreateBubbleInput): Bubble {
@@ -46,8 +48,8 @@ export function createBubble(input: CreateBubbleInput): Bubble {
   }
 
   db.prepare(`
-    INSERT INTO bubbles (id, type, title, content, metadata, tags, embedding, source, confidence, decay_rate, pinned, created_at, updated_at, accessed_at, space_id, abstraction_level, summary)
-    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    INSERT INTO bubbles (id, type, title, content, metadata, tags, embedding, source, confidence, decay_rate, pinned, created_at, updated_at, accessed_at, space_id, abstraction_level, summary, valid_from, episode_id)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
   `).run(
     bubble.id,
     bubble.type,
@@ -66,6 +68,8 @@ export function createBubble(input: CreateBubbleInput): Bubble {
     bubble.spaceId ?? null,
     bubble.abstractionLevel,
     summary ?? null,
+    input.validFrom ?? now,
+    input.episodeId ?? null,
   )
 
   return bubble

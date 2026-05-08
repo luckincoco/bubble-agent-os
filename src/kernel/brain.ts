@@ -3,6 +3,8 @@ import { isExternalContext } from '../shared/types.js'
 import type { MemoryManager } from '../memory/manager.js'
 import type { ConversationInsightEvaluator } from '../memory/conversation-insight-evaluator.js'
 import type { ToolRegistry } from '../connector/registry.js'
+import type { WorkingMemory } from '../memory/working-memory.js'
+import type { ContextBudget } from '../memory/context-budget.js'
 import { runToolLoop } from './tool-loop.js'
 import { estimateTokens, truncateToTokenBudget, TOKEN_LIMITS } from '../shared/tokens.js'
 import { getSpaceProfile } from '../connector/biz/space-profile.js'
@@ -88,6 +90,8 @@ export class Brain {
   private tools: ToolRegistry | null = null
   private agentConfigs: Map<string, CustomAgent> = new Map()
   private insightEvaluator: ConversationInsightEvaluator | null = null
+  private workingMemory: WorkingMemory | null = null
+  private contextBudget: ContextBudget | null = null
 
   constructor(llm: LLMProvider) {
     this.llm = llm
@@ -106,6 +110,12 @@ export class Brain {
   setInsightEvaluator(evaluator: ConversationInsightEvaluator) {
     this.insightEvaluator = evaluator
     logger.info('Brain: conversation insight evaluator connected')
+  }
+
+  setWorkingMemory(wm: WorkingMemory, budget: ContextBudget) {
+    this.workingMemory = wm
+    this.contextBudget = budget
+    logger.info('Brain: working memory connected')
   }
 
   /** Set or clear the active agent for a user */
@@ -220,6 +230,22 @@ export class Brain {
       if (memResult.context) {
         systemContent += memResult.context
         sources = memResult.sources
+      }
+    }
+
+    // Inject Working Memory status for agent self-awareness
+    if (!isExt && this.workingMemory && this.contextBudget) {
+      const sessionId = userId
+      this.workingMemory.demoteStaleItems(sessionId)
+      const hotItems = this.workingMemory.getHotItems(sessionId)
+      if (hotItems.length > 0) {
+        const itemSummaries = hotItems.map(item => ({
+          title: item.bubbleId,
+          relevance: item.priorityScore,
+          pinned: item.pinned,
+        }))
+        const wmStatus = this.contextBudget.formatForSystemPrompt(sessionId, itemSummaries)
+        systemContent += `\n\n${wmStatus}`
       }
     }
 

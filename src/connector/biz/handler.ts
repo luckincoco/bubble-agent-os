@@ -8,6 +8,7 @@ import { detectBizIntent } from './detector.js'
 import { BizParser } from './parser.js'
 import { BizStore, type StoreResult } from './store.js'
 import type { EventNotifier } from '../event-notifier.js'
+import type { EventBus } from '../../event/event-bus.js'
 import { logger } from '../../shared/logger.js'
 
 export interface BizEntryResult {
@@ -30,6 +31,10 @@ export class BizEntryHandler {
 
   setEventNotifier(notifier: EventNotifier) {
     this.store.setEventNotifier(notifier)
+  }
+
+  setEventBus(bus: EventBus) {
+    this.store.setEventBus(bus)
   }
 
   /**

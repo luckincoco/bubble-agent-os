@@ -2,6 +2,7 @@ import type { Bubble, LLMProvider, LLMMessage } from '../shared/types.js'
 import { createBubble, findCompactionCandidates, updateBubble } from '../bubble/model.js'
 import { getDatabase } from '../storage/database.js'
 import { addLink, getNeighborIds } from '../bubble/links.js'
+import type { EventBus } from '../event/event-bus.js'
 import { logger } from '../shared/logger.js'
 
 // --- Interfaces ---
@@ -151,10 +152,15 @@ export class BubbleCompactor {
   private llm: LLMProvider
   private qualitySignals: Map<string, QualitySignal>
   private lastCompactedAt = 0
+  private eventBus: EventBus | null = null
 
   constructor(llm: LLMProvider) {
     this.llm = llm
     this.qualitySignals = new Map()
+  }
+
+  setEventBus(bus: EventBus) {
+    this.eventBus = bus
   }
 
   /**
@@ -534,6 +540,22 @@ export class BubbleCompactor {
 
       // Adaptive decay acceleration based on contribution weights and negation signals
       this.accelerateDecay(cluster.bubbles, contributionWeights, hasContradictions, negations)
+
+      // Emit memory compaction event
+      if (this.eventBus) {
+        this.eventBus.emitFireAndForget(
+          {
+            type: 'memory.compaction.completed',
+            payload: {
+              synthesisId: newBubble.id,
+              sourceIds,
+              level: targetLevel,
+              clusterId: cluster.sharedTags.join(',') || 'unnamed',
+            },
+          },
+          { actor: 'system', spaceId: spaceId ?? undefined },
+        )
+      }
 
       const levelName = targetLevel === 1 ? 'synthesis' : 'portrait'
       logger.info(`Compactor: created ${levelName} "${newBubble.title}" from ${cluster.bubbles.length} bubbles (temp=${temperature.toFixed(2)}, cohesion=${cluster.cohesionScore.toFixed(2)})`)

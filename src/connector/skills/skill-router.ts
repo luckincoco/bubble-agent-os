@@ -5,11 +5,13 @@
  * Supports handler types:
  *   - 'biz-entry': delegates to BizEntryHandler (business data auto-entry)
  *   - 'teach': delegates to TeachHandler (knowledge card teaching)
+ *   - 'code': delegates to CodeHandler (coding workflow context injection)
  */
 
 import type { SkillLoader, SkillDefinition } from './loader.js'
 import type { BizEntryHandler, BizEntryResult } from '../biz/handler.js'
 import type { TeachHandler, TeachResult } from '../teach/handler.js'
+import { CodeHandler } from './code-handler.js'
 import { logger } from '../../shared/logger.js'
 
 export interface SkillMatchResult {
@@ -17,17 +19,21 @@ export interface SkillMatchResult {
   skill?: SkillDefinition
   handled?: boolean
   response?: string
+  /** Context to inject into Brain when skill matches but doesn't fully handle */
+  contextInjection?: string
 }
 
 export class SkillRouter {
   private loader: SkillLoader
   private bizHandler: BizEntryHandler | null
   private teachHandler: TeachHandler | null
+  private codeHandler: CodeHandler
 
   constructor(loader: SkillLoader, bizHandler?: BizEntryHandler, teachHandler?: TeachHandler) {
     this.loader = loader
     this.bizHandler = bizHandler ?? null
     this.teachHandler = teachHandler ?? null
+    this.codeHandler = new CodeHandler()
   }
 
   /**
@@ -52,6 +58,10 @@ export class SkillRouter {
       if (result.handled) {
         return { matched: true, skill, handled: true, response: result.response }
       }
+      // Context injection (code handler): matched but not fully handled
+      if (result.contextInjection) {
+        return { matched: true, skill, handled: false, contextInjection: result.contextInjection }
+      }
     }
 
     return { matched: false }
@@ -73,12 +83,16 @@ export class SkillRouter {
     return false
   }
 
-  private async dispatch(skill: SkillDefinition, text: string, spaceId?: string): Promise<{ handled: boolean; response?: string }> {
+  private async dispatch(skill: SkillDefinition, text: string, spaceId?: string): Promise<{ handled: boolean; response?: string; contextInjection?: string }> {
     switch (skill.handler) {
       case 'biz-entry':
         return this.handleBizEntry(text, spaceId)
       case 'teach':
         return this.handleTeach(text, spaceId)
+      case 'code': {
+        const codeResult = this.codeHandler.handle(skill.body)
+        return { handled: false, contextInjection: codeResult.contextInjection }
+      }
       default:
         logger.warn(`SkillRouter: unknown handler "${skill.handler}" for skill "${skill.name}"`)
         return { handled: false }

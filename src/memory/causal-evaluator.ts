@@ -38,6 +38,7 @@ export interface CausalEvalResult {
 
 const MAX_EVAL_PER_RUN = 10
 const MIN_RELATED_SCORE = 0.3
+const MAX_INTERNALIZE_LENGTH = 300
 
 const CAUSAL_PROMPT = `你是因果推理引擎。你的任务是判断一条新信息是否改变了对已有知识的理解。
 
@@ -54,6 +55,22 @@ const CAUSAL_PROMPT = `你是因果推理引擎。你的任务是判断一条新
   "confidence": 0.0-1.0,
   "reason": "一句话解释因果判断依据"
 }`
+
+const INTERNALIZE_PROMPT = `你是知识内化引擎。一条新证据需要被整合进已有的观察结论中。
+
+## 任务
+根据新证据和原有观察，生成一段简洁的补充/修正文本（≤150字），将新认知融入已有观察。
+
+规则：
+- 如果 impact 是 "extends"：写一段补充说明，指出新证据拓展了哪个维度
+- 如果 impact 是 "contradicts"：写一段修正说明，指出原结论哪里需要修订
+- 语气客观，不要重复原文内容
+- 标注证据来源时间
+
+输出严格 JSON：
+{"patch": "补充/修正文本", "shouldRewrite": false}
+
+如果新证据影响太大，原结论需要重写（而非补丁），将 shouldRewrite 设为 true 并在 patch 中给出完整新版本（≤300字）。`
 
 // ── Evaluator ──────────────────────────────────────────────────
 
@@ -106,6 +123,11 @@ export class CausalEvaluator {
                 logger.info(`CausalEvaluator: reduced confidence of ${targetId} to ${newConf.toFixed(2)} due to contradiction`)
               }
             }
+
+            // Memory Evolution (内化机制): extends/contradicts → update affected observation content
+            if ((impact.causalImpact === 'extends' || impact.causalImpact === 'contradicts') && impact.causalConfidence > 0.6) {
+              await this.internalize(bubble, targetId, impact.causalImpact)
+            }
           }
         }
       } catch (err) {
@@ -115,6 +137,62 @@ export class CausalEvaluator {
 
     logger.info(`CausalEvaluator: evaluated=${result.evaluated} (reinforces=${result.reinforces}, contradicts=${result.contradicts}, extends=${result.extends}, neutral=${result.neutral})`)
     return result
+  }
+
+  /**
+   * Memory Evolution (内化机制) — inspired by A-MEM (NeurIPS 2025).
+   * When new evidence extends/contradicts an existing observation,
+   * generate a patch and update the observation's content.
+   */
+  private async internalize(newBubble: Bubble, targetId: string, impact: 'extends' | 'contradicts'): Promise<void> {
+    try {
+      const targets = searchBubbles(targetId, 1)
+      const target = targets.find(b => b.id === targetId)
+      if (!target || target.abstractionLevel < 1) return // Only internalize into observations/syntheses
+
+      const messages: LLMMessage[] = [
+        { role: 'system', content: INTERNALIZE_PROMPT },
+        { role: 'user', content: `## 原有观察
+标题: ${target.title}
+内容: ${target.content}
+
+## 新证据 (impact: ${impact})
+标题: ${newBubble.title}
+内容: ${newBubble.content.slice(0, 600)}
+来源: ${newBubble.source}
+时间: ${new Date(newBubble.createdAt).toISOString().slice(0, 10)}
+
+请生成内化补丁：` },
+      ]
+
+      const response = await this.llm.chat(messages)
+      const jsonMatch = response.content.match(/\{[\s\S]*\}/)
+      if (!jsonMatch) return
+
+      const parsed = JSON.parse(jsonMatch[0]) as { patch: string; shouldRewrite: boolean }
+      if (!parsed.patch || parsed.patch.trim().length === 0) return
+
+      // Apply patch
+      let newContent: string
+      if (parsed.shouldRewrite) {
+        newContent = parsed.patch.slice(0, MAX_INTERNALIZE_LENGTH * 2)
+      } else {
+        // Append patch with evolution marker
+        const evolutionMark = `\n\n---[内化 ${new Date().toISOString().slice(0, 10)} | ${impact}]---\n${parsed.patch.slice(0, MAX_INTERNALIZE_LENGTH)}`
+        newContent = target.content + evolutionMark
+      }
+
+      // Track evolution history in metadata
+      const meta = (target.metadata ?? {}) as Record<string, unknown>
+      const history = (meta.evolutionHistory ?? []) as Array<{ date: string; impact: string; sourceId: string }>
+      history.push({ date: new Date().toISOString().slice(0, 10), impact, sourceId: newBubble.id })
+      meta.evolutionHistory = history.slice(-10) // Keep last 10 evolutions
+
+      updateBubble(target.id, { content: newContent, metadata: meta })
+      logger.info(`CausalEvaluator: internalized "${newBubble.title}" → "${target.title}" (${impact}, rewrite=${parsed.shouldRewrite})`)
+    } catch (err) {
+      logger.debug(`CausalEvaluator: internalize failed for ${targetId}: ${err instanceof Error ? err.message : String(err)}`)
+    }
   }
 
   private findUnevaluatedBubbles(spaceId?: string): Bubble[] {

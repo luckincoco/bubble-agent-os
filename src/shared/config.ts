@@ -76,6 +76,18 @@ export function getConfig(): AppConfig {
       focusTracking: env.FOCUS_TRACKING !== 'false',
       semanticBridge: env.SEMANTIC_BRIDGE !== 'false',
       surpriseDetection: env.SURPRISE_DETECTION !== 'false',
+      codeTools: env.CODE_TOOLS === 'true',
+      selfEvolution: env.SELF_EVOLUTION === 'true',
+      markitdown: env.MARKITDOWN === 'true',
+      eventSourcing: env.EVENT_SOURCING !== 'false',
+      temporalGraph: env.TEMPORAL_GRAPH !== 'false',
+      memoryViews: env.MEMORY_VIEWS !== 'false',
+      workingMemory: env.WORKING_MEMORY !== 'false',
+      cognitionOrientation: env.COGNITION_ORIENTATION !== 'false',
+      cognitionEvaluator: env.COGNITION_EVALUATOR !== 'false',
+      cognitionInternalization: env.COGNITION_INTERNAL !== 'false',
+      cognitionCascade: env.COGNITION_CASCADE !== 'false',
+      cognitionGapTrigger: env.COGNITION_GAP_TRIGGER !== 'false',
     },
   }
 }

@@ -2,6 +2,29 @@ import { ulid } from 'ulid'
 import type { Bubble, BubbleLink, BubbleType } from '../shared/types.js'
 import { getDatabase, buildInClause } from '../storage/database.js'
 
+/** Raw row shape from the bubbles table. Used to avoid `as any` in query results. */
+interface BubbleRow {
+  id: string
+  type: BubbleType
+  title: string
+  content: string
+  metadata: string
+  tags: string
+  embedding: string | null
+  source: string
+  confidence: number
+  decay_rate: number
+  pinned: number
+  created_at: number
+  updated_at: number
+  accessed_at: number
+  space_id: string | null
+  abstraction_level: number
+  summary: string | null
+  delete_reason?: string | null
+  deleted_at?: number | null
+}
+
 export interface CreateBubbleInput {
   type: BubbleType
   title: string
@@ -95,7 +118,7 @@ export function getBubble(id: string, spaceIds?: string[]): Bubble | null {
     params.push(...sp)
   }
 
-  const row = db.prepare(sql).get(...params) as any
+  const row = db.prepare(sql).get(...params) as BubbleRow | undefined
   if (!row) return null
 
   db.prepare('UPDATE bubbles SET accessed_at = ? WHERE id = ?').run(Date.now(), id)
@@ -116,7 +139,7 @@ export function findBubblesByType(type: BubbleType, limit = 50, spaceIds?: strin
   sql += ' ORDER BY updated_at DESC LIMIT ?'
   params.push(limit)
 
-  const rows = db.prepare(sql).all(...params) as any[]
+  const rows = db.prepare(sql).all(...params) as BubbleRow[]
   return rows.map(rowToBubble)
 }
 
@@ -163,7 +186,7 @@ export function searchBubbles(query: string, limit = 20, spaceIds?: string[]): B
       SELECT * FROM bubbles
       WHERE deleted_at IS NULL AND (content LIKE ? OR title LIKE ? OR tags LIKE ?)${spaceFilter}
       ORDER BY accessed_at DESC LIMIT ?
-    `).all(pattern, pattern, pattern, ...spaceParams, limit) as any[]
+    `).all(pattern, pattern, pattern, ...spaceParams, limit) as BubbleRow[]
     return rows.map(rowToBubble)
   }
 
@@ -179,7 +202,7 @@ export function searchBubbles(query: string, limit = 20, spaceIds?: string[]): B
     SELECT * FROM bubbles
     WHERE deleted_at IS NULL AND (${conditions})${spaceFilter}
     ORDER BY accessed_at DESC LIMIT ?
-  `).all(...params, ...spaceParams, limit) as any[]
+  `).all(...params, ...spaceParams, limit) as BubbleRow[]
   return rows.map(rowToBubble)
 }
 
@@ -195,7 +218,7 @@ export function getAllMemoryBubbles(spaceIds?: string[]): Bubble[] {
   }
 
   sql += ' ORDER BY updated_at DESC'
-  const rows = db.prepare(sql).all(...params) as any[]
+  const rows = db.prepare(sql).all(...params) as BubbleRow[]
   return rows.map(rowToBubble)
 }
 
@@ -249,7 +272,7 @@ export function findCompactionCandidates(level: number, spaceId?: string, limit 
   sql += ' ORDER BY created_at ASC LIMIT ?'
   params.push(limit)
 
-  const rows = db.prepare(sql).all(...params) as any[]
+  const rows = db.prepare(sql).all(...params) as BubbleRow[]
   return rows.map(rowToBubble)
 }
 
@@ -261,7 +284,7 @@ export function getChildBubbles(parentId: string): Bubble[] {
     INNER JOIN bubble_links bl ON b.id = bl.target_id
     WHERE bl.source_id = ? AND bl.relation = 'composed_of'
     ORDER BY b.created_at ASC
-  `).all(parentId) as any[]
+  `).all(parentId) as BubbleRow[]
   return rows.map(rowToBubble)
 }
 
@@ -270,11 +293,11 @@ export function findRecentBySource(source: string, sinceMs: number, limit = 1): 
   const db = getDatabase()
   const rows = db.prepare(
     'SELECT * FROM bubbles WHERE source = ? AND created_at > ? AND deleted_at IS NULL ORDER BY created_at DESC LIMIT ?',
-  ).all(source, sinceMs, limit) as any[]
+  ).all(source, sinceMs, limit) as BubbleRow[]
   return rows.map(rowToBubble)
 }
 
-export function rowToBubble(row: any): Bubble {
+export function rowToBubble(row: BubbleRow): Bubble {
   return {
     id: row.id,
     type: row.type,

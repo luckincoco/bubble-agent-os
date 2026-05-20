@@ -61,8 +61,6 @@ export const TOKEN_LIMITS = {
   COMPLETION_RESERVE: 8_000,
   /** Budget for memory context in system prompt */
   MEMORY_BUDGET: 24_000,
-  /** Budget for conversation history */
-  HISTORY_BUDGET: 24_000,
   /** Max tokens for a single user message (truncate if exceeded) */
   SINGLE_MESSAGE_MAX: 12_000,
   /** Max tokens for a single bubble in context */

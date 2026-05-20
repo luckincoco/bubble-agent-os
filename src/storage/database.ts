@@ -936,6 +936,17 @@ function runMigrations(database: Database.Database, defaultPassword: string) {
       throw err
     }
   }
+
+  // ── Migration v1.1.1: focus_messages for FocusTracker persistence ─
+  database.exec(`
+    CREATE TABLE IF NOT EXISTS focus_messages (
+      user_id TEXT NOT NULL,
+      message TEXT NOT NULL,
+      updated_at INTEGER NOT NULL
+    )
+  `)
+  database.exec('CREATE INDEX IF NOT EXISTS idx_focus_user ON focus_messages(user_id, updated_at)')
+  logger.info('Migration: focus_messages table created for FocusTracker persistence')
 }
 
 function seedData(database: Database.Database, defaultPassword: string) {

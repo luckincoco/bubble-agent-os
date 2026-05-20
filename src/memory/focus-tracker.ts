@@ -1,3 +1,4 @@
+import type Database from 'better-sqlite3'
 import { logger } from '../shared/logger.js'
 
 /** Tokenize text into meaningful terms (2+ chars, lowercased) */
@@ -51,10 +52,55 @@ export class FocusTracker {
     logger.debug(`FocusTracker: user=${userId}, terms=${focus.terms.size}, window=${focus.messages.length}`)
   }
 
-  /**
-   * Compute a focus boost for a piece of bubble content.
-   * Returns 0 if no focus data, up to MAX_BOOST if high overlap.
-   */
+  /** Persist current message windows to database (full replace per user) */
+  persistToDatabase(db: Database.Database): void {
+    const insert = db.prepare('INSERT INTO focus_messages (user_id, message, updated_at) VALUES (?, ?, ?)')
+    const del = db.prepare('DELETE FROM focus_messages WHERE user_id = ?')
+    const txn = db.transaction(() => {
+      for (const userId of this.focusMap.keys()) {
+        const focus = this.focusMap.get(userId)!
+        del.run(userId)
+        const now = Date.now()
+        for (const msg of focus.messages) {
+          insert.run(userId, msg, now)
+        }
+      }
+    })
+    txn()
+  }
+
+  /** Restore message windows from database for all users (called at startup) */
+  loadFromDatabase(db: Database.Database): void {
+    const rows = db.prepare(
+      'SELECT user_id, message FROM focus_messages ORDER BY user_id, updated_at',
+    ).all() as Array<{ user_id: string; message: string }>
+
+    const grouped = new Map<string, string[]>()
+    for (const row of rows) {
+      const list = grouped.get(row.user_id) || []
+      list.push(row.message)
+      grouped.set(row.user_id, list)
+    }
+
+    let loadedCount = 0
+    for (const [userId, messages] of grouped) {
+      const window = messages.slice(-this.WINDOW_SIZE)
+      const focus: UserFocus = { messages: window, terms: new Map() }
+      for (const msg of window) {
+        const tokens = tokenize(msg)
+        for (const t of tokens) {
+          focus.terms.set(t, (focus.terms.get(t) || 0) + 1)
+        }
+      }
+      this.focusMap.set(userId, focus)
+      loadedCount++
+    }
+
+    if (loadedCount > 0) {
+      logger.info(`FocusTracker: loaded ${loadedCount} user windows (${rows.length} messages) from database`)
+    }
+  }
+
   /** Get top frequent terms for a user (sorted by frequency desc) */
   getTopTerms(userId: string, minFreq = 2, limit = 10): Array<{ term: string; freq: number }> {
     const focus = this.focusMap.get(userId)

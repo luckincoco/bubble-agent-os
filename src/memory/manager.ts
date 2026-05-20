@@ -78,12 +78,31 @@ export class MemoryManager {
     this.aggregator = new BubbleAggregator()
     this.focusTracker = new FocusTracker()
     this.focusEnabled = enableFocus
+
+    // Warm up focus tracking from persisted data
+    if (this.focusEnabled) {
+      this.loadPersistedFocus()
+    }
   }
 
-  /** Record user message for focus tracking */
+  private loadPersistedFocus(): void {
+    try {
+      const db = getDatabase()
+      this.focusTracker.loadFromDatabase(db)
+    } catch {
+      logger.debug('FocusTracker: cold start — no persisted data')
+    }
+  }
+
+  /** Record user message for focus tracking (with persistence) */
   recordFocus(userId: string, message: string): void {
-    if (this.focusEnabled) {
-      this.focusTracker.record(userId, message)
+    if (!this.focusEnabled) return
+    this.focusTracker.record(userId, message)
+    try {
+      const db = getDatabase()
+      this.focusTracker.persistToDatabase(db)
+    } catch {
+      // Non-critical: focus persistence failure doesn't affect user experience
     }
   }
 

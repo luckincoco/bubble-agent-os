@@ -1,5 +1,5 @@
 import { useAuthStore } from '../stores/authStore'
-import type { SpaceMember, SpaceRole, CustomAgent, BizProduct, BizCounterparty, BizProject, BizPurchase, BizSale, BizLogisticsRecord, BizPayment, BizInvoice, InventoryItem, ReceivableItem, PayableItem, BizDashboardData, ProjectReconciliationItem, UserPreferences, DocStatus, DocLink, ProfitReportRow, CounterpartyStatementResult, MonthlyOverviewRow, KnowledgeStats, KnowledgeFilters, KnowledgeIndexResult, BubbleMemory, BubbleLink, EvidenceTree, GraphSubset } from '../types'
+import type { SpaceMember, SpaceRole, CustomAgent, BizProduct, BizCounterparty, BizProject, BizPurchase, BizSale, BizLogisticsRecord, BizPayment, BizInvoice, InventoryItem, ReceivableItem, PayableItem, BizDashboardData, ProjectReconciliationItem, UserPreferences, DocStatus, DocLink, ProfitReportRow, CounterpartyStatementResult, MonthlyOverviewRow, KnowledgeStats, KnowledgeFilters, KnowledgeIndexResult, BubbleMemory, BubbleLink, EvidenceTree, GraphSubset, AssertionTag } from '../types'
 
 const BASE = import.meta.env.DEV ? 'http://localhost:3000' : ''
 
@@ -590,4 +590,78 @@ export async function fetchGraphSubset(id: string, depth = 2, spaceId?: string):
   const res = await authFetch(`${BASE}/api/knowledge/${id}/graph${qs}`)
   if (!res.ok) throw new Error(`HTTP ${res.status}`)
   return res.json()
+}
+
+// ── Forge (自编码管理) ─────────────────────────────────────────────
+
+export interface ForgeToolMeta {
+  name: string
+  description: string
+  createdAt: number
+  approvedBy: string
+  status: 'active' | 'disabled' | 'experimental' | 'pending'
+  invocationCount: number
+  lastInvokedAt: number | null
+  errorCount: number
+}
+
+export async function fetchForgeTools(): Promise<ForgeToolMeta[]> {
+  const res = await authFetch(`${BASE}/api/forge/tools`)
+  if (!res.ok) throw new Error(`HTTP ${res.status}`)
+  const data = await res.json()
+  return data.tools
+}
+
+export async function fetchForgeToolCode(name: string): Promise<string> {
+  const res = await authFetch(`${BASE}/api/forge/tools/${name}/code`)
+  if (!res.ok) throw new Error(`HTTP ${res.status}`)
+  const data = await res.json()
+  return data.code
+}
+
+export async function approveForge(toolName: string): Promise<{ ok: boolean; message: string }> {
+  const res = await authFetch(`${BASE}/api/forge/approve`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ toolName }),
+  })
+  if (!res.ok) {
+    const data = await res.json().catch(() => ({}))
+    throw new Error(data.error || `HTTP ${res.status}`)
+  }
+  return res.json()
+}
+
+export async function disableForge(toolName: string): Promise<{ ok: boolean; message: string }> {
+  const res = await authFetch(`${BASE}/api/forge/disable`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ toolName }),
+  })
+  if (!res.ok) {
+    const data = await res.json().catch(() => ({}))
+    throw new Error(data.error || `HTTP ${res.status}`)
+  }
+  return res.json()
+}
+
+// ── Assertion API (断言自识别) ──────────────────────────────────
+
+export async function fetchAssertionsByTurn(turnId: string): Promise<AssertionTag[]> {
+  const res = await authFetch(`${BASE}/api/assertions/turn/${turnId}`)
+  if (!res.ok) throw new Error(`HTTP ${res.status}`)
+  const data = await res.json()
+  return data.assertions
+}
+
+export async function calibrateAssertion(id: string, updates: { assertionType?: string; verificationStatus?: string }): Promise<void> {
+  const res = await authFetch(`${BASE}/api/assertions/${id}/calibrate`, {
+    method: 'PUT',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(updates),
+  })
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({ error: `HTTP ${res.status}` }))
+    throw new Error(err.error || `HTTP ${res.status}`)
+  }
 }

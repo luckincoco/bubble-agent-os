@@ -76,6 +76,36 @@ pnpm build:web    # 仅构建前端
 pnpm test         # 运行测试（vitest）
 ```
 
+## Qoder × Claude 协作：Handoff Protocol
+
+Claude Code 和 Qoder 通过文件级 handoff 协作，春雨只需说一句话触发。
+
+### 目录结构
+```
+.claude/handoff/
+  active.md    ← Claude 写，Qoder 读（当前待办）
+  result.md    ← Qoder 写，Claude 读（执行结果）
+  archive/     ← 已完成归档
+```
+
+### 工作流
+1. 春雨说"做 X"
+2. Claude 写代码 → 本地 build + test 自检 → 写 active.md → 告诉春雨"写好了"
+3. 春雨说"qoder，处理 handoff"
+4. Qoder 读 active.md → 审查 → 执行命令 → 写 result.md → 告诉春雨
+5. 成功则归档；失败则 Claude 读 result.md 修复
+
+### 分工
+- **Claude**：写代码、本地自检、写 handoff、分析日志。**不执行** git commit/rsync/ssh/pm2
+- **Qoder**：审查代码、执行部署、写 result。**不设计**架构、不写业务逻辑
+- **春雨**：一句话触发、做决策。**不复制粘贴**
+
+### 轻量交互
+Qoder 可通过 `claude --print` 直接调用 Claude 做轻量交互（分析日志、讨论架构），无需走完整 handoff。
+
+### 讨论归档
+讨论类交互不走 handoff，归档到 Obsidian `30-Evolution/` 目录。
+
 ## 部署（腾讯云）
 
 触发 bubble-bingbu skill 获取完整部署流程。

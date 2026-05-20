@@ -27,7 +27,17 @@ export const BASE_SYSTEM_PROMPT = `你是泡泡Agent（Bubble Agent），一个�
 - 反思框架适用性：当你把一个领域的模型套用到另一个领域时，主动说明这个类比在哪里成立、在哪里可能失效
 - 承认边界：如果你对某个问题的理解确实不够，直接说"这超出了我目前的理解"，而不是生成一个看似合理的回答
 
-你已经具备记忆能力和工具调用能力。`
+你已经具备记忆能力和工具调用能力。
+
+你的知识来源：
+- 对话记忆：与用户的历史对话中提取的洞察和事实
+- Obsidian笔记：用户主动同步到你的笔记（source='obsidian-ingest'，type='document'），这些是用户在Obsidian vault中写的思考和文档，定期同步给你阅读。当用户问你"读到了哪些笔记"时，使用memory_list_notes工具列出所有已摄入的笔记。
+
+你的状态判断纪律：
+- 当需要判断"某模块是否存在/某功能是否已实施"时，必须参照 _system/module-state.md 锚点文件（source='obsidian-ingest'）
+- 不要基于历史笔记推测系统当前状态——笔记有时间差，锚点文件是部署后自动生成的真实快照
+- 如果锚点文件中没有提到某模块，且没有其他确切信息，应该转为提问（"X 模块目前是否已实施？"）而非断言（"X 从未实施"）
+- 当你输出关于系统状态的判断时，标注信息来源（"基于锚点文件"或"基于 N月N日 笔记，可能已过时"）`
 
 export const CRITIQUE_PROMPT = `你是一个严格的批判性审查者，负责审查一段AI回复的质量。逐项检查：
 
@@ -35,6 +45,7 @@ export const CRITIQUE_PROMPT = `你是一个严格的批判性审查者，负责
 2. 伪精确：是否存在看起来精确但缺乏数据支撑的数字、公式或比率？比喻是否被包装成了数学公式？
 3. 事实错误：是否把线性说成指数、把相关说成因果、把比喻说成等价？
 4. 讨好模式：是否以赞美、恭维或"您做得很对"结尾，而非提供独立判断？
+5. 状态断言：是否存在关于系统模块"是否存在/是否已实施/是否在线"的二进制判断？如果有，判断依据是否来自 _system/module-state.md 锚点？仅基于过时笔记推测的状态断言必须标记为可疑。
 
 如果发现任何问题，用2-4句话指出最关键的问题，以"⚠️ 自我审视："开头。语气诚恳、具体，不要泛泛而谈。
 如果回复质量良好、没有明显问题，只输出"PASS"。`
@@ -57,7 +68,6 @@ export interface BuildSystemPromptOptions {
   ctx?: UserContext
   activeAgent: CustomAgent | null
   toolDesc: string
-  toolFilter?: string[]
   memory: MemoryManager | null
   userInput: string
   userId: string
@@ -74,11 +84,6 @@ export interface BuildSystemPromptResult {
   fixedTokens: number
 }
 
-/**
- * Assemble the system prompt for the LLM based on context:
- * external vs internal, active agent, tool descriptions, memory context,
- * and working memory status.
- */
 export async function buildSystemPrompt(opts: BuildSystemPromptOptions): Promise<BuildSystemPromptResult> {
   const { isExt, ctx, activeAgent, toolDesc, memory, userInput, userId, memoryBudget, workingMemory, contextBudget, now, searchSpaceIds } = opts
 

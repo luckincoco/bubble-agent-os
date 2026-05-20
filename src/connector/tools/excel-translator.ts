@@ -28,8 +28,9 @@ export function excelDateToISO(serial: number | string): string {
     serial = n
   }
   if (serial < 1 || serial > 100000) return String(serial) // Not a date serial
-  // Excel epoch: 1900-01-01 = serial 1, but Excel wrongly counts 1900 as leap year
-  // Use UTC to avoid timezone-dependent date shifts (local time for 1899 may not be standard UTC+8)
+  // Excel 1900 date system with Lotus 1-2-3 compatibility:
+  // base = Dec 30, 1899 (accounts for phantom Feb 29, 1900 leap day bug)
+  // This matches openpyxl, xlrd, SheetJS standard behavior.
   const ms = Date.UTC(1899, 11, 30) + serial * 86400000
   const date = new Date(ms)
   const y = date.getUTCFullYear()

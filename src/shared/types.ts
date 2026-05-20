@@ -92,6 +92,27 @@ export interface SourceRef {
 export interface ThinkResult {
   response: string
   sources: SourceRef[]
+  turnId?: string
+}
+
+// Assertion self-identification types
+export type AssertionType = 'fact' | 'judgment' | 'speculation' | 'reference'
+export type AssertionSource = 'user_statement' | 'tool_result' | 'self_inference' | 'external_source'
+export type VerificationStatus = 'pending' | 'verified' | 'unverifiable'
+
+export interface AssertionTag {
+  id: string
+  userId: string
+  spaceId?: string
+  turnId: string
+  textSnippet: string
+  assertionType: AssertionType
+  source: AssertionSource
+  verificationStatus: VerificationStatus
+  confidence: number
+  userCalibrated: boolean
+  createdAt: number
+  updatedAt: number
 }
 
 // Custom Agent
@@ -230,5 +251,17 @@ export interface AppConfig {
     cognitionInternalization: boolean
     cognitionCascade: boolean
     cognitionGapTrigger: boolean
+    taskLedger: boolean
+    boundaryChecker: boolean
+    actionPlanner: boolean
+    boundaryRuleSelfEvolution: boolean
+    draftObservations: boolean
+    assertionIdentification: boolean
+    observability?: {
+      enabled: boolean
+      tracingLevel: 'off' | 'minimal' | 'full'
+      metricsFlushIntervalMs?: number
+      metricsBufferSize?: number
+    }
   }
 }

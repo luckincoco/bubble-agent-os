@@ -57,9 +57,9 @@ export async function executeSelfEvolution(
   _params: Record<string, unknown>,
   deps: TaskDeps,
 ): Promise<TaskResult> {
-  // Guard: require CODE_TOOLS to be enabled
-  if (process.env.CODE_TOOLS !== 'true') {
-    return { success: true, message: '自进化: CODE_TOOLS 未启用，跳过' }
+  // Guard: require CODE_TOOLS or SELF_EVOLUTION to be enabled
+  if (process.env.CODE_TOOLS !== 'true' && process.env.SELF_EVOLUTION !== 'true') {
+    return { success: true, message: '自进化: CODE_TOOLS/SELF_EVOLUTION 未启用，跳过' }
   }
 
   const projectRoot = process.env.BUBBLE_PROJECT_ROOT || process.cwd()

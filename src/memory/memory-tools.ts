@@ -49,6 +49,11 @@ export function getMemoryToolDefinitions(): MemoryToolDefs[] {
         bubble_id: { type: 'string', description: 'ID of the bubble to pin', required: true },
       },
     },
+    {
+      name: 'memory_list_notes',
+      description: 'List all Obsidian notes that have been ingested into memory. Returns titles, paths, and summaries.',
+      parameters: {},
+    },
   ]
 }
 
@@ -138,6 +143,36 @@ export function createMemoryToolHandlers(
     memory_pin: async (params: { bubble_id: string }) => {
       workingMemory.pin(sessionId, params.bubble_id)
       return JSON.stringify({ pinned: params.bubble_id, message: 'This memory will stay in context until unpinned.' })
+    },
+
+    memory_list_notes: async () => {
+      const db = getDatabase()
+      const rows = db.prepare(`
+        SELECT b.id, b.title, b.content, b.confidence, b.created_at, b.updated_at,
+               oi.file_path
+        FROM bubbles b
+        JOIN obsidian_ingest oi ON oi.bubble_id = b.id
+        WHERE b.deleted_at IS NULL AND oi.stale = 0
+        ORDER BY oi.file_path
+      `).all() as Array<{
+        id: string; title: string; content: string; confidence: number
+        created_at: number; updated_at: number; file_path: string
+      }>
+
+      if (rows.length === 0) {
+        return JSON.stringify({ count: 0, message: '目前没有已摄入的Obsidian笔记。' })
+      }
+
+      const notes = rows.map(row => ({
+        id: row.id,
+        title: row.title,
+        path: row.file_path,
+        summary: row.content.slice(0, 200).replace(/\n/g, ' '),
+        confidence: row.confidence,
+        ingestedAt: new Date(row.created_at).toISOString().slice(0, 10),
+      }))
+
+      return JSON.stringify({ count: notes.length, notes }, null, 2)
     },
   }
 }

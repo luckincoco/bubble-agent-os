@@ -2,12 +2,21 @@ import type { LLMProvider, LLMMessage, UserContext, ThinkResult, CustomAgent } f
 import { isExternalContext } from '../shared/types.js'
 import type { MemoryManager } from '../memory/manager.js'
 import type { ConversationInsightEvaluator } from '../memory/conversation-insight-evaluator.js'
+import type { ObservationRecorder } from '../memory/observation-recorder.js'
+import type { AssertionIdentifier } from '../memory/assertion-identifier.js'
+import type { ResonanceIntegration } from '../memory/resonance/index.js'
+import type { MetricsCollector } from '../memory/resonance/index.js'
+import { getDatabase } from '../storage/database.js'
+import { ulid } from 'ulid'
 import type { ToolRegistry } from '../connector/registry.js'
 import type { WorkingMemory } from '../memory/working-memory.js'
 import type { ContextBudget } from '../memory/context-budget.js'
+import type { Tracer } from '../observability/tracer.js'
 import { runToolLoop } from './tool-loop.js'
 import { estimateTokens, truncateToTokenBudget, TOKEN_LIMITS } from '../shared/tokens.js'
 import { EXT_TOOL_NAMES } from '../connector/tools/ext-query-tools.js'
+import { countDrafts } from '../memory/draft-observations.js'
+import { getConfig } from '../shared/config.js'
 import { logger } from '../shared/logger.js'
 import {
   BASE_SYSTEM_PROMPT,
@@ -48,12 +57,18 @@ function trimHistoryByTokens(history: LLMMessage[], budget: number): LLMMessage[
 export class Brain {
   private llm: LLMProvider
   private historyMap: Map<string, LLMMessage[]> = new Map()
+  private lastActivityMap: Map<string, number> = new Map()
   private memory: MemoryManager | null = null
   private tools: ToolRegistry | null = null
   private agentConfigs: Map<string, CustomAgent> = new Map()
   private insightEvaluator: ConversationInsightEvaluator | null = null
+  private observationRecorder: ObservationRecorder | null = null
+  private assertionIdentifier: AssertionIdentifier | null = null
+  private resonance: ResonanceIntegration | null = null
+  private metricsCollector: MetricsCollector | null = null
   private workingMemory: WorkingMemory | null = null
   private contextBudget: ContextBudget | null = null
+  private tracer: Tracer | null = null
 
   constructor(llm: LLMProvider) {
     this.llm = llm
@@ -74,10 +89,39 @@ export class Brain {
     logger.info('Brain: conversation insight evaluator connected')
   }
 
+  setObservationRecorder(recorder: ObservationRecorder) {
+    this.observationRecorder = recorder
+    logger.info('Brain: observation recorder connected')
+  }
+
+  setAssertionIdentifier(identifier: AssertionIdentifier) {
+    this.assertionIdentifier = identifier
+    logger.info('Brain: assertion identifier connected')
+  }
+
+  getAssertionIdentifier(): AssertionIdentifier | null {
+    return this.assertionIdentifier
+  }
+
+  setResonance(resonance: ResonanceIntegration) {
+    this.resonance = resonance
+    logger.info('Brain: resonance layer connected (anti-double-emit active)')
+  }
+
+  setMetricsCollector(collector: MetricsCollector) {
+    this.metricsCollector = collector
+    logger.info('Brain: metrics collector connected (5 signal detection)')
+  }
+
   setWorkingMemory(wm: WorkingMemory, budget: ContextBudget) {
     this.workingMemory = wm
     this.contextBudget = budget
     logger.info('Brain: working memory connected')
+  }
+
+  setTracer(tracer: Tracer) {
+    this.tracer = tracer
+    logger.info('Brain: observability tracer connected')
   }
 
   /** Set or clear the active agent for a user */
@@ -103,11 +147,36 @@ export class Brain {
   /** Clear conversation history for a user */
   clearHistory(userId: string) {
     this.historyMap.delete(userId)
+    this.lastActivityMap.delete(userId)
     logger.info(`Brain: history cleared for user ${userId}`)
+  }
+
+  /**
+   * Drain sessions that have been idle for at least `maxIdleMs`.
+   * Returns the history of idle sessions and clears them from memory.
+   * Used by session-compression task to persist structured summaries.
+   */
+  drainStaleSessions(maxIdleMs: number): Array<{ userId: string; history: LLMMessage[] }> {
+    const now = Date.now()
+    const drained: Array<{ userId: string; history: LLMMessage[] }> = []
+    for (const [userId, lastActive] of this.lastActivityMap) {
+      if (now - lastActive > maxIdleMs) {
+        const history = this.historyMap.get(userId)
+        if (history && history.length > 0) {
+          drained.push({ userId, history })
+        }
+        this.historyMap.delete(userId)
+        this.lastActivityMap.delete(userId)
+      }
+    }
+    return drained
   }
 
   async think(userInput: string, ctx?: UserContext, onChunk?: (text: string) => void): Promise<ThinkResult> {
     const userId = ctx?.userId ?? '_default'
+
+    // Update activity timestamp
+    this.lastActivityMap.set(userId, Date.now())
 
     // Handle "clear conversation" command
     if (/^(清空对话|清空历史|重新开始|reset)$/i.test(userInput.trim())) {
@@ -173,10 +242,30 @@ export class Brain {
       now,
       searchSpaceIds,
     })
+    let systemContent = promptResult.systemContent
     const sources = promptResult.sources
 
-    const systemMessage: LLMMessage = { role: 'system', content: promptResult.systemContent }
-    const systemTokens = estimateTokens(promptResult.systemContent) + 4
+    // Inject Obsidian notes summary for self-awareness (feature: obsidian-ingest)
+    if (!isExt) {
+      const notesSummary = this.getObsidianNotesSummary()
+      if (notesSummary) {
+        systemContent += `\n\n${notesSummary}`
+      }
+    }
+
+    // Inject draft observations reminder (feature: draft-observations)
+    if (!isExt) {
+      const config = getConfig()
+      if (config.features.draftObservations) {
+        const draftCount = countDrafts(ctx?.activeSpaceId)
+        if (draftCount > 0) {
+          systemContent += `\n\n[待审草稿提醒]\n你有 ${draftCount} 条自主思考草稿等待审核。在对话自然时机提醒用户，可以说"我最近有 ${draftCount} 条新想法等你审阅，要看看吗？"`
+        }
+      }
+    }
+
+    const systemMessage: LLMMessage = { role: 'system', content: systemContent }
+    const systemTokens = estimateTokens(systemContent) + 4
 
     // History gets whatever remains
     const historyBudget = maxPrompt - systemTokens - TOKEN_LIMITS.COMPLETION_RESERVE
@@ -213,6 +302,15 @@ export class Brain {
             storedHistory.push({ role: 'assistant', content: `[TOOL_CALL: ${tc.name}] ${JSON.stringify(tc.args)}` })
             storedHistory.push({ role: 'user', content: `[TOOL_RESULT: ${tc.name}] ${tc.result}` })
           }
+
+          // Auto-record observations for tool interactions (feature: observation-recorder)
+          if (!isExt && this.observationRecorder) {
+            for (const tc of loopResult.toolCalls) {
+              this.observationRecorder.recordToolCall(tc, userId, ctx?.activeSpaceId).catch((err) => {
+                logger.debug(`Observation recording error: ${err instanceof Error ? err.message : String(err)}`)
+              })
+            }
+          }
         }
       } else {
         // No tools available - direct LLM call
@@ -227,8 +325,16 @@ export class Brain {
 
       const storedHistory = this.getHistory(userId)
 
-      // Post-process: self-critique, history, memory extraction, insight evaluation
-      response = await this.postProcessResponse(userInput, response, storedHistory, ctx, isExt)
+      // Post-process: self-critique, history, conversation_turns, memory extraction, insight evaluation
+      const turnId = ulid()
+      response = await this.postProcessResponse(userInput, effectiveInput, response, storedHistory, turnId, ctx, isExt, userId)
+
+      // Assertion identification: classify claims in the response (async, non-blocking)
+      if (!isExt && this.assertionIdentifier) {
+        this.assertionIdentifier.identify(effectiveInput, response, turnId, userId, ctx?.activeSpaceId).catch((err) => {
+          logger.debug('Assertion identification error:', err instanceof Error ? err.message : String(err))
+        })
+      }
 
       return { response, sources }
     } catch (err) {
@@ -286,47 +392,6 @@ export class Brain {
     }
   }
 
-  /**
-   * Post-process a response: self-critique, persist to history, async memory extraction,
-   * and insight evaluation. Returns the (possibly modified) response text.
-   */
-  private async postProcessResponse(
-    userInput: string,
-    response: string,
-    storedHistory: LLMMessage[],
-    ctx?: UserContext,
-    isExt = false,
-  ): Promise<string> {
-    let finalResponse = response
-
-    // Self-critique (internal users only)
-    if (!isExt) {
-      const critique = await this.selfCritique(userInput, finalResponse)
-      if (critique) {
-        finalResponse = `${finalResponse}\n\n${critique}`
-      }
-    }
-
-    storedHistory.push({ role: 'assistant', content: finalResponse })
-
-    // Async post-processing — fire-and-forget, never blocks the response
-    const spaceId = ctx?.activeSpaceId
-
-    if (!isExt && this.memory) {
-      this.memory.extractAndStore(userInput, finalResponse, spaceId).catch((err) => {
-        logger.debug('Memory extraction error:', err instanceof Error ? err.message : String(err))
-      })
-    }
-
-    if (!isExt && this.insightEvaluator) {
-      this.insightEvaluator.evaluate(userInput, finalResponse, spaceId).catch((err) => {
-        logger.debug('Insight evaluation error:', err instanceof Error ? err.message : String(err))
-      })
-    }
-
-    return finalResponse
-  }
-
   /** Run a self-critique pass on a response. Returns critique text or null if PASS. */
   private async selfCritique(userInput: string, response: string): Promise<string | null> {
     if (response.length < CRITIQUE_MIN_LENGTH) return null
@@ -343,6 +408,90 @@ export class Brain {
       return text
     } catch (err) {
       logger.debug('Self-critique error:', err instanceof Error ? err.message : String(err))
+      return null
+    }
+  }
+
+  /**
+   * Post-process a response: self-critique, persist to history and conversation_turns,
+   * async memory extraction, and insight evaluation.
+   * Returns the (possibly modified) response text.
+   */
+  private async postProcessResponse(
+    userInput: string,
+    effectiveInput: string,
+    response: string,
+    storedHistory: LLMMessage[],
+    turnId: string,
+    ctx?: UserContext,
+    isExt = false,
+    userId?: string,
+  ): Promise<string> {
+    let finalResponse = response
+
+    // Self-critique (internal users only)
+    if (!isExt) {
+      const critique = await this.selfCritique(userInput, finalResponse)
+      if (critique) {
+        finalResponse = `${finalResponse}\n\n${critique}`
+      }
+    }
+
+    storedHistory.push({ role: 'assistant', content: finalResponse })
+
+    // Store conversation turn for assertion identification
+    if (!isExt && userId) {
+      try {
+        const db = getDatabase()
+        db.prepare(`
+          INSERT INTO conversation_turns (id, user_id, space_id, user_input, assistant_response, created_at)
+          VALUES (?, ?, ?, ?, ?, ?)
+        `).run(
+          turnId, userId, ctx?.activeSpaceId ?? null,
+          effectiveInput.slice(0, 500), finalResponse.slice(0, 1000), Date.now(),
+        )
+      } catch (err) {
+        logger.debug(`Brain: turn storage error: ${err instanceof Error ? err.message : String(err)}`)
+      }
+    }
+
+    // Async post-processing — fire-and-forget, never blocks the response
+    const spaceId = ctx?.activeSpaceId
+
+    if (!isExt && this.memory) {
+      this.memory.extractAndStore(userInput, finalResponse, spaceId, turnId).catch((err) => {
+        logger.debug('Memory extraction error:', err instanceof Error ? err.message : String(err))
+      })
+    }
+
+    if (!isExt && this.insightEvaluator) {
+      this.insightEvaluator.evaluate(userInput, finalResponse, spaceId).catch((err) => {
+        logger.debug('Insight evaluation error:', err instanceof Error ? err.message : String(err))
+      })
+    }
+
+    return finalResponse
+  }
+
+  /** Get a summary of ingested Obsidian notes for agent self-awareness. */
+  private getObsidianNotesSummary(): string | null {
+    try {
+      const db = getDatabase()
+      const rows = db.prepare(`
+        SELECT b.title, b.updated_at, oi.ingested_at
+        FROM bubbles b
+        LEFT JOIN obsidian_ingest oi ON b.id = oi.bubble_id
+        WHERE b.source = 'obsidian-ingest' AND b.deleted_at IS NULL
+        ORDER BY b.updated_at DESC LIMIT 5
+      `).all() as Array<{ title: string; updated_at: number; ingested_at: number | null }>
+      if (rows.length === 0) return null
+
+      const lines = rows.map(r => {
+        const date = new Date(r.updated_at).toLocaleDateString('zh-CN')
+        return `  - 《${r.title}》（${date}）`
+      })
+      return `[已摄入的 Obsidian 笔记]\n${lines.join('\n')}\n使用 memory_list_notes 查看全部。`
+    } catch {
       return null
     }
   }

@@ -8,6 +8,8 @@ import { MemoryManager } from './memory/manager.js'
 import { SemanticBridge } from './memory/semantic-bridge.js'
 import { SurpriseDetector } from './memory/surprise-detector.js'
 import { ConversationInsightEvaluator } from './memory/conversation-insight-evaluator.js'
+import { AssertionIdentifier } from './memory/assertion-identifier.js'
+import { ObservationRecorder } from './memory/observation-recorder.js'
 import { ToolRegistry } from './connector/registry.js'
 import { createWeatherTool } from './connector/tools/weather.js'
 import { createTimeTool } from './connector/tools/time.js'
@@ -18,7 +20,9 @@ import { createBizQueryTools } from './connector/tools/biz-query-tools.js'
 import { createExtQueryTools } from './connector/tools/ext-query-tools.js'
 import { createExtAdminTools } from './connector/tools/ext-admin-tools.js'
 import { createCodeTools } from './connector/tools/code-tools.js'
+import { createSelfForgeTool } from './connector/tools/self-forge-tool.js'
 import { createMarkitdownTool } from './connector/tools/markitdown-tool.js'
+import { createDraftTools } from './connector/tools/draft-tools.js'
 import { FeishuConnector } from './connector/feishu.js'
 import { WeComConnector } from './connector/wecom.js'
 import { MessageRouter } from './connector/router.js'
@@ -43,6 +47,12 @@ import { ContextBudget } from './memory/context-budget.js'
 import { OrientationGraph } from './cognition/orientation-graph.js'
 import { CausalEvaluator } from './cognition/causal-evaluator.js'
 import { InternalizationEngine } from './cognition/internalization.js'
+import { ConceptForge } from './cognition/concept-forge.js'
+import { ObsidianIngest } from './cognition/obsidian-ingest.js'
+// v0.9.0: Observability
+import { initObservability, type ObservabilityModule } from './observability/index.js'
+// v1.1: Resonance Layer — activation path recording + anti-double-emit + signal detection
+import { ResonanceIntegration, MetricsCollector, ensureMetricsTables } from './memory/resonance/index.js'
 
 async function main() {
   const config = getConfig()
@@ -93,17 +103,33 @@ async function main() {
     }
     logger.info('Module: CodeTools enabled')
   }
+  if (config.features.selfEvolution) {
+    tools.register(createSelfForgeTool(llmRouter.forCategory('chat'), process.cwd()))
+    logger.info('Module: SelfForge (self-coding) enabled')
+  }
   if (config.features.markitdown) {
     for (const tool of createMarkitdownTool()) {
       tools.register(tool)
     }
     logger.info('Module: MarkItDown enabled')
   }
+  if (config.features.draftObservations) {
+    for (const tool of createDraftTools()) {
+      tools.register(tool)
+    }
+    logger.info('Module: DraftObservations enabled')
+  }
 
   const brain = new Brain(llmRouter.forCategory('chat'))
   brain.setMemory(memory)
   brain.setTools(tools)
   brain.setInsightEvaluator(new ConversationInsightEvaluator(llmRouter.forCategory('memory')))
+  brain.setObservationRecorder(new ObservationRecorder())
+
+  if (config.features.assertionIdentification) {
+    brain.setAssertionIdentifier(new AssertionIdentifier(llmRouter.forCategory('memory')))
+    logger.info('Module: AssertionIdentification enabled')
+  }
 
   // Initialize event-driven modules based on feature flags
   const semanticBridge = config.features.semanticBridge ? new SemanticBridge() : undefined
@@ -148,6 +174,13 @@ async function main() {
     logger.info('Module: MemoryViews enabled')
   }
 
+  // v0.9.0: Initialize Observability (after EventBus, before Cognition)
+  let obs: ObservabilityModule | undefined
+  if (config.features.observability?.enabled) {
+    obs = initObservability(eventBus, config.features.observability)
+    brain.setTracer(obs.tracer)
+  }
+
   // v0.8.0: Initialize Cognitive Evolution Layer
   let orientationGraph: OrientationGraph | undefined
   let causalEvaluator: CausalEvaluator | undefined
@@ -169,8 +202,37 @@ async function main() {
   if (config.features.cognitionInternalization) {
     internalizationEngine = new InternalizationEngine()
     if (eventBus) internalizationEngine.setEventBus(eventBus)
+    if (orientationGraph) internalizationEngine.setOrientationGraph(orientationGraph)
     logger.info('Module: CognitionInternalizationEngine enabled')
   }
+
+  // v0.9.0: Concept Forge — cross-domain structural isomorphism detection
+  let conceptForge: ConceptForge | undefined
+  if (config.features.cognitionOrientation && orientationGraph) {
+    const cogLlm = llmRouter.forCategory('memory')
+    conceptForge = new ConceptForge(cogLlm, orientationGraph)
+    if (eventBus) conceptForge.setEventBus(eventBus)
+    if (internalizationEngine) conceptForge.setInternalizationEngine(internalizationEngine)
+    logger.info('Module: ConceptForge enabled')
+  }
+
+  // Obsidian Ingest — safe read-only ingestion from whitelisted directory
+  const obsidianIngestDir = resolve(config.storage.dataDir, '..', 'obsidian-ingest')
+  const obsidianIngest = new ObsidianIngest(obsidianIngestDir)
+  if (eventBus) obsidianIngest.setEventBus(eventBus)
+  logger.info(`Module: ObsidianIngest enabled (dir: ${obsidianIngestDir})`)
+
+  // v1.1: Resonance Layer — activation path + anti-double-emit + conversation signals
+  const resonanceIntegration = new ResonanceIntegration()
+  if (eventBus) resonanceIntegration.subscribeTo(eventBus)
+  brain.setResonance(resonanceIntegration)
+  logger.info('Module: ResonanceTracker enabled')
+
+  ensureMetricsTables()
+  const metricsCollector = new MetricsCollector()
+  if (eventBus) metricsCollector.setEventBus(eventBus)
+  brain.setMetricsCollector(metricsCollector)
+  logger.info('Module: MetricsCollector enabled (5 signal detection)')
 
   // Initialize biz entry handler, teach handler, skill system, and unified message router
   const bizLlm = llmRouter.forCategory('biz')
@@ -205,8 +267,10 @@ async function main() {
   // Initialize scheduler
   let scheduler: TaskScheduler | undefined
   try {
-    scheduler = new TaskScheduler({ brain, memory, tools, llm, llmRouter, feishu, eventBus, config, orientationGraph, causalEvaluator, internalizationEngine })
+    scheduler = new TaskScheduler({ brain, memory, tools, llm, llmRouter, feishu, eventBus, config, orientationGraph, causalEvaluator, internalizationEngine, conceptForge, obsidianIngest })
     await scheduler.init()
+    // P1: Wire reactive event-driven scheduling
+    if (eventBus) scheduler.registerReactiveListeners(eventBus)
     logger.info('Module: TaskScheduler enabled')
   } catch (err) {
     logger.error('Scheduler init failed:', err instanceof Error ? err.message : String(err))
@@ -216,6 +280,7 @@ async function main() {
   const serverModules: ServerModules = { semanticBridge, surpriseDetector, scheduler, tencentConfig: config.tencent, wecom, llm }
 
   process.on('SIGINT', () => {
+    obs?.stop()
     scheduler?.stop()
     closeDatabase()
     process.exit(0)

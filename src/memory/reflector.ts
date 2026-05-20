@@ -19,6 +19,7 @@ import { createBubble, findBubblesByType, getChildBubbles, searchBubbles, update
 import { addLink, findLinksByRelation } from '../bubble/links.js'
 import { getDatabase } from '../storage/database.js'
 import { logger } from '../shared/logger.js'
+import { createDraft } from './draft-observations.js'
 import type { QualitySignal, SynthesisQualityAssessment } from './compactor.js'
 import type { OrientationGraph } from '../cognition/orientation-graph.js'
 
@@ -87,9 +88,15 @@ export class Reflector {
   private llm: LLMProvider
   private lastValidatedAt = 0
   private orientationGraph: OrientationGraph | null = null
+  private draftMode = false
 
   constructor(llm: LLMProvider) {
     this.llm = llm
+  }
+
+  /** 启用 draft 模式：discover 产出写入 draft 表而非直接创建 observation */
+  setDraftMode(enabled: boolean): void {
+    this.draftMode = enabled
   }
 
   setOrientationGraph(graph: OrientationGraph): void {
@@ -165,6 +172,19 @@ export class Reflector {
           .filter(i => i >= 0 && i < group.length)
           .map(i => group[i].id)
 
+        // Draft mode: write to draft table instead of creating observation directly
+        if (this.draftMode) {
+          createDraft({
+            content: `${parsed.title}\n\n${parsed.content}`,
+            source: 'reflector',
+            context: `evidence: ${evidenceIds.length} memories`,
+            spaceId: spaceId ?? '',
+          })
+          discovered++
+          logger.info(`Reflector: drafted "${parsed.title}" (evidence=${evidenceIds.length}, awaiting review)`)
+          continue
+        }
+
         const now = Date.now()
         const meta: ObservationMetadata = {
           trend: evidenceIds.length >= MIN_EVIDENCE_FOR_STABLE ? 'stable' : 'new',
@@ -175,17 +195,28 @@ export class Reflector {
           reviewCount: 0,
         }
 
+        // Aggregate assertion types from evidence bubbles
+        const evidenceBubbles = evidenceIds
+          .map(id => group.find(b => b.id === id))
+          .filter((b): b is Bubble => b !== undefined)
+        const assertionProfile = aggregateAssertionProfile(evidenceBubbles)
+
+        const obsTags = ['observation', 'auto-discovered']
+        if (assertionProfile.hasSpeculativeEvidence) {
+          obsTags.push('has-speculative-evidence')
+        }
+
         const obs = createBubble({
           type: 'observation' as BubbleType,
           title: parsed.title,
           content: parsed.content,
-          tags: ['observation', 'auto-discovered'],
+          tags: obsTags,
           source: 'reflector',
           confidence: Math.min(1.0, Math.max(0.1, parsed.confidence ?? 0.5)),
           decayRate: 0.02,
           spaceId,
           abstractionLevel: 1,
-          metadata: meta as unknown as Record<string, unknown>,
+          metadata: { ...meta as unknown as Record<string, unknown>, assertionProfile },
         })
 
         // Link observation to its evidence
@@ -493,5 +524,41 @@ export class Reflector {
 
     logger.debug(`Reflector: synthesis ${synthesisId} quality: aligned=${assessment.alignedObservations}, contradicted=${assessment.contradictedObservations}, novelty=${assessment.noveltyScore.toFixed(2)}`)
     return assessment
+  }
+}
+
+/** Aggregate assertion types from evidence bubbles into a profile for the Observation. */
+function aggregateAssertionProfile(evidenceBubbles: Bubble[]): {
+  factCount: number
+  judgmentCount: number
+  speculationCount: number
+  referenceCount: number
+  hasSpeculativeEvidence: boolean
+  evidenceAssertionTypes: string[]
+} {
+  const counts = { factCount: 0, judgmentCount: 0, speculationCount: 0, referenceCount: 0 }
+  const types: string[] = []
+
+  for (const b of evidenceBubbles) {
+    // Check tags for assertion:xxx pattern
+    const assertionTag = b.tags.find(t => t.startsWith('assertion:'))
+    const type = assertionTag ? assertionTag.replace('assertion:', '') : null
+
+    // Also check metadata for assertionType field
+    const metaType = (b.metadata as Record<string, unknown>)?.assertionType as string | undefined
+    const effectiveType = type || metaType
+
+    if (effectiveType === 'fact') counts.factCount++
+    else if (effectiveType === 'judgment') counts.judgmentCount++
+    else if (effectiveType === 'speculation') counts.speculationCount++
+    else if (effectiveType === 'reference') counts.referenceCount++
+
+    if (effectiveType) types.push(effectiveType)
+  }
+
+  return {
+    ...counts,
+    hasSpeculativeEvidence: counts.speculationCount > 0,
+    evidenceAssertionTypes: types,
   }
 }

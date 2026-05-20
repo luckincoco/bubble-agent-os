@@ -3,12 +3,9 @@ import { getDatabase, buildInClause } from '../storage/database.js'
 import { cosineSimilarity } from '../ai/embeddings.js'
 import { getNeighborIds } from './links.js'
 import { searchBubbles, getAllMemoryBubbles, getBubble } from './model.js'
+import { searchFTS, getShortSegments } from './fts.js'
+import { extractEntities, findBubblesByEntity } from './entity-extractor.js'
 import { logger } from '../shared/logger.js'
-
-interface AggregateResult {
-  bubble: Bubble
-  score: number
-}
 
 /** Lightweight bubble representation for Phase 1 of tiered loading */
 export interface BubbleSummaryHit {
@@ -19,22 +16,8 @@ export interface BubbleSummaryHit {
   score: number
 }
 
-// --- Dynamic weight profiles based on query intent ---
+// --- Query intent classification ---
 type QueryIntent = 'precise' | 'fuzzy' | 'temporal' | 'aggregate'
-
-interface WeightProfile {
-  keyword: number
-  vector: number
-  graph: number
-  recency: number
-}
-
-const WEIGHT_PROFILES: Record<QueryIntent, WeightProfile> = {
-  precise:   { keyword: 0.55, vector: 0.25, graph: 0.10, recency: 0.10 },
-  fuzzy:     { keyword: 0.15, vector: 0.45, graph: 0.30, recency: 0.10 },
-  temporal:  { keyword: 0.20, vector: 0.20, graph: 0.10, recency: 0.50 },
-  aggregate: { keyword: 0.35, vector: 0.30, graph: 0.15, recency: 0.20 },
-}
 
 // Heuristic patterns for query intent classification
 const TEMPORAL_PATTERNS = /今天|昨天|最近|上周|上个月|本月|这周|刚才|今年|去年|本周|近期|最新/
@@ -68,93 +51,139 @@ export class BubbleAggregator {
 
   async aggregate(query: string, limit = 10, spaceIds?: string[], focusBoostFn?: (content: string) => number): Promise<Bubble[]> {
     const intent = classifyIntent(query)
-    const W = WEIGHT_PROFILES[intent]
 
-    const scores = new Map<string, { bubble: Bubble; keyword: number; vector: number; graph: number; recency: number }>()
-
-    // Path 1: Keyword search (always fast — SQLite)
+    // ── Path 1: BM25 via FTS5 (or LIKE fallback) — produces ranked list ──
+    const ftsResults = searchFTS(query, limit * 3, spaceIds)
     const keywordResults = searchBubbles(query, limit * 2, spaceIds)
-    for (let i = 0; i < keywordResults.length; i++) {
-      const b = keywordResults[i]
-      const pinBoost = b.pinned ? 0.3 : 0
-      scores.set(b.id, {
-        bubble: b,
-        keyword: 1 - i / keywordResults.length + pinBoost,
-        vector: 0,
-        graph: 0,
-        recency: recencyScore(b.accessedAt),
-      })
+
+    // Merge FTS + LIKE results: FTS results take priority ordering
+    const bm25Ranked: string[] = []
+    const seenIds = new Set<string>()
+    for (const r of ftsResults) {
+      if (!seenIds.has(r.id)) {
+        bm25Ranked.push(r.id)
+        seenIds.add(r.id)
+      }
+    }
+    for (const b of keywordResults) {
+      if (!seenIds.has(b.id)) {
+        bm25Ranked.push(b.id)
+        seenIds.add(b.id)
+      }
     }
 
-    // Path 2: Vector similarity — SKIP if keyword results are strong enough
-    // This is the expensive path (embedding API call + full scan)
-    const needVector = this.embeddings && keywordResults.length < limit * 0.6
+    // ── Path 2: Vector similarity — produces ranked list ──
+    const vectorRanked: string[] = []
+    const needVector = this.embeddings && bm25Ranked.length < limit * 0.6
     if (needVector) {
       try {
-        // Timeout: abort embedding if takes > 3 seconds
         const controller = new AbortController()
         const timer = setTimeout(() => controller.abort(), 3000)
         const queryEmbedding = await this.embeddings!.embed(query)
         clearTimeout(timer)
 
-        // Only scan recent bubbles (limit 200) to avoid full table scan
         const candidates = getAllBubblesWithEmbeddings(spaceIds, 200)
-
+        const scored: Array<{ id: string; sim: number }> = []
         for (const b of candidates) {
           const sim = cosineSimilarity(queryEmbedding, b.embedding!)
-          if (sim < 0.3) continue  // Skip low-similarity early
-          const entry = scores.get(b.id)
-          if (entry) {
-            entry.vector = sim
-          } else {
-            scores.set(b.id, {
-              bubble: b,
-              keyword: 0,
-              vector: sim,
-              graph: 0,
-              recency: recencyScore(b.accessedAt),
-            })
-          }
+          if (sim >= 0.3) scored.push({ id: b.id, sim })
         }
+        scored.sort((a, b) => b.sim - a.sim)
+        for (const s of scored) vectorRanked.push(s.id)
       } catch (err) {
-        // Embedding timeout or failure — gracefully skip
         logger.debug('Vector search skipped:', err instanceof Error ? err.message : String(err))
       }
     }
 
-    // Path 3: Graph traversal - boost neighbors of top keyword results
-    const topIds = keywordResults.slice(0, 3).map((b) => b.id)
+    // ── Path 3: Graph traversal + Entity KG — produces ranked list ──
+    const graphRanked: string[] = []
+    const topIds = bm25Ranked.slice(0, 3)
+    const graphScores = new Map<string, number>()
+
+    // 3a: Link-based graph traversal (existing)
     for (const id of topIds) {
       const neighborIds = getNeighborIds(id, 2)
       for (const nId of neighborIds) {
-        const entry = scores.get(nId)
-        if (entry) {
-          entry.graph = 0.8
+        if (!graphScores.has(nId)) {
+          graphScores.set(nId, 0)
         }
+        graphScores.set(nId, graphScores.get(nId)! + 1)
       }
     }
 
-    // Dynamic weighted fusion
-    const results: AggregateResult[] = []
-    for (const [, entry] of scores) {
-      let score =
-        W.keyword * entry.keyword +
-        W.vector * entry.vector +
-        W.graph * entry.graph +
-        W.recency * entry.recency
+    // 3b: Entity-based KG expansion — find bubbles sharing entities with query
+    try {
+      const queryEntities = extractEntities(query)
+      for (const entity of queryEntities.slice(0, 5)) {
+        const relatedIds = findBubblesByEntity(entity.text, entity.type, 10)
+        for (const rId of relatedIds) {
+          graphScores.set(rId, (graphScores.get(rId) || 0) + 1)
+        }
+      }
+    } catch {
+      // Entity index might not be populated yet; silently skip
+    }
+    // Sort by co-occurrence count, then add to ranked list
+    const graphEntries = [...graphScores.entries()].sort((a, b) => b[1] - a[1])
+    for (const [id] of graphEntries) graphRanked.push(id)
 
-      // Apply focus boost from conversation tracking
-      score += focusBoostFn?.(entry.bubble.content) ?? 0
+    // ── RRF Fusion (k=60) ──
+    const RRF_K = 60
+    const rrfScores = new Map<string, number>()
 
-      // Apply tier-based memory level multiplier
-      score *= tierMultiplier(entry.bubble.accessedAt, entry.bubble.pinned)
+    // BM25 contribution
+    for (let i = 0; i < bm25Ranked.length; i++) {
+      const id = bm25Ranked[i]
+      rrfScores.set(id, (rrfScores.get(id) || 0) + 1 / (RRF_K + i + 1))
+    }
+    // Vector contribution
+    for (let i = 0; i < vectorRanked.length; i++) {
+      const id = vectorRanked[i]
+      rrfScores.set(id, (rrfScores.get(id) || 0) + 1 / (RRF_K + i + 1))
+    }
+    // Graph contribution
+    for (let i = 0; i < graphRanked.length; i++) {
+      const id = graphRanked[i]
+      rrfScores.set(id, (rrfScores.get(id) || 0) + 1 / (RRF_K + i + 1))
+    }
+
+    // ── Post-RRF adjustments: recency, focus, abstraction, pin ──
+    const allIds = [...rrfScores.keys()]
+    const bubbleCache = new Map<string, Bubble>()
+
+    // Batch-load keyword results (already fetched)
+    for (const b of keywordResults) bubbleCache.set(b.id, b)
+
+    // Load any missing bubbles
+    for (const id of allIds) {
+      if (!bubbleCache.has(id)) {
+        const b = getBubble(id, spaceIds)
+        if (b) bubbleCache.set(id, b)
+      }
+    }
+
+    interface ScoredResult { bubble: Bubble; score: number }
+    const results: ScoredResult[] = []
+
+    for (const [id, rrfBase] of rrfScores) {
+      const bubble = bubbleCache.get(id)
+      if (!bubble) continue
+
+      let score = rrfBase
+
+      // Apply focus boost
+      score += focusBoostFn?.(bubble.content) ?? 0
+
+      // Apply tier multiplier (recency)
+      score *= tierMultiplier(bubble.accessedAt, bubble.pinned)
 
       // Apply abstraction level boost
-      score *= abstractionBoost(entry.bubble.abstractionLevel ?? 0, intent)
+      score *= abstractionBoost(bubble.abstractionLevel ?? 0, intent)
 
-      if (score > 0.01) {
-        results.push({ bubble: entry.bubble, score })
-      }
+      // Pin boost
+      if (bubble.pinned) score += 0.005
+
+      results.push({ bubble, score })
     }
 
     results.sort((a, b) => b.score - a.score)
@@ -191,11 +220,6 @@ export class BubbleAggregator {
     }
     return results
   }
-}
-
-function recencyScore(accessedAt: number): number {
-  const hoursSince = (Date.now() - accessedAt) / (1000 * 60 * 60)
-  return Math.exp(-hoursSince / 168) // decay over ~1 week
 }
 
 /** Memory tier multiplier: recent bubbles rank higher, old ones are deprioritized. */

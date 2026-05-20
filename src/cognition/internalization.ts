@@ -16,6 +16,7 @@ import { logger } from '../shared/logger.js'
 import type { EventBus } from '../event/event-bus.js'
 import type { CausalVerdict, ImpactType } from './causal-evaluator.js'
 import type { ObservationMetadata, ObservationTrend } from '../memory/reflector.js'
+import type { OrientationGraph } from './orientation-graph.js'
 
 // ── Types ───────────────────────────────────────────────────────
 
@@ -67,12 +68,17 @@ const CASCADE_APPROVAL_THRESHOLD = 3  // >3 cascaded → requires approval
 
 export class InternalizationEngine {
   private eventBus: EventBus | null = null
+  private orientationGraph: OrientationGraph | null = null
   private requireApproval = true  // 初期全审批
 
   constructor() {}
 
   setEventBus(bus: EventBus): void {
     this.eventBus = bus
+  }
+
+  setOrientationGraph(graph: OrientationGraph): void {
+    this.orientationGraph = graph
   }
 
   setApprovalMode(require: boolean): void {
@@ -171,6 +177,9 @@ export class InternalizationEngine {
       // Mark proposal bubble as approved
       this.updateProposalStatus(proposal.id, 'approved')
 
+      // P2: OPD feedback — approval confirms our causal reasoning was valid
+      this.applyOpdFeedback(proposal, 'approved')
+
       logger.info(`Internalization: proposal ${proposal.id} executed by ${approvedBy}`)
       return true
     } catch (err) {
@@ -182,8 +191,10 @@ export class InternalizationEngine {
   /**
    * Reject a proposal.
    */
-  rejectProposal(proposalId: string): void {
+  rejectProposal(proposalId: string, proposal?: InternalizationProposal): void {
     this.updateProposalStatus(proposalId, 'rejected')
+    // P2: OPD feedback — rejection means our causal reasoning was flawed
+    if (proposal) this.applyOpdFeedback(proposal, 'rejected')
     logger.info(`Internalization: proposal ${proposalId} rejected`)
   }
 
@@ -449,6 +460,41 @@ export class InternalizationEngine {
         // Recurse
         this.cascadeDown(depObs.id, cascadeDelta, depth + 1, cascaded, gaps, evidenceBubbleId)
       }
+    }
+  }
+
+  // ── Private: OPD Feedback ──────────────────────────────────────
+
+  /**
+   * P2: OPD-inspired feedback — extract "hint" from approval/rejection
+   * and feed it back to OrientationGraph to adjust domain weights.
+   */
+  private applyOpdFeedback(proposal: InternalizationProposal, action: 'approved' | 'rejected'): void {
+    if (!this.orientationGraph) return
+
+    try {
+      // Extract affected domains from the verdict
+      const affectedDomains: string[] = [proposal.verdict.dimension]
+
+      // Also include domains of affected observations
+      for (const ao of proposal.verdict.affectedObservations) {
+        const obs = this.getObservation(ao.observationId)
+        if (obs) {
+          const domainTag = obs.tags.find((t: string) => t !== 'observation' && t !== 'auto-discovered' && t.length > 1)
+          if (domainTag && !affectedDomains.includes(domainTag)) {
+            affectedDomains.push(domainTag)
+          }
+        }
+      }
+
+      this.orientationGraph.applyFeedback({
+        action,
+        affectedDomains,
+        impactType: proposal.verdict.impactType,
+        causalChain: proposal.verdict.causalChain,
+      })
+    } catch (err) {
+      logger.debug(`Internalization: OPD feedback failed: ${err instanceof Error ? err.message : String(err)}`)
     }
   }
 

@@ -20,6 +20,7 @@ export type ImpactType = 'confirms' | 'contradicts' | 'extends' | 'refines' | 'n
 export type BusinessDimension = 'market_dynamics' | 'supplier_behavior' | 'customer_pattern'
   | 'operational_risk' | 'financial_exposure' | 'tech_improvement'
 export type Urgency = 'low' | 'medium' | 'high'
+export type InformationDepth = 'phenomenon' | 'motive' | 'pattern' | 'projection'
 
 export interface EvaluationInput {
   bubbleId: string
@@ -40,6 +41,9 @@ export interface CausalVerdict {
   confidence: number
   dimension: BusinessDimension
   urgency: Urgency
+  informationDepth: InformationDepth
+  needsMotiveGap?: boolean
+  needsPatternSupport?: boolean
 }
 
 // ── Constants ───────────────────────────────────────────────────
@@ -57,16 +61,22 @@ const EVALUATE_PROMPT = `你是钢贸业务知识系统的因果分析师。评�
 - financial_exposure: 财务敞口/账期/资金风险
 - tech_improvement: 系统技术可改进方向
 
+信息深度分类：
+- phenomenon: 观察到什么发生了（事实、数据、现象描述）
+- motive: 为什么发生（动机推断、原因分析）
+- pattern: 类似事件的历史结构（规律、模式、周期性）
+- projection: 基于规律的推演（预测、推断、假设验证）
+
 已有认知（最相关的观察）：
 {observations}
 
 新信息：
 {newContent}
 
-判断这条新信息对已有认知的因果影响。
+判断这条新信息对已有认知的因果影响，并判断信息本身的认知深度。
 
 输出严格 JSON（不要代码块包裹）：
-{"impactType":"confirms|contradicts|extends|refines|novel","affectedObservations":[{"id":"观察ID","relationship":"strengthens|weakens|modifies","delta":0.1}],"causalChain":"一句话因果链描述","confidence":0.7,"dimension":"market_dynamics","urgency":"low|medium|high"}`
+{"impactType":"confirms|contradicts|extends|refines|novel","affectedObservations":[{"id":"观察ID","relationship":"strengthens|weakens|modifies","delta":0.1}],"causalChain":"一句话因果链描述","confidence":0.7,"dimension":"market_dynamics","urgency":"low|medium|high","informationDepth":"phenomenon|motive|pattern|projection"}`
 
 // ── Causal Evaluator Class ──────────────────────────────────────
 
@@ -123,7 +133,7 @@ export class CausalEvaluator {
     // Find relevant observations to evaluate against
     const observations = this.getRelevantObservations(input.tags, input.content)
     if (observations.length === 0) {
-      return { impactType: 'novel', affectedObservations: [], causalChain: '无相关已有认知', confidence: 0.5, dimension: 'market_dynamics', urgency: 'low' }
+      return { impactType: 'novel', affectedObservations: [], causalChain: '无相关已有认知', confidence: 0.5, dimension: 'market_dynamics', urgency: 'low', informationDepth: 'phenomenon', needsMotiveGap: true }
     }
 
     // Build prompt context
@@ -239,6 +249,14 @@ export class CausalEvaluator {
     if (!validUrgency.includes(verdict.urgency)) {
       verdict.urgency = 'low'
     }
+
+    // Validate informationDepth and derive cognitive gap flags
+    const validDepths: InformationDepth[] = ['phenomenon', 'motive', 'pattern', 'projection']
+    if (!validDepths.includes(verdict.informationDepth)) {
+      verdict.informationDepth = 'phenomenon'
+    }
+    verdict.needsMotiveGap = verdict.informationDepth === 'phenomenon'
+    verdict.needsPatternSupport = verdict.informationDepth === 'motive'
 
     return verdict
   }

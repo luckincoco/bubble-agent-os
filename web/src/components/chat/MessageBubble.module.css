@@ -216,3 +216,45 @@
   background: rgba(248, 113, 113, 0.12);
   border-color: rgba(248, 113, 113, 0.3);
 }
+
+/* ── Assertion tags (断言自识别) ────────────────────── */
+.assertions {
+  margin-top: 10px;
+  padding-top: 8px;
+  border-top: 1px solid rgba(255, 255, 255, 0.08);
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  animation: fadeIn var(--duration-normal) var(--ease-smooth);
+}
+
+.assertionTag {
+  font-size: 11px;
+  padding: 2px 8px;
+  border-radius: 8px;
+  cursor: default;
+}
+
+.fact {
+  background: rgba(20, 184, 166, 0.12);
+  color: #14B8A6;
+  border: 1px solid rgba(20, 184, 166, 0.2);
+}
+
+.judgment {
+  background: rgba(245, 158, 11, 0.12);
+  color: #F59E0B;
+  border: 1px solid rgba(245, 158, 11, 0.2);
+}
+
+.speculation {
+  background: rgba(124, 58, 237, 0.12);
+  color: #A78BFA;
+  border: 1px solid rgba(124, 58, 237, 0.2);
+}
+
+.reference {
+  background: rgba(37, 99, 235, 0.12);
+  color: #60A5FA;
+  border: 1px solid rgba(37, 99, 235, 0.2);
+}

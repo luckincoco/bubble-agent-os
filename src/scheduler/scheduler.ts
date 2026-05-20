@@ -27,9 +27,15 @@ import { executeConcentrationScan } from './tasks/concentration-scan.js'
 import { executeCausalEval } from './tasks/causal-eval.js'
 import { executeSelfEvolution } from './tasks/self-evolution.js'
 import { executeOrientationSnapshot } from './tasks/orientation-snapshot.js'
+import { executeEvalObservation } from './tasks/eval-observation.js'
+import { executeEvalSystemHealth } from './tasks/eval-system-health.js'
+import { executeMetricsRollup } from './tasks/metrics-rollup.js'
+import { executeSessionCompression } from './tasks/session-compression.js'
+import { executeConceptForge } from './tasks/concept-forge.js'
+import { executeObsidianIngest } from './tasks/obsidian-ingest.js'
 import type { ModelRouter } from '../ai/model-router.js'
 
-export type ScheduledTaskType = 'daily_digest' | 'keyword_monitor' | 'memory_decay' | 'bubble_compaction' | 'steel_price' | 'question_generator' | 'reflection' | 'pressure_sim' | 'self_dialogue' | 'feed_watcher' | 'interest_search' | 'learning_digest' | 'silence_scan' | 'concentration_scan' | 'causal_eval' | 'self_evolution' | 'orientation_snapshot'
+export type ScheduledTaskType = 'daily_digest' | 'keyword_monitor' | 'memory_decay' | 'bubble_compaction' | 'steel_price' | 'question_generator' | 'reflection' | 'pressure_sim' | 'self_dialogue' | 'feed_watcher' | 'interest_search' | 'learning_digest' | 'silence_scan' | 'concentration_scan' | 'causal_eval' | 'self_evolution' | 'orientation_snapshot' | 'eval_observation' | 'eval_system_health' | 'metrics_rollup' | 'session_compression' | 'concept_forge' | 'obsidian_ingest'
 
 export interface TaskDeps {
   brain: Brain
@@ -43,6 +49,8 @@ export interface TaskDeps {
   orientationGraph?: OrientationGraph
   causalEvaluator?: CausalEvaluator
   internalizationEngine?: InternalizationEngine
+  conceptForge?: import('../cognition/concept-forge.js').ConceptForge
+  obsidianIngest?: import('../cognition/obsidian-ingest.js').ObsidianIngest
 }
 
 export interface TaskResult {
@@ -84,6 +92,12 @@ const EXECUTORS: Record<ScheduledTaskType, TaskExecutor> = {
   causal_eval: executeCausalEval,
   self_evolution: executeSelfEvolution,
   orientation_snapshot: executeOrientationSnapshot,
+  eval_observation: executeEvalObservation,
+  eval_system_health: executeEvalSystemHealth,
+  metrics_rollup: executeMetricsRollup,
+  session_compression: executeSessionCompression,
+  concept_forge: executeConceptForge,
+  obsidian_ingest: executeObsidianIngest,
 }
 
 export class TaskScheduler {
@@ -295,6 +309,76 @@ export class TaskScheduler {
       logger.info('Scheduler: seeded orientation_snapshot task (daily 6:00)')
     }
 
+    // Ensure concept_forge task exists (daily 6:15 AM — after orientation_snapshot, detects cross-domain isomorphisms)
+    const hasConceptForge = db.prepare("SELECT id FROM scheduled_tasks WHERE type = 'concept_forge'").get()
+    if (!hasConceptForge && this.deps.config?.features?.cognitionOrientation) {
+      const nowCf = Date.now()
+      db.prepare(
+        'INSERT INTO scheduled_tasks (id, name, type, cron, params, enabled, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)',
+      ).run(ulid(), '概念锻造', 'concept_forge', '15 6 * * *', '{}', 1, nowCf, nowCf)
+      const row = db.prepare("SELECT * FROM scheduled_tasks WHERE type = 'concept_forge'").get() as ScheduledTaskRow
+      this.scheduleJob(row)
+      logger.info('Scheduler: seeded concept_forge task (daily 6:15)')
+    }
+
+    // Ensure obsidian_ingest task exists (daily 5:30 AM — before compaction, reads whitelisted Obsidian notes)
+    const hasObsidianIngest = db.prepare("SELECT id FROM scheduled_tasks WHERE type = 'obsidian_ingest'").get()
+    if (!hasObsidianIngest && (this.deps as any).obsidianIngest) {
+      const nowOi = Date.now()
+      db.prepare(
+        'INSERT INTO scheduled_tasks (id, name, type, cron, params, enabled, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)',
+      ).run(ulid(), 'Obsidian摄入', 'obsidian_ingest', '30 5 * * *', '{}', 1, nowOi, nowOi)
+      const row = db.prepare("SELECT * FROM scheduled_tasks WHERE type = 'obsidian_ingest'").get() as ScheduledTaskRow
+      this.scheduleJob(row)
+      logger.info('Scheduler: seeded obsidian_ingest task (daily 5:30)')
+    }
+
+    // Ensure observability eval tasks exist
+    const hasEvalObs = db.prepare("SELECT id FROM scheduled_tasks WHERE type = 'eval_observation'").get()
+    if (!hasEvalObs) {
+      const now3 = Date.now()
+      db.prepare(
+        'INSERT INTO scheduled_tasks (id, name, type, cron, params, enabled, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)',
+      ).run(ulid(), '观察评估', 'eval_observation', '30 6 * * *', '{}', 1, now3, now3)
+      const row = db.prepare("SELECT * FROM scheduled_tasks WHERE type = 'eval_observation'").get() as ScheduledTaskRow
+      this.scheduleJob(row)
+      logger.info('Scheduler: seeded eval_observation task (daily 6:30)')
+    }
+
+    const hasEvalHealth = db.prepare("SELECT id FROM scheduled_tasks WHERE type = 'eval_system_health'").get()
+    if (!hasEvalHealth) {
+      const now3 = Date.now()
+      db.prepare(
+        'INSERT INTO scheduled_tasks (id, name, type, cron, params, enabled, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)',
+      ).run(ulid(), '系统健康评估', 'eval_system_health', '0 7 * * *', '{}', 1, now3, now3)
+      const row = db.prepare("SELECT * FROM scheduled_tasks WHERE type = 'eval_system_health'").get() as ScheduledTaskRow
+      this.scheduleJob(row)
+      logger.info('Scheduler: seeded eval_system_health task (daily 7:00)')
+    }
+
+    const hasMetricsRollup = db.prepare("SELECT id FROM scheduled_tasks WHERE type = 'metrics_rollup'").get()
+    if (!hasMetricsRollup) {
+      const now3 = Date.now()
+      db.prepare(
+        'INSERT INTO scheduled_tasks (id, name, type, cron, params, enabled, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)',
+      ).run(ulid(), '指标聚合清理', 'metrics_rollup', '0 0 * * *', '{}', 1, now3, now3)
+      const row = db.prepare("SELECT * FROM scheduled_tasks WHERE type = 'metrics_rollup'").get() as ScheduledTaskRow
+      this.scheduleJob(row)
+      logger.info('Scheduler: seeded metrics_rollup task (daily 0:00)')
+    }
+
+    // Ensure session_compression task exists (every 10 minutes)
+    const hasSessionCompression = db.prepare("SELECT id FROM scheduled_tasks WHERE type = 'session_compression'").get()
+    if (!hasSessionCompression) {
+      const now4 = Date.now()
+      db.prepare(
+        'INSERT INTO scheduled_tasks (id, name, type, cron, params, enabled, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)',
+      ).run(ulid(), 'Session摘要压缩', 'session_compression', '*/10 * * * *', '{}', 1, now4, now4)
+      const row = db.prepare("SELECT * FROM scheduled_tasks WHERE type = 'session_compression'").get() as ScheduledTaskRow
+      this.scheduleJob(row)
+      logger.info('Scheduler: seeded session_compression task (every 10min)')
+    }
+
     logger.info(`Scheduler: ${this.jobs.size} active jobs loaded`)
   }
 
@@ -424,6 +508,48 @@ export class TaskScheduler {
 
   async executeNow(id: string): Promise<TaskResult> {
     return this.runTask(id)
+  }
+
+  /**
+   * P1: Execute a task by type — for reactive/event-driven scheduling.
+   * Finds the first enabled task of given type and runs it immediately.
+   */
+  async executeByType(type: ScheduledTaskType): Promise<TaskResult> {
+    const db = getDatabase()
+    const row = db.prepare('SELECT * FROM scheduled_tasks WHERE type = ? AND enabled = 1 LIMIT 1').get(type) as ScheduledTaskRow | undefined
+    if (!row) {
+      // No persisted task, execute directly with default params
+      const executor = EXECUTORS[type]
+      if (!executor) return { success: false, message: `Unknown task type: ${type}` }
+      logger.info(`Scheduler: reactive execution of "${type}" (no persisted task)`)
+      return executor({}, this.deps)
+    }
+    logger.info(`Scheduler: reactive execution of "${row.name}" triggered by event`)
+    return this.runTask(row.id)
+  }
+
+  /**
+   * P1: Register event-driven reactive listeners.
+   * Called from index.ts after EventBus is available.
+   */
+  registerReactiveListeners(eventBus: import('../event/event-bus.js').EventBus): void {
+    // When high-urgency cognition detected → immediate orientation snapshot refresh
+    eventBus.on('knowledge.urgency.detected', (_event, _options) => {
+      logger.info('Scheduler: reactive — high urgency detected, refreshing orientation snapshot')
+      this.executeByType('orientation_snapshot').catch(err =>
+        logger.error('Scheduler: reactive orientation_snapshot failed:', err instanceof Error ? err.message : String(err)),
+      )
+    })
+
+    // When knowledge gap detected → trigger interest search
+    eventBus.on('knowledge.gap.detected', (_event, _options) => {
+      logger.info('Scheduler: reactive — knowledge gap detected, triggering interest search')
+      this.executeByType('interest_search').catch(err =>
+        logger.error('Scheduler: reactive interest_search failed:', err instanceof Error ? err.message : String(err)),
+      )
+    })
+
+    logger.info('Scheduler: reactive event listeners registered')
   }
 
   stop() {

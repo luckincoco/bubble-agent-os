@@ -24,6 +24,7 @@ import {
   detectSheetCategory, translateRow, generateKnowledgeCards, isBaseInfoSheet,
   isTransactionSheet, isTranslatableSheet, computePurchaseAggregations,
   computeSalesAggregations, type KnowledgeCard, type AggregationBubble,
+  type SheetCategory,
 } from '../connector/tools/excel-translator.js'
 import { parsePDF, parseDocx, parseTxt, splitIntoChunks, detectFileType } from '../connector/tools/doc-import.js'
 import { createAgent, getAgent, listAgents, updateAgent, deleteAgent } from '../agent/model.js'
@@ -34,7 +35,7 @@ import * as biz from '../connector/biz/structured-store.js'
 import * as docEngine from '../connector/biz/doc-engine.js'
 import * as reports from '../connector/biz/reports.js'
 import { bridgeExcelSheet, type BridgeResult } from '../connector/biz/excel-bridge.js'
-import { inferAllSheets, applyColumnMap, resolveCategory, type SheetPreview } from '../connector/tools/schema-inference.js'
+import { inferAllSheets, applyColumnMap, resolveCategory, fuzzyMatchColumns, type SheetPreview } from '../connector/tools/schema-inference.js'
 
 const __dirname = dirname(fileURLToPath(import.meta.url))
 
@@ -53,6 +54,64 @@ export interface ServerModules {
   tencentConfig?: { secretId: string; secretKey: string; region?: string }
   wecom?: WeComConnector
   llm?: LLMProvider
+}
+
+// ── Smart header row detection for multi-layer headers ──────────────
+// Steel trade Excel files often have merged title rows before the actual headers.
+// This function scans the first few rows of a worksheet to find the real header row.
+
+function findHeaderRow(ws: XLSX.WorkSheet): number {
+  const ref = ws['!ref']
+  if (!ref) return 0
+
+  const range = XLSX.utils.decode_range(ref)
+  const merges = ws['!merges'] || []
+  const totalCols = range.e.c - range.s.c + 1
+
+  // Build a set of cells that are part of wide merges (spanning > 40% of columns)
+  const wideMergeRows = new Set<number>()
+  for (const m of merges) {
+    const span = m.e.c - m.s.c + 1
+    if (span > totalCols * 0.4) {
+      for (let r = m.s.r; r <= m.e.r; r++) wideMergeRows.add(r)
+    }
+  }
+
+  // Scan first 8 rows to find the header row
+  const maxScan = Math.min(range.s.r + 8, range.e.r)
+  for (let r = range.s.r; r <= maxScan; r++) {
+    // Skip rows that are part of wide merges (title rows)
+    if (wideMergeRows.has(r)) continue
+
+    // Count non-empty, unique string cells in this row
+    const cellValues = new Set<string>()
+    let nonEmpty = 0
+    for (let c = range.s.c; c <= range.e.c; c++) {
+      const addr = XLSX.utils.encode_cell({ r, c })
+      const cell = ws[addr]
+      if (cell && cell.v != null && String(cell.v).trim() !== '') {
+        nonEmpty++
+        cellValues.add(String(cell.v).trim())
+      }
+    }
+
+    // A header row should have: at least 3 non-empty cells, mostly unique values,
+    // and mostly string/text content (not all numbers)
+    if (nonEmpty >= 3 && cellValues.size >= nonEmpty * 0.6) {
+      let stringCount = 0
+      for (let c = range.s.c; c <= range.e.c; c++) {
+        const addr = XLSX.utils.encode_cell({ r, c })
+        const cell = ws[addr]
+        if (cell && cell.t === 's') stringCount++
+      }
+      // At least 50% of non-empty cells should be strings (headers are text)
+      if (stringCount >= nonEmpty * 0.5) {
+        return r
+      }
+    }
+  }
+
+  return range.s.r  // fallback: first row
 }
 
 // ── Sanitize XLSX cell values ──────────────────────────────────────
@@ -486,10 +545,10 @@ export async function startServer(brain: Brain, memory: MemoryManager, port = 30
     // Use router if available (unified Layer 0 → Layer 1 flow), fallback to brain.think
     if (router) {
       const result = await router.handle(message, ctx)
-      return { response: result.response, sources: result.sources }
+      return { response: result.response, sources: result.sources, turnId: result.turnId }
     }
-    const { response, sources } = await brain.think(message, ctx)
-    return { response, sources }
+    const { response, sources, turnId } = await brain.think(message, ctx)
+    return { response, sources, turnId }
   })
 
   app.get('/api/memories', async (req) => {
@@ -534,18 +593,21 @@ export async function startServer(brain: Brain, memory: MemoryManager, port = 30
 
         let response: string
         let sources: any[]
+        let turnId: string | undefined
 
         if (router) {
           const result = await router.handle(message, ctx, { onChunk })
           response = result.response
           sources = result.sources
+          turnId = result.turnId
         } else {
           const result = await brain.think(message, ctx, onChunk)
           response = result.response
           sources = result.sources
+          turnId = result.turnId
         }
 
-        socket.send(JSON.stringify({ type: 'done', text: response, sources }))
+        socket.send(JSON.stringify({ type: 'done', text: response, sources, turnId }))
       } catch (err) {
         const msg = err instanceof Error ? err.message : String(err)
         socket.send(JSON.stringify({ type: 'error', text: msg }))
@@ -655,9 +717,15 @@ export async function startServer(brain: Brain, memory: MemoryManager, port = 30
     const sheetRowsCache = new Map<string, Record<string, unknown>[]>()
 
     for (const sheetName of workbook.SheetNames) {
-      const rawRows = XLSX.utils.sheet_to_json<Record<string, unknown>>(workbook.Sheets[sheetName]!)
+      const ws = workbook.Sheets[sheetName]!
+      // Smart header detection: skip merged title rows to find the real column headers
+      const headerRow = findHeaderRow(ws)
+      const rawRows = XLSX.utils.sheet_to_json<Record<string, unknown>>(ws, { range: headerRow })
       const rows = sanitizeSheetRows(rawRows)
       if (!rows.length) continue
+      if (headerRow > 0) {
+        logger.info(`Excel import: sheet "${sheetName}" header detected at row ${headerRow + 1} (skipped ${headerRow} title rows)`)
+      }
       sheetRowsCache.set(sheetName, rows)
       const headers = Object.keys(rows[0]!)
       sheetPreviews.push({ sheetName, headers, sampleRows: rows.slice(0, 3) })
@@ -680,7 +748,7 @@ export async function startServer(brain: Brain, memory: MemoryManager, port = 30
       }
 
       const headers = Object.keys(rows[0]!)
-      const category = resolveCategory(sheetName, inference)
+      let category = resolveCategory(sheetName, inference)
       const newBubbleIds: string[] = []
 
       // --- Phase 1: Generate knowledge cards from base-info sheets ---
@@ -770,6 +838,35 @@ export async function startServer(brain: Brain, memory: MemoryManager, port = 30
           bridgeResults.push(br)
         } catch (err) {
           logger.error(`ExcelBridge error for sheet "${sheetName}":`, err instanceof Error ? err.message : String(err))
+        }
+      } else if (category === 'unknown' || category === 'inventory' || category === 'receivable' || category === 'payable') {
+        // Fallback: try fuzzy column matching against each translatable category
+        const translatableTypes: SheetCategory[] = ['purchase', 'sales', 'logistics', 'payment']
+        let bestMatch: { cat: SheetCategory; map: Record<string, string>; score: number } | null = null
+
+        for (const tryType of translatableTypes) {
+          const colMap = fuzzyMatchColumns(headers, tryType)
+          if (colMap) {
+            const score = Object.keys(colMap).length
+            if (!bestMatch || score > bestMatch.score) {
+              bestMatch = { cat: tryType, map: colMap, score }
+            }
+          }
+        }
+
+        if (bestMatch) {
+          logger.info(`Excel import: sheet "${sheetName}" was "${category}", fuzzy-matched to "${bestMatch.cat}" (${bestMatch.score} columns)`)
+          const mappedRows = applyColumnMap(rows, bestMatch.map)
+          try {
+            const br = bridgeExcelSheet(mappedRows, bestMatch.cat, { confirmImmediately: true, createdBy: 'excel-import', spaceId: targetSpace })
+            bridgeResults.push(br)
+            // Also update category for downstream phases (aggregation)
+            category = bestMatch.cat
+          } catch (err) {
+            logger.error(`ExcelBridge fallback error for sheet "${sheetName}":`, err instanceof Error ? err.message : String(err))
+          }
+        } else {
+          logger.warn(`Excel import: sheet "${sheetName}" (${category}) — could not match to any biz type, skipping bridge`)
         }
       }
 
@@ -1847,6 +1944,93 @@ export async function startServer(brain: Brain, memory: MemoryManager, port = 30
   // Register Knowledge Browser API routes
   registerKnowledgeRoutes(app, { memory, getUserCtx })
 
+  // ── Assertion Self-Identification API ─────────────────────────
+
+  // Query assertions with filters
+  app.get('/api/assertions', async (req, reply) => {
+    const payload = req.user as JwtPayload
+    const { type, status, since, limit } = req.query as {
+      type?: string
+      status?: string
+      since?: string
+      limit?: string
+    }
+
+    const assertionIdentifier = brain.getAssertionIdentifier?.()
+    if (!assertionIdentifier) {
+      return reply.code(404).send({ error: 'Assertion identification not enabled' })
+    }
+
+    const assertions = assertionIdentifier.getAssertionsByUser(payload.userId, {
+      assertionType: type as any,
+      verificationStatus: status as any,
+      since: since ? parseInt(since) : undefined,
+      limit: limit ? parseInt(limit) : 50,
+    })
+
+    return { assertions }
+  })
+
+  // Get assertions for a specific turn
+  app.get('/api/assertions/turn/:turnId', async (req, reply) => {
+    const payload = req.user as JwtPayload
+    const { turnId } = req.params as { turnId: string }
+
+    const assertionIdentifier = brain.getAssertionIdentifier?.()
+    if (!assertionIdentifier) {
+      return reply.code(404).send({ error: 'Assertion identification not enabled' })
+    }
+
+    const assertions = assertionIdentifier.getAssertionsByTurn(turnId)
+    const db = getDatabase()
+    const turn = db.prepare('SELECT * FROM conversation_turns WHERE id = ?').get(turnId) as Record<string, unknown> | undefined
+
+    if (!turn) {
+      return reply.code(404).send({ error: 'Turn not found' })
+    }
+
+    return { assertions, turn }
+  })
+
+  // Calibrate an assertion (user feedback)
+  app.put('/api/assertions/:id/calibrate', async (req, reply) => {
+    const payload = req.user as JwtPayload
+    const { id } = req.params as { id: string }
+    const { assertionType, verificationStatus } = req.body as {
+      assertionType?: string
+      verificationStatus?: string
+    }
+
+    const assertionIdentifier = brain.getAssertionIdentifier?.()
+    if (!assertionIdentifier) {
+      return reply.code(404).send({ error: 'Assertion identification not enabled' })
+    }
+
+    const updated = assertionIdentifier.calibrateAssertion(id, {
+      assertionType: assertionType as any,
+      verificationStatus: verificationStatus as any,
+    })
+
+    if (!updated) {
+      return reply.code(404).send({ error: 'Assertion not found' })
+    }
+
+    return { ok: true }
+  })
+
+  // Assertion statistics
+  app.get('/api/assertions/stats', async (req, reply) => {
+    const payload = req.user as JwtPayload
+    const { spaceId } = req.query as { spaceId?: string }
+
+    const assertionIdentifier = brain.getAssertionIdentifier?.()
+    if (!assertionIdentifier) {
+      return reply.code(404).send({ error: 'Assertion identification not enabled' })
+    }
+
+    return assertionIdentifier.getAssertionSummary(spaceId)
+  })
+
   // Register WeCom callback routes (before SPA fallback to avoid being caught by it)
   if (modules?.wecom) {
     modules.wecom.registerRoutes(app)
@@ -1921,6 +2105,261 @@ export async function startServer(brain: Brain, memory: MemoryManager, port = 30
       response,
       sources,
     }
+  })
+
+  // ── CodeForge Endpoints (admin-only, self-coding capability) ────────
+
+  const { CodeForge, Sandbox, DynamicLoader, SpecForge, isSpecForgePaused } = await import('../connector/code-forge/index.js')
+  const forgeProjectRoot = resolve(__dirname, '..', '..')
+  const forgeLoader = new DynamicLoader(forgeProjectRoot)
+
+  app.post('/api/forge/generate', async (req, reply) => {
+    const payload = req.user as JwtPayload
+    if (requireAdmin(payload, reply)) return
+
+    const { description, suggestedName, category } = req.body as {
+      description?: string
+      suggestedName?: string
+      category?: 'biz-query' | 'data-transform' | 'report' | 'utility'
+    }
+
+    if (!description) {
+      return reply.code(400).send({ error: 'description 为必填项' })
+    }
+    if (!modules?.llm) {
+      return reply.code(503).send({ error: 'LLM 未初始化' })
+    }
+
+    const forge = new CodeForge(modules.llm)
+    const result = await forge.generate({ description, suggestedName, category })
+
+    // Static analysis
+    const sandbox = new Sandbox(forgeProjectRoot)
+    const verification = await sandbox.verify(result.code)
+
+    return {
+      toolName: result.toolName,
+      code: result.code,
+      testCode: result.testCode,
+      explanation: result.explanation,
+      verification: {
+        passed: verification.passed,
+        riskLevel: verification.riskLevel,
+        violations: verification.staticAnalysis.violations,
+        compilationErrors: verification.compilation.errors,
+      },
+      tokenUsage: result.tokenUsage,
+    }
+  })
+
+  app.post('/api/forge/approve', async (req, reply) => {
+    const payload = req.user as JwtPayload
+    if (requireAdmin(payload, reply)) return
+
+    const { toolName } = req.body as { toolName?: string }
+    if (!toolName) {
+      return reply.code(400).send({ error: 'toolName 为必填项' })
+    }
+
+    // Check if pending code exists
+    const pendingCode = forgeLoader.getPendingCode(toolName)
+    if (!pendingCode) {
+      return reply.code(404).send({ error: `工具 "${toolName}" 无待审批代码` })
+    }
+
+    // Re-verify static analysis before approving
+    const sandbox = new Sandbox(forgeProjectRoot)
+    const verification = await sandbox.verify(pendingCode)
+    if (!verification.staticAnalysis.passed) {
+      return reply.code(422).send({
+        error: '代码未通过静态安全检查，无法审批',
+        violations: verification.staticAnalysis.violations,
+      })
+    }
+
+    // Approve: save file + update status
+    forgeLoader.approveTool(toolName, payload.username)
+
+    return { ok: true, toolName, message: `工具 "${toolName}" 已审批并保存，重启后自动生效` }
+  })
+
+  app.get('/api/forge/tools', async (req, reply) => {
+    const payload = req.user as JwtPayload
+    if (requireAdmin(payload, reply)) return
+    return { tools: forgeLoader.listTools() }
+  })
+
+  app.get('/api/forge/tools/:name/code', async (req, reply) => {
+    const payload = req.user as JwtPayload
+    if (requireAdmin(payload, reply)) return
+    const { name } = req.params as { name: string }
+    const code = forgeLoader.getPendingCode(name)
+    if (!code) {
+      return reply.code(404).send({ error: `工具 "${name}" 无待审批代码` })
+    }
+    return { toolName: name, code }
+  })
+
+  app.post('/api/forge/disable', async (req, reply) => {
+    const payload = req.user as JwtPayload
+    if (requireAdmin(payload, reply)) return
+
+    const { toolName } = req.body as { toolName?: string }
+    if (!toolName) {
+      return reply.code(400).send({ error: 'toolName 为必填项' })
+    }
+
+    const success = forgeLoader.disableTool(toolName)
+    if (!success) {
+      return reply.code(404).send({ error: `工具 "${toolName}" 不存在` })
+    }
+    return { ok: true, message: `工具 "${toolName}" 已禁用` }
+  })
+
+  // ── SpecForge SDD Endpoints (v2) ──────────────────────────────────
+
+  let specForgeInstance: InstanceType<typeof SpecForge> | null = null
+  function getSpecForgeApi() {
+    if (!specForgeInstance && modules?.llm) {
+      specForgeInstance = new SpecForge(modules.llm, forgeProjectRoot)
+    }
+    return specForgeInstance
+  }
+
+  app.post('/api/forge/spec-generate', async (req, reply) => {
+    const payload = req.user as JwtPayload
+    if (requireAdmin(payload, reply)) return
+
+    const { description, suggestedName, category } = req.body as {
+      description?: string
+      suggestedName?: string
+      category?: 'biz-query' | 'data-transform' | 'report' | 'utility'
+    }
+
+    if (!description) {
+      return reply.code(400).send({ error: 'description 为必填项' })
+    }
+
+    const sf = getSpecForgeApi()
+    if (!sf) {
+      return reply.code(503).send({ error: 'LLM 未初始化' })
+    }
+
+    const output = await sf.run({ description, suggestedName, category })
+
+    if (isSpecForgePaused(output)) {
+      return reply.code(202).send({
+        status: 'paused',
+        sessionId: output.sessionId,
+        clarifications: output.clarifications,
+      })
+    }
+
+    // Completed — run static analysis
+    const sandbox = new Sandbox(forgeProjectRoot)
+    const verification = await sandbox.verify(output.forge.code)
+
+    if (verification.staticAnalysis.passed) {
+      forgeLoader.savePendingTool(output.forge.toolName, output.forge.code, output.forge.explanation, {
+        sessionId: output.session.id,
+        phases: Object.keys(output.session.artifacts),
+      })
+    }
+
+    return {
+      toolName: output.forge.toolName,
+      code: output.forge.code,
+      testCode: output.forge.testCode,
+      explanation: output.forge.explanation,
+      pipeline: output.session.isSimple ? 'simple' : 'full',
+      phases: Object.keys(output.session.artifacts),
+      verification: {
+        passed: verification.passed,
+        riskLevel: verification.riskLevel,
+        violations: verification.staticAnalysis.violations,
+      },
+      tokenUsage: output.forge.tokenUsage,
+    }
+  })
+
+  app.post('/api/forge/resume', async (req, reply) => {
+    const payload = req.user as JwtPayload
+    if (requireAdmin(payload, reply)) return
+
+    const { sessionId, clarification } = req.body as {
+      sessionId?: string
+      clarification?: string
+    }
+
+    if (!sessionId || !clarification) {
+      return reply.code(400).send({ error: 'sessionId 和 clarification 为必填项' })
+    }
+
+    const sf = getSpecForgeApi()
+    if (!sf) {
+      return reply.code(503).send({ error: 'LLM 未初始化' })
+    }
+
+    const output = await sf.resume(sessionId, clarification)
+
+    if (isSpecForgePaused(output)) {
+      return reply.code(202).send({
+        status: 'paused',
+        sessionId: output.sessionId,
+        clarifications: output.clarifications,
+      })
+    }
+
+    const sandbox = new Sandbox(forgeProjectRoot)
+    const verification = await sandbox.verify(output.forge.code)
+
+    if (verification.staticAnalysis.passed) {
+      forgeLoader.savePendingTool(output.forge.toolName, output.forge.code, output.forge.explanation, {
+        sessionId: output.session.id,
+        phases: Object.keys(output.session.artifacts),
+      })
+    }
+
+    return {
+      toolName: output.forge.toolName,
+      code: output.forge.code,
+      testCode: output.forge.testCode,
+      explanation: output.forge.explanation,
+      pipeline: output.session.isSimple ? 'simple' : 'full',
+      verification: {
+        passed: verification.passed,
+        riskLevel: verification.riskLevel,
+        violations: verification.staticAnalysis.violations,
+      },
+      tokenUsage: output.forge.tokenUsage,
+    }
+  })
+
+  app.get('/api/forge/sessions', async (req, reply) => {
+    const payload = req.user as JwtPayload
+    if (requireAdmin(payload, reply)) return
+
+    const sf = getSpecForgeApi()
+    if (!sf) {
+      return { sessions: [] }
+    }
+
+    return { sessions: sf.listSessions() }
+  })
+
+  app.get('/api/forge/sessions/:id', async (req, reply) => {
+    const payload = req.user as JwtPayload
+    if (requireAdmin(payload, reply)) return
+
+    const { id } = req.params as { id: string }
+    const sf = getSpecForgeApi()
+    const session = sf?.getSession(id)
+
+    if (!session) {
+      return reply.code(404).send({ error: `会话 "${id}" 不存在` })
+    }
+
+    return { session }
   })
 
   // SPA fallback

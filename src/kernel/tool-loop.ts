@@ -1,16 +1,18 @@
 import type { LLMProvider, LLMMessage, UserContext } from '../shared/types.js'
 import type { ToolRegistry } from '../connector/registry.js'
+import type { TraceContext } from '../observability/tracer.js'
 import { logger } from '../shared/logger.js'
 
 const TOOL_CALL_REGEX = /\[TOOL_CALL:\s*(\w+)\]\s*(\{[^}]*\})?/g
 const MAX_ITERATIONS = 5
-const TOOL_TIMEOUT_MS = 30_000
+const DEFAULT_TOOL_TIMEOUT_MS = 30_000
 
 interface ToolLoopOptions {
   llm: LLMProvider
   tools: ToolRegistry
   ctx?: UserContext
   onChunk?: (text: string) => void
+  traceContext?: TraceContext
 }
 
 export interface ToolLoopResult {
@@ -47,7 +49,7 @@ export async function runToolLoop(
   messages: LLMMessage[],
   opts: ToolLoopOptions,
 ): Promise<ToolLoopResult> {
-  const { llm, tools, ctx, onChunk } = opts
+  const { llm, tools, ctx, onChunk, traceContext } = opts
   const allToolCalls: ToolLoopResult['toolCalls'] = []
   const traceSteps: ToolTraceStep[] = []
   const loopStart = Date.now()
@@ -56,10 +58,12 @@ export async function runToolLoop(
   let iterationCount = 0
 
   // Initial LLM call
+  const llmSpan0 = traceContext?.startSpan('llm_call', 'initial')
   let result = onChunk
     ? await llm.chatStream(messages, onChunk)
     : await llm.chat(messages)
   let response = result.content
+  llmSpan0?.end('ok', { inputTokens: result.usage?.promptTokens, outputTokens: result.usage?.completionTokens })
 
   for (let i = 0; i < MAX_ITERATIONS; i++) {
     const calls = parseToolCalls(response)
@@ -84,17 +88,23 @@ export async function runToolLoop(
     const results = await Promise.all(
       calls.map(async (call) => {
         const stepStart = Date.now()
+        const toolSpan = traceContext?.startSpan('tool_call', call.name)
         try {
+          const toolDef = tools.get(call.name)
+          const timeoutMs = toolDef?.timeout ?? DEFAULT_TOOL_TIMEOUT_MS
           const toolResult = await executeWithTimeout(
             tools.execute(call.name, call.args, ctx),
-            TOOL_TIMEOUT_MS,
+            timeoutMs,
           )
-          traceSteps.push({ tool: call.name, durationMs: Date.now() - stepStart, resultLength: toolResult.length })
+          const durationMs = Date.now() - stepStart
+          traceSteps.push({ tool: call.name, durationMs, resultLength: toolResult.length })
+          toolSpan?.end('ok', { resultLength: toolResult.length })
           return { ...call, result: toolResult }
         } catch (err) {
           const msg = err instanceof Error ? err.message : String(err)
           logger.error(`ToolLoop: ${call.name} failed: ${msg}`)
           traceSteps.push({ tool: call.name, durationMs: Date.now() - stepStart, resultLength: 0, error: msg })
+          toolSpan?.end('error', { error: msg })
           return { ...call, result: `Error: ${msg}` }
         }
       }),
@@ -112,10 +122,12 @@ export async function runToolLoop(
     }
 
     // Call LLM again with updated history
+    const llmSpanN = traceContext?.startSpan('llm_call', `iteration_${i + 1}`)
     result = onChunk
       ? await llm.chatStream(messages, onChunk)
       : await llm.chat(messages)
     response = result.content
+    llmSpanN?.end('ok', { inputTokens: result.usage?.promptTokens, outputTokens: result.usage?.completionTokens })
   }
 
   const trace: ToolTrace = {

@@ -936,6 +936,214 @@ function runMigrations(database: Database.Database, defaultPassword: string) {
       throw err
     }
   }
+
+  // ── Observability: traces, spans, metrics, eval_results ────────
+  const obsTableInfo = database.prepare("SELECT name FROM sqlite_master WHERE type='table' AND name='traces'").get()
+  if (!obsTableInfo) {
+    database.exec(`
+      CREATE TABLE IF NOT EXISTS traces (
+        id TEXT PRIMARY KEY,
+        trace_type TEXT NOT NULL,
+        correlation_id TEXT,
+        user_id TEXT,
+        space_id TEXT,
+        started_at INTEGER NOT NULL,
+        duration_ms INTEGER NOT NULL,
+        status TEXT NOT NULL,
+        error_message TEXT,
+        metadata TEXT DEFAULT '{}'
+      )
+    `)
+    database.exec('CREATE INDEX IF NOT EXISTS idx_traces_type_time ON traces(trace_type, started_at)')
+    database.exec('CREATE INDEX IF NOT EXISTS idx_traces_user ON traces(user_id, started_at)')
+
+    database.exec(`
+      CREATE TABLE IF NOT EXISTS trace_spans (
+        id TEXT PRIMARY KEY,
+        trace_id TEXT NOT NULL REFERENCES traces(id) ON DELETE CASCADE,
+        span_type TEXT NOT NULL,
+        name TEXT NOT NULL,
+        started_at INTEGER NOT NULL,
+        duration_ms INTEGER NOT NULL,
+        status TEXT NOT NULL,
+        input_tokens INTEGER,
+        output_tokens INTEGER,
+        metadata TEXT DEFAULT '{}'
+      )
+    `)
+    database.exec('CREATE INDEX IF NOT EXISTS idx_spans_trace ON trace_spans(trace_id)')
+    database.exec('CREATE INDEX IF NOT EXISTS idx_spans_type_time ON trace_spans(span_type, started_at)')
+
+    database.exec(`
+      CREATE TABLE IF NOT EXISTS metrics (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        name TEXT NOT NULL,
+        value REAL NOT NULL,
+        tags TEXT DEFAULT '{}',
+        recorded_at INTEGER NOT NULL
+      )
+    `)
+    database.exec('CREATE INDEX IF NOT EXISTS idx_metrics_name_time ON metrics(name, recorded_at)')
+    database.exec('CREATE INDEX IF NOT EXISTS idx_metrics_time ON metrics(recorded_at)')
+
+    database.exec(`
+      CREATE TABLE IF NOT EXISTS eval_results (
+        id TEXT PRIMARY KEY,
+        eval_type TEXT NOT NULL,
+        space_id TEXT,
+        run_at INTEGER NOT NULL,
+        period_start INTEGER NOT NULL,
+        period_end INTEGER NOT NULL,
+        scores TEXT NOT NULL,
+        sample_size INTEGER NOT NULL,
+        metadata TEXT DEFAULT '{}'
+      )
+    `)
+    database.exec('CREATE INDEX IF NOT EXISTS idx_eval_type_time ON eval_results(eval_type, run_at)')
+
+    logger.info('Migration: observability tables created (traces, trace_spans, metrics, eval_results)')
+  }
+
+  // ── v0.8: FTS5 full-text search for BM25 ranking ─────────────────────
+  const ftsExists = database.prepare(
+    "SELECT name FROM sqlite_master WHERE type='table' AND name='bubbles_fts'"
+  ).get()
+  if (!ftsExists) {
+    try {
+      database.exec(`
+        CREATE VIRTUAL TABLE bubbles_fts USING fts5(
+          title, content, tags,
+          content=bubbles, content_rowid=rowid,
+          tokenize='trigram'
+        )
+      `)
+
+      // Sync triggers
+      database.exec(`
+        CREATE TRIGGER IF NOT EXISTS bubbles_fts_insert AFTER INSERT ON bubbles BEGIN
+          INSERT INTO bubbles_fts(rowid, title, content, tags) VALUES (new.rowid, new.title, new.content, new.tags);
+        END
+      `)
+      database.exec(`
+        CREATE TRIGGER IF NOT EXISTS bubbles_fts_delete AFTER DELETE ON bubbles BEGIN
+          INSERT INTO bubbles_fts(bubbles_fts, rowid, title, content, tags) VALUES ('delete', old.rowid, old.title, old.content, old.tags);
+        END
+      `)
+      database.exec(`
+        CREATE TRIGGER IF NOT EXISTS bubbles_fts_update AFTER UPDATE OF title, content, tags ON bubbles BEGIN
+          INSERT INTO bubbles_fts(bubbles_fts, rowid, title, content, tags) VALUES ('delete', old.rowid, old.title, old.content, old.tags);
+          INSERT INTO bubbles_fts(rowid, title, content, tags) VALUES (new.rowid, new.title, new.content, new.tags);
+        END
+      `)
+
+      // Backfill existing bubbles
+      database.exec(`
+        INSERT INTO bubbles_fts(rowid, title, content, tags)
+          SELECT rowid, title, content, tags FROM bubbles WHERE deleted_at IS NULL
+      `)
+
+      logger.info('Migration: FTS5 bubbles_fts table created with trigram tokenizer + backfill')
+    } catch (err) {
+      // FTS5 may not be available in all SQLite builds — degrade gracefully
+      logger.warn('Migration: FTS5 not available, BM25 search disabled:', err instanceof Error ? err.message : String(err))
+    }
+  }
+
+  // ── v0.8: Entity index table for knowledge graph ─────────────────────
+  database.exec(`
+    CREATE TABLE IF NOT EXISTS bubble_entities (
+      id TEXT PRIMARY KEY,
+      bubble_id TEXT NOT NULL,
+      entity_text TEXT NOT NULL,
+      entity_type TEXT NOT NULL,
+      created_at INTEGER NOT NULL,
+      FOREIGN KEY (bubble_id) REFERENCES bubbles(id) ON DELETE CASCADE
+    )
+  `)
+  database.exec('CREATE INDEX IF NOT EXISTS idx_entities_text ON bubble_entities(entity_text, entity_type)')
+  database.exec('CREATE INDEX IF NOT EXISTS idx_entities_bubble ON bubble_entities(bubble_id)')
+
+  // ── Phase 4: TaskLedger (cross-turn task state persistence) ──────────
+  database.exec(`
+    CREATE TABLE IF NOT EXISTS task_ledgers (
+      id TEXT PRIMARY KEY,
+      space_id TEXT NOT NULL,
+      actor_id TEXT NOT NULL,
+      goal TEXT NOT NULL,
+      status TEXT NOT NULL DEFAULT 'active',
+      plan_steps TEXT NOT NULL DEFAULT '[]',
+      checkpoints TEXT NOT NULL DEFAULT '[]',
+      pending_action TEXT,
+      episode_window TEXT,
+      ttl INTEGER NOT NULL DEFAULT 86400000,
+      created_at INTEGER NOT NULL,
+      updated_at INTEGER NOT NULL
+    )
+  `)
+  database.exec('CREATE INDEX IF NOT EXISTS idx_ledgers_active ON task_ledgers(space_id, actor_id, status)')
+  database.exec('CREATE INDEX IF NOT EXISTS idx_ledgers_updated ON task_ledgers(updated_at)')
+
+  // ── Draft Observations: 自主思考待审机制 ──────────────────────
+  database.exec(`
+    CREATE TABLE IF NOT EXISTS draft_observations (
+      id TEXT PRIMARY KEY,
+      content TEXT NOT NULL,
+      source TEXT NOT NULL DEFAULT 'reflector',
+      context TEXT NOT NULL DEFAULT '',
+      space_id TEXT NOT NULL,
+      created_at INTEGER NOT NULL
+    )
+  `)
+  database.exec('CREATE INDEX IF NOT EXISTS idx_drafts_space ON draft_observations(space_id)')
+
+  // ── Assertion Self-Identification: conversation turns + assertion tags ──
+  database.exec(`
+    CREATE TABLE IF NOT EXISTS conversation_turns (
+      id TEXT PRIMARY KEY,
+      user_id TEXT NOT NULL,
+      space_id TEXT,
+      user_input TEXT NOT NULL,
+      assistant_response TEXT NOT NULL,
+      assertion_count INTEGER DEFAULT 0,
+      created_at INTEGER NOT NULL
+    )
+  `)
+  database.exec('CREATE INDEX IF NOT EXISTS idx_turns_user_time ON conversation_turns(user_id, created_at)')
+  database.exec('CREATE INDEX IF NOT EXISTS idx_turns_space ON conversation_turns(space_id)')
+
+  database.exec(`
+    CREATE TABLE IF NOT EXISTS conversation_assertions (
+      id TEXT PRIMARY KEY,
+      user_id TEXT NOT NULL,
+      space_id TEXT,
+      turn_id TEXT NOT NULL,
+      text_snippet TEXT NOT NULL,
+      assertion_type TEXT NOT NULL,
+      source_type TEXT NOT NULL,
+      verification_status TEXT NOT NULL DEFAULT 'pending',
+      confidence REAL NOT NULL DEFAULT 0.7,
+      user_calibrated INTEGER NOT NULL DEFAULT 0,
+      created_at INTEGER NOT NULL,
+      updated_at INTEGER NOT NULL
+    )
+  `)
+  database.exec('CREATE INDEX IF NOT EXISTS idx_assertions_turn ON conversation_assertions(turn_id)')
+  database.exec('CREATE INDEX IF NOT EXISTS idx_assertions_user_time ON conversation_assertions(user_id, created_at)')
+  database.exec('CREATE INDEX IF NOT EXISTS idx_assertions_type ON conversation_assertions(assertion_type)')
+  database.exec('CREATE INDEX IF NOT EXISTS idx_assertions_status ON conversation_assertions(verification_status)')
+
+  logger.info('Migration: assertion identification tables ready')
+
+  // ── Migration v1.1.1: focus_messages for FocusTracker persistence ─
+  database.exec(`
+    CREATE TABLE IF NOT EXISTS focus_messages (
+      user_id TEXT NOT NULL,
+      message TEXT NOT NULL,
+      updated_at INTEGER NOT NULL
+    )
+  `)
+  database.exec('CREATE INDEX IF NOT EXISTS idx_focus_user ON focus_messages(user_id, updated_at)')
+  logger.info('Migration: focus_messages table created for FocusTracker persistence')
 }
 
 function seedData(database: Database.Database, defaultPassword: string) {

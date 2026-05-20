@@ -4,7 +4,7 @@
  */
 
 import { getDatabase } from '../storage/database.js'
-import type { Bubble } from '../shared/types.js'
+import type { Bubble, BubbleType } from '../shared/types.js'
 import { rowToBubble } from '../bubble/model.js'
 
 export interface TemporalQueryOptions {
@@ -22,7 +22,7 @@ export interface TemporalQueryOptions {
 
 interface BubbleRow {
   id: string
-  type: string
+  type: BubbleType
   title: string
   content: string
   metadata: string
@@ -61,7 +61,7 @@ export function getBubblesAsOf(asOf: number, opts: { spaceId?: string; type?: st
   const query = `SELECT * FROM bubbles WHERE ${conditions.join(' AND ')} ORDER BY created_at DESC LIMIT ${limit}`
 
   const rows = db.prepare(query).all(...params) as BubbleRow[]
-  return rows.map(r => rowToBubble(r as unknown as Record<string, unknown>))
+  return rows.map(r => rowToBubble(r ))
 }
 
 /**
@@ -122,7 +122,7 @@ export function getNeighborsAsOf(bubbleId: string, asOf: number, opts: { relatio
 
   const rows = db.prepare(query).all(...params) as Array<BubbleRow & { relation: string; weight: number }>
   return rows.map(r => ({
-    bubble: rowToBubble(r as unknown as Record<string, unknown>),
+    bubble: rowToBubble(r ),
     relation: r.relation,
     weight: r.weight,
   }))
@@ -168,7 +168,7 @@ export function getInvalidatedBubbles(since: number, until?: number, spaceId?: s
     `SELECT * FROM bubbles WHERE ${conditions.join(' AND ')} ORDER BY valid_until DESC LIMIT 50`
   ).all(...params) as BubbleRow[]
 
-  return rows.map(r => rowToBubble(r as unknown as Record<string, unknown>))
+  return rows.map(r => rowToBubble(r ))
 }
 
 /**

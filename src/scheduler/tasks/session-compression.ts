@@ -33,7 +33,7 @@ export async function executeSessionCompression(
 
   for (const session of staleSessions) {
     try {
-      const result = await compressor.compress(session.userId, session.messages)
+      const result = await compressor.compress(session.userId, session.history)
       if (result) {
         bubbleIds.push(result.bubbleId)
       }

@@ -6,7 +6,7 @@
 
 import type { WorkingMemory } from './working-memory.js'
 import type { ContextBudget } from './context-budget.js'
-import { searchBubbles, rowToBubble } from '../bubble/model.js'
+import { searchBubbles } from '../bubble/model.js'
 import { getDatabase } from '../storage/database.js'
 import { logger } from '../shared/logger.js'
 import type { Bubble } from '../shared/types.js'
@@ -106,18 +106,14 @@ export function createMemoryToolHandlers(
       const db = getDatabase()
 
       // Search for relevant bubbles
-      const results = searchBubbles(params.query, {
-        spaceId,
-        limit: limit * 2,  // Get extra to filter
-      })
+      const results = searchBubbles(params.query, limit * 2, spaceId ? [spaceId] : undefined)
 
       if (results.length === 0) {
         return JSON.stringify({ loaded: 0, message: 'No matching memories found.' })
       }
 
       const loaded: Array<{ id: string; title: string; tokens: number }> = []
-      for (const row of results.slice(0, limit)) {
-        const bubble = rowToBubble(row)
+      for (const bubble of results.slice(0, limit)) {
         try {
           const entry = workingMemory.load(sessionId, bubble, {
             recency: 0.8,

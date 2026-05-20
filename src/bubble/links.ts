@@ -2,6 +2,15 @@ import type { Bubble, BubbleLink } from '../shared/types.js'
 import { getDatabase } from '../storage/database.js'
 import { getBubble } from './model.js'
 
+interface BubbleLinkRow {
+  source_id: string
+  target_id: string
+  relation: string
+  weight: number
+  link_source: string
+  created_at: number
+}
+
 export function addLink(sourceId: string, targetId: string, relation: string, weight = 1.0, linkSource = 'system'): void {
   const db = getDatabase()
   db.prepare(`
@@ -18,13 +27,13 @@ export function getLinks(bubbleId: string): BubbleLink[] {
     UNION
     SELECT source_id, relation, weight, link_source, created_at
     FROM bubble_links WHERE target_id = ?
-  `).all(bubbleId, bubbleId) as any[]
+  `).all(bubbleId, bubbleId) as BubbleLinkRow[]
 
   return rows.map((r) => ({
     targetId: r.target_id,
     relation: r.relation,
     weight: r.weight,
-    source: r.link_source,
+    source: r.link_source as "user" | "system" | "inferred",
     createdAt: r.created_at,
   }))
 }
@@ -50,12 +59,12 @@ export function findLinksByRelation(relation: string, sourceId?: string): Bubble
     params.push(sourceId)
   }
 
-  const rows = db.prepare(sql).all(...params) as any[]
+  const rows = db.prepare(sql).all(...params) as BubbleLinkRow[]
   return rows.map((r) => ({
     targetId: r.target_id,
     relation: r.relation,
     weight: r.weight,
-    source: r.link_source,
+    source: r.link_source as "user" | "system" | "inferred",
     createdAt: r.created_at,
   }))
 }

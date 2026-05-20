@@ -12,7 +12,7 @@
 
 import type { FastifyInstance } from 'fastify'
 import type { MemoryManager, SearchFilters } from '../memory/manager.js'
-import type { UserContext } from '../shared/types.js'
+import type { UserContext, BubbleType } from '../shared/types.js'
 import { getBubble } from '../bubble/model.js'
 import { getLinks } from '../bubble/links.js'
 import { getGraphSubset } from '../bubble/links.js'
@@ -39,7 +39,7 @@ export function registerKnowledgeRoutes(app: FastifyInstance, deps: KnowledgeRou
   // Helper: parse SearchFilters from query string
   function parseFilters(query: Record<string, unknown>): SearchFilters {
     const filters: SearchFilters = {}
-    if (query.types) filters.types = String(query.types).split(',') as any
+    if (query.types) filters.types = String(query.types).split(',') as BubbleType[]
     if (query.sources) filters.sources = String(query.sources).split(',')
     if (query.levels) filters.levels = String(query.levels).split(',').map(Number)
     if (query.tags) filters.tags = String(query.tags).split(',')
@@ -106,7 +106,7 @@ export function registerKnowledgeRoutes(app: FastifyInstance, deps: KnowledgeRou
     const bubble = getBubble(id, spaceIds)
     if (!bubble) return reply.code(404).send({ error: 'not found' })
 
-    const maxDepth = Math.min(Number((req.query as any).maxDepth) || 5, 5)
+    const maxDepth = Math.min(Number((req.query as Record<string, string>).maxDepth) || 5, 5)
     const chain = buildEvidenceChain(id, maxDepth)
     return chain ?? { root: bubble, nodes: [], totalCount: 0, oldestEvidence: bubble.createdAt, newestEvidence: bubble.createdAt, sourceBreakdown: {} }
   })
@@ -121,7 +121,7 @@ export function registerKnowledgeRoutes(app: FastifyInstance, deps: KnowledgeRou
     const bubble = getBubble(id, spaceIds)
     if (!bubble) return reply.code(404).send({ error: 'not found' })
 
-    const depth = Math.min(Number((req.query as any).depth) || 2, 3)
+    const depth = Math.min(Number((req.query as Record<string, string>).depth) || 2, 3)
     const spaceId = spaceIds.length === 1 ? spaceIds[0] : undefined
     return getGraphSubset(id, depth, spaceId)
   })

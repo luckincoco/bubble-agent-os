@@ -12,7 +12,20 @@ interface CreateAgentInput {
   creatorId: string
 }
 
-function rowToAgent(row: any): CustomAgent {
+interface AgentRow {
+  id: string
+  name: string
+  description: string | null
+  system_prompt: string
+  avatar: string | null
+  tools: string
+  space_ids: string
+  creator_id: string
+  created_at: number
+  updated_at: number
+}
+
+function rowToAgent(row: AgentRow): CustomAgent {
   return {
     id: row.id,
     name: row.name,
@@ -53,14 +66,14 @@ export function createAgent(input: CreateAgentInput): CustomAgent {
 
 export function getAgent(id: string): CustomAgent | null {
   const db = getDatabase()
-  const row = db.prepare('SELECT * FROM custom_agents WHERE id = ?').get(id) as any
+  const row = db.prepare('SELECT * FROM custom_agents WHERE id = ?').get(id) as AgentRow | undefined
   return row ? rowToAgent(row) : null
 }
 
 export function listAgents(creatorId?: string, spaceIds?: string[]): CustomAgent[] {
   const db = getDatabase()
   // Return agents created by the user, or agents whose space_ids overlap with user's spaces
-  const rows = db.prepare('SELECT * FROM custom_agents ORDER BY updated_at DESC').all() as any[]
+  const rows = db.prepare('SELECT * FROM custom_agents ORDER BY updated_at DESC').all() as AgentRow[]
 
   return rows.filter(row => {
     // System-created agents (e.g., "问") are visible to all users

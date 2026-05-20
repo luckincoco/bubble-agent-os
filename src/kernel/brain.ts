@@ -231,7 +231,7 @@ export class Brain {
     const promptResult = await buildSystemPrompt({
       isExt,
       ctx,
-      activeAgent,
+      activeAgent: activeAgent ?? null,
       toolDesc,
       memory: this.memory,
       userInput,
@@ -304,11 +304,15 @@ export class Brain {
           }
 
           // Auto-record observations for tool interactions (feature: observation-recorder)
-          if (!isExt && this.observationRecorder) {
+          if (!isExt) {
+            const recorder = this.observationRecorder
             for (const tc of loopResult.toolCalls) {
-              this.observationRecorder.recordToolCall(tc, userId, ctx?.activeSpaceId).catch((err) => {
-                logger.debug(`Observation recording error: ${err instanceof Error ? err.message : String(err)}`)
-              })
+              if (recorder) {
+                try {
+                  const spaceId = ctx?.activeSpaceId
+                  recorder.record({ action: tc.name, args: tc.args, result: tc.result, userId, spaceId })
+                } catch (e) { /* best-effort */ }
+              }
             }
           }
         }

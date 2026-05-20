@@ -1,6 +1,7 @@
 import type { TaskDeps, TaskResult } from '../scheduler.js'
 import { getDatabase } from '../../storage/database.js'
 import { Reflector } from '../../memory/reflector.js'
+import { getConfig } from '../../shared/config.js'
 import { logger } from '../../shared/logger.js'
 
 export async function executeReflection(
@@ -9,6 +10,12 @@ export async function executeReflection(
 ): Promise<TaskResult> {
   const memoryLlm = deps.llmRouter?.forCategory('memory') ?? deps.llm
   const reflector = new Reflector(memoryLlm)
+
+  // Enable draft mode if feature flag is on
+  const config = getConfig()
+  if (config.features.draftObservations) {
+    reflector.setDraftMode(true)
+  }
 
   // Wire orientation graph for cognitive registration of new observations
   if (deps.orientationGraph) {

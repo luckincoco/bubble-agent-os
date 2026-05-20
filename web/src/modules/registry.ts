@@ -2,6 +2,7 @@ import type { ComponentType } from 'react'
 import { ChatView } from '../components/chat/ChatView'
 import { KnowledgeBrowser } from '../components/knowledge/KnowledgeBrowser'
 import { BusinessFlow } from '../components/biz/BusinessFlow'
+import { ForgeManager } from '../components/forge/ForgeManager'
 
 export interface ModuleDefinition {
   id: string
@@ -58,6 +59,17 @@ const MODULES: ModuleDefinition[] = [
     },
     locked: true,
     component: KnowledgeBrowser,
+  },
+  {
+    id: 'forge',
+    tab: {
+      key: 'forge',
+      label: '自编码',
+      icon: 'M10 20l4-16m4 4l4 4-4 4M6 16l-4-4 4-4',
+      order: 50,
+    },
+    locked: true,
+    component: ForgeManager,
   },
 ]
 

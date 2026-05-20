@@ -7,6 +7,7 @@ import type { EventBus } from '../event/event-bus.js'
 import type { UserContext, ThinkResult } from '../shared/types.js'
 import { isExternalContext } from '../shared/types.js'
 import { createEpisode, type EpisodeSource } from '../temporal/episode-store.js'
+import { getActiveLedger, buildLedgerContext, detectResumption, updateEpisodeWindow } from '../temporal/task-ledger.js'
 import { findRecentBySource, getBubble, updateBubble } from '../bubble/model.js'
 import { logger } from '../shared/logger.js'
 
@@ -55,6 +56,7 @@ interface ReflexResult {
 export interface RouterResult {
   response: string
   sources: import('../shared/types.js').SourceRef[]
+  turnId?: string
 }
 
 // ── MessageRouter ────────────────────────────────────────────────────
@@ -138,7 +140,26 @@ export class MessageRouter {
     }
 
     // ── Layer 1: Deliberation ──────────────────────────────────────
-    const finalInput = reflex.context ? `${text}${reflex.context}` : text
+    // TaskLedger: detect resumption and inject context if active ledger exists
+    let ledgerContext = ''
+    if (ctx && !isExternalContext(ctx) && detectResumption(text)) {
+      try {
+        const ledger = getActiveLedger(ctx.activeSpaceId, ctx.userId)
+        if (ledger) {
+          ledgerContext = `\n\n${buildLedgerContext(ledger)}\n`
+          if (episodeId) {
+            updateEpisodeWindow(ledger.id, episodeId)
+          }
+          logger.info(`Router: injected TaskLedger context for "${ledger.goal}"`)
+        }
+      } catch (err) {
+        logger.debug('Router: TaskLedger lookup failed:', err instanceof Error ? err.message : String(err))
+      }
+    }
+
+    const finalInput = reflex.context
+      ? `${text}${reflex.context}${ledgerContext}`
+      : ledgerContext ? `${text}${ledgerContext}` : text
     const thinkResult = await this.brain.think(finalInput, ctx, options?.onChunk)
 
     // ── Layer 2: Anticipation (async, non-blocking) ────────────────
@@ -157,6 +178,7 @@ export class MessageRouter {
     return {
       response: thinkResult.response,
       sources: thinkResult.sources,
+      turnId: thinkResult.turnId,
     }
   }
 

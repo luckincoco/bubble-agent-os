@@ -109,6 +109,26 @@ export interface KnowledgeSnapshotBuilt {
   payload: { spaceId: string; nodeCount: number; frontierCount: number; tensionCount: number }
 }
 
+export interface KnowledgeUrgencyDetected {
+  type: 'knowledge.urgency.detected'
+  payload: { bubbleId: string; dimension: string; urgency: string; impactType: string; causalChain: string; spaceId: string }
+}
+
+export interface KnowledgeFeedbackApplied {
+  type: 'knowledge.feedback.applied'
+  payload: { proposalId: string; action: 'approved' | 'rejected'; affectedDomains: string[]; hintExtracted: boolean }
+}
+
+export interface KnowledgeConceptForged {
+  type: 'knowledge.concept.forged'
+  payload: { conceptId: string; name: string; structureType: string; sourceNodes: string[]; confidence: number; autoApproved: boolean }
+}
+
+export interface KnowledgeObsidianIngested {
+  type: 'knowledge.obsidian.ingested'
+  payload: { created: number; updated: number; staled: number; skipped: number; denied: number }
+}
+
 // ── Conversation Events ─────────────────────────────────────────
 
 export interface ConversationEpisodeCreated {
@@ -161,6 +181,10 @@ export type BubbleEventData =
   | KnowledgeGapDetected
   | KnowledgeCascadeTriggered
   | KnowledgeSnapshotBuilt
+  | KnowledgeUrgencyDetected
+  | KnowledgeFeedbackApplied
+  | KnowledgeConceptForged
+  | KnowledgeObsidianIngested
   | ConversationEpisodeCreated
   | ConversationResponseSent
   | ConversationExternalMessage

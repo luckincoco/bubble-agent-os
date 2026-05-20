@@ -8,6 +8,19 @@ export interface SourceRef {
   snippet: string
 }
 
+export type AssertionType = 'fact' | 'judgment' | 'speculation' | 'reference'
+
+export interface AssertionTag {
+  id: string
+  turnId: string
+  textSnippet: string
+  assertionType: AssertionType
+  source: string
+  verificationStatus: string
+  confidence: number
+  userCalibrated: boolean
+}
+
 export interface ChatMessage {
   id: string
   role: 'user' | 'assistant' | 'error'
@@ -15,12 +28,15 @@ export interface ChatMessage {
   timestamp: number
   isStreaming?: boolean
   sources?: SourceRef[]
+  turnId?: string
+  assertions?: AssertionTag[]
 }
 
 export interface WSMessage {
   type: 'start' | 'chunk' | 'done' | 'error'
   text?: string
   sources?: SourceRef[]
+  turnId?: string
 }
 
 export type ConnectionStatus = 'connecting' | 'connected' | 'disconnected' | 'error'

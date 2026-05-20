@@ -61,6 +61,45 @@ const SNAPSHOT_PROMPT = `你是认知图谱分析师。给定一组观察（obse
 输出严格 JSON（不要代码块包裹）：
 {"domains":[{"id":"观察ID","domain":"领域名"}],"tensions":[{"a":"ID1","b":"ID2","reason":"矛盾原因"}],"dependencies":[{"from":"依赖方ID","to":"被依赖ID"}]}`
 
+/**
+ * P3: Steel Trading Cognitive Template — domain taxonomy for the steel trade industry.
+ * Maps tag keywords to structured domain categories, inspired by
+ * the Vendor Evaluator methodology from the OpenClaw community.
+ *
+ * Evaluation dimensions (from Supply Chain best practices):
+ * - Quality: 产品质量、规格达标率
+ * - Price: 价格竞争力、定价趋势
+ * - Delivery: 交期准时率、物流可靠性
+ * - Responsiveness: 响应速度、售后服务
+ */
+const STEEL_DOMAIN_MAP: Record<string, string> = {
+  // Market dynamics
+  '钢价': '钢价趋势', '钢材价格': '钢价趋势', '价格': '钢价趋势',
+  '螺纹钢': '钢价趋势', '热卷': '钢价趋势', '板材': '钢价趋势',
+  '期货': '钢价趋势', '现货': '钢价趋势',
+  '供需': '市场供需', '产量': '市场供需', '库存': '市场供需',
+  '出口': '市场供需', '进口': '市场供需',
+
+  // Supplier behavior (Vendor Evaluator dimensions)
+  '供应商': '供应商可靠性', '钢厂': '供应商可靠性', '厂家': '供应商可靠性',
+  '交期': '供应商交期', '发货': '供应商交期', '物流': '供应商交期',
+  '质量': '产品质量', '品质': '产品质量', '规格': '产品质量',
+  '售后': '供应商响应', '服务': '供应商响应',
+
+  // Customer patterns
+  '客户': '客户模式', '需求': '客户模式', '采购': '客户模式',
+  '付款': '客户信用', '账期': '客户信用', '应收': '客户信用',
+  '回款': '客户信用',
+
+  // Operational risk
+  '风险': '运营风险', '敞口': '财务敞口', '资金': '财务敞口',
+  '亏损': '财务敞口', '利润': '利润分析',
+
+  // Industry & policy
+  '政策': '行业政策', '环保': '行业政策', '限产': '行业政策',
+  '碳排放': '行业政策',
+}
+
 // ── Orientation Graph Class ─────────────────────────────────────
 
 export class OrientationGraph {
@@ -285,6 +324,70 @@ export class OrientationGraph {
     return this.snapshot
   }
 
+  /**
+   * P2: Apply feedback from internalization proposal outcomes.
+   * When a proposal is approved → strengthen related frontier domains.
+   * When a proposal is rejected → dampen the causal chain's influence.
+   * Inspired by OPD (On-Policy Distillation) hint extraction from OpenClaw-RL.
+   */
+  applyFeedback(feedback: {
+    action: 'approved' | 'rejected'
+    affectedDomains: string[]
+    impactType: string
+    causalChain: string
+  }): string[] {
+    if (!this.snapshot) return []
+
+    const adjustedDomains: string[] = []
+
+    for (const domain of feedback.affectedDomains) {
+      const nodes = this.snapshot.nodes.filter(n => n.domain === domain)
+      if (nodes.length === 0) continue
+
+      for (const node of nodes) {
+        if (feedback.action === 'approved') {
+          // Hint: this causal chain was valid — reduce gap score for this domain
+          // (the domain's understanding was correct enough to produce a valid verdict)
+          node.gapScore = Math.max(0, node.gapScore * 0.7)
+          if (node.band === 'frontier') node.band = 'exploring'
+          else if (node.band === 'exploring') node.band = 'grounded'
+        } else {
+          // Rejection: our causal reasoning was wrong — increase gap score
+          // (we need more evidence before making similar judgments)
+          node.gapScore = Math.min(1, node.gapScore * 1.3 + 0.1)
+          if (node.band === 'established') node.band = 'grounded'
+          else if (node.band === 'grounded') node.band = 'exploring'
+        }
+        adjustedDomains.push(domain)
+      }
+    }
+
+    // Re-sort frontiers after adjustment
+    if (adjustedDomains.length > 0) {
+      this.snapshot.frontiers = [...this.snapshot.nodes]
+        .sort((a, b) => b.gapScore - a.gapScore)
+        .slice(0, 5)
+    }
+
+    if (this.eventBus && adjustedDomains.length > 0) {
+      this.eventBus.emitFireAndForget(
+        {
+          type: 'knowledge.feedback.applied',
+          payload: {
+            proposalId: '',
+            action: feedback.action,
+            affectedDomains: adjustedDomains,
+            hintExtracted: true,
+          },
+        },
+        { actor: 'system' },
+      )
+    }
+
+    logger.info(`OrientationGraph: feedback applied (${feedback.action}) — ${adjustedDomains.length} domains adjusted`)
+    return adjustedDomains
+  }
+
   // ── Private helpers ─────────────────────────────────────────────
 
   private classifyBand(confidence: number): ConfidenceBand {
@@ -295,10 +398,22 @@ export class OrientationGraph {
   }
 
   private inferDomain(obs: Bubble): string {
-    // Simple heuristic: use first non-system tag or title truncation
+    // P3: First try steel trading domain map for industry-specific classification
     const meaningfulTags = obs.tags.filter(
       (t: string) => t !== 'observation' && t !== 'auto-discovered' && t.length > 1,
     )
+    for (const tag of meaningfulTags) {
+      if (STEEL_DOMAIN_MAP[tag]) return STEEL_DOMAIN_MAP[tag]
+    }
+
+    // Also check title keywords against domain map
+    for (const [keyword, domain] of Object.entries(STEEL_DOMAIN_MAP)) {
+      if (obs.title.includes(keyword) || obs.content?.slice(0, 200).includes(keyword)) {
+        return domain
+      }
+    }
+
+    // Fallback: use first meaningful tag or title truncation
     if (meaningfulTags.length > 0) return meaningfulTags[0]
     return obs.title.slice(0, 8)
   }

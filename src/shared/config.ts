@@ -88,6 +88,12 @@ export function getConfig(): AppConfig {
       cognitionInternalization: env.COGNITION_INTERNAL !== 'false',
       cognitionCascade: env.COGNITION_CASCADE !== 'false',
       cognitionGapTrigger: env.COGNITION_GAP_TRIGGER !== 'false',
+      taskLedger: env.TASK_LEDGER !== 'false',
+      boundaryChecker: env.BOUNDARY_CHECKER !== 'false',
+      actionPlanner: env.ACTION_PLANNER !== 'false',
+      boundaryRuleSelfEvolution: false,  // locked — user must manually enable
+      draftObservations: env.DRAFT_OBSERVATIONS !== 'false',
+      assertionIdentification: env.ASSERTION_IDENTIFICATION === 'true',
     },
   }
 }

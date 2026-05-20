@@ -1,8 +1,15 @@
 import { useState } from 'react'
 import ReactMarkdown from 'react-markdown'
 import remarkGfm from 'remark-gfm'
-import type { ChatMessage } from '../../types'
+import type { AssertionType, ChatMessage } from '../../types'
 import s from './MessageBubble.module.css'
+
+const assertionLabels: Record<AssertionType, string> = {
+  fact: '事实',
+  judgment: '判断',
+  speculation: '推测',
+  reference: '引用',
+}
 
 function ThumbUp({ active }: { active: boolean }) {
   return (
@@ -38,6 +45,19 @@ export function MessageBubble({ message }: { message: ChatMessage }) {
           </div>
         ) : (
           message.content
+        )}
+        {message.assertions && message.assertions.length > 0 && !message.isStreaming && (
+          <div className={s.assertions}>
+            {message.assertions.map(a => (
+              <span
+                key={a.id}
+                className={`${s.assertionTag} ${s[a.assertionType]}`}
+                title={a.textSnippet}
+              >
+                {assertionLabels[a.assertionType]}
+              </span>
+            ))}
+          </div>
         )}
       </div>
       {message.role === 'assistant' && !message.isStreaming && (

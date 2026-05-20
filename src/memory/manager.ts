@@ -1,6 +1,8 @@
 import type { LLMProvider, EmbeddingProvider, Bubble, BubbleType, SourceRef } from '../shared/types.js'
 import { MemoryExtractor } from './extractor.js'
 import { BubbleAggregator } from '../bubble/aggregator.js'
+import { ContradictionResolver } from './contradiction-resolver.js'
+import { indexBubbleEntities } from '../bubble/entity-extractor.js'
 import { createBubble, getAllMemoryBubbles, searchBubbles, updateBubble, rowToBubble } from '../bubble/model.js'
 import { addLink } from '../bubble/links.js'
 import { FocusTracker, tokenize } from './focus-tracker.js'
@@ -69,6 +71,7 @@ export function calcSurprise(newContent: string, existingBubbles: Bubble[]): { s
 export class MemoryManager {
   private extractor: MemoryExtractor
   private aggregator: BubbleAggregator
+  private contradictionResolver: ContradictionResolver
   private embeddings: EmbeddingProvider | null = null
   private focusTracker: FocusTracker
   private focusEnabled: boolean
@@ -76,14 +79,34 @@ export class MemoryManager {
   constructor(llm: LLMProvider, enableFocus = true) {
     this.extractor = new MemoryExtractor(llm)
     this.aggregator = new BubbleAggregator()
+    this.contradictionResolver = new ContradictionResolver()
     this.focusTracker = new FocusTracker()
     this.focusEnabled = enableFocus
+
+    // Warm up focus tracking from persisted data
+    if (this.focusEnabled) {
+      this.loadPersistedFocus()
+    }
   }
 
-  /** Record user message for focus tracking */
+  private loadPersistedFocus(): void {
+    try {
+      const db = getDatabase()
+      this.focusTracker.loadFromDatabase(db)
+    } catch (err) {
+      logger.debug('FocusTracker: cold start — no persisted data')
+    }
+  }
+
+  /** Record user message for focus tracking (with persistence) */
   recordFocus(userId: string, message: string): void {
-    if (this.focusEnabled) {
-      this.focusTracker.record(userId, message)
+    if (!this.focusEnabled) return
+    this.focusTracker.record(userId, message)
+    try {
+      const db = getDatabase()
+      this.focusTracker.persistToDatabase(db)
+    } catch {
+      // Non-critical: focus persistence failure doesn't affect user experience
     }
   }
 
@@ -175,7 +198,7 @@ export class MemoryManager {
     return { context, sources }
   }
 
-  async extractAndStore(userMessage: string, assistantMessage: string, spaceId?: string): Promise<void> {
+  async extractAndStore(userMessage: string, assistantMessage: string, spaceId?: string, turnId?: string): Promise<void> {
     const extracted = await this.extractor.extract(userMessage, assistantMessage)
     const newIds: string[] = []
 
@@ -188,8 +211,8 @@ export class MemoryManager {
       const isDuplicate = memoryBubbles.some((b) => b.content === mem.content)
       if (isDuplicate) continue
 
-      // Calculate surprise score
-      const { score: surprise, contradicts, nearDuplicate } = calcSurprise(mem.content, memoryBubbles)
+      // Calculate surprise score (basic Jaccard)
+      const { score: surprise, nearDuplicate } = calcSurprise(mem.content, memoryBubbles)
 
       // Near duplicate: just refresh access time instead of storing
       if (nearDuplicate && surprise < 0.2) {
@@ -198,18 +221,52 @@ export class MemoryManager {
         continue
       }
 
-      // Adjust confidence and decayRate based on surprise
-      const confidence = contradicts
+      // Enhanced contradiction detection
+      const contradiction = this.contradictionResolver.detect(mem.content, memoryBubbles)
+
+      // Adjust confidence and decayRate based on surprise + contradiction
+      const confidence = contradiction.contradicts
         ? 1.0                                     // Contradictions are always important
         : Math.min(1.0, mem.confidence * (0.5 + surprise * 0.5))
-      const decayRate = contradicts
+      const decayRate = contradiction.contradicts
         ? 0.02                                    // Very slow decay for contradictions
         : surprise > 0.6 ? 0.05 : 0.1            // Novel = slow decay, expected = normal
 
       // Tag contradictions for visibility
       const tags = [...mem.tags]
-      if (contradicts) tags.push('surprise', 'contradiction')
-      else if (surprise > 0.6) tags.push('novel')
+      if (contradiction.contradicts) {
+        tags.push('surprise', 'contradiction', `ctype:${contradiction.type}`)
+      } else if (surprise > 0.6) {
+        tags.push('novel')
+      }
+
+      // Inherit assertion tags from conversation turn
+      let assertionMeta: Record<string, unknown> | undefined
+      if (turnId) {
+        try {
+          const db = getDatabase()
+          const assertionRows = db.prepare(
+            'SELECT text_snippet, assertion_type, source_type FROM conversation_assertions WHERE turn_id = ?'
+          ).all(turnId) as Array<{ text_snippet: string; assertion_type: string; source_type: string }>
+
+          // Match extracted memory content against assertion snippets
+          const matchedTypes = new Set<string>()
+          for (const row of assertionRows) {
+            if (mem.content.includes(row.text_snippet.slice(0, 30))) {
+              matchedTypes.add(row.assertion_type)
+              tags.push(`assertion:${row.assertion_type}`)
+            }
+          }
+          if (matchedTypes.size > 0) {
+            assertionMeta = {
+              assertionTypes: [...matchedTypes],
+              assertionTurnId: turnId,
+            }
+          }
+        } catch {
+          // Non-critical: assertion lookup failed, continue without tags
+        }
+      }
 
       // Generate embedding if provider available
       let embedding: number[] | undefined
@@ -231,15 +288,19 @@ export class MemoryManager {
         confidence,
         decayRate,
         spaceId,
+        metadata: assertionMeta,
       })
       newIds.push(bubble.id)
 
-      // Link contradictions to the bubble they contradict
-      if (contradicts && nearDuplicate) {
-        addLink(bubble.id, nearDuplicate.id, 'contradicts', 1.0, 'system')
+      // Extract and index entities for KG-enhanced retrieval
+      indexBubbleEntities(bubble.id, mem.content)
+
+      // Resolve contradiction: supersede old bubble
+      if (contradiction.contradicts && contradiction.oldBubble) {
+        this.contradictionResolver.resolve(bubble.id, contradiction.oldBubble, contradiction.type)
       }
 
-      logger.debug(`Stored memory [surprise=${surprise.toFixed(2)}]: ${mem.title}`)
+      logger.debug(`Stored memory [surprise=${surprise.toFixed(2)}, contradiction=${contradiction.type}]: ${mem.title}`)
     }
 
     // Auto-link new memories to each other (same conversation turn)

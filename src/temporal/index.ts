@@ -13,3 +13,6 @@ export type { TemporalLinkInput, TemporalLink } from './temporal-linker.js'
 
 export { getBubblesAsOf, getNeighborsAsOf, getRelationTimeline, getInvalidatedBubbles, getTemporalStats } from './temporal-query.js'
 export type { TemporalQueryOptions } from './temporal-query.js'
+
+export { createLedger, getLedger, getActiveLedger, updateLedgerStatus, addCheckpoint, setPendingAction, updateEpisodeWindow, updatePlanSteps, buildLedgerContext, detectResumption } from './task-ledger.js'
+export type { TaskLedger, LedgerStatus, PlanStep, Checkpoint, PendingAction, CreateLedgerInput } from './task-ledger.js'

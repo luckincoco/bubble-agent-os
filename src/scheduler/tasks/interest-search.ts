@@ -60,6 +60,12 @@ export async function executeInterestSearch(
   _params: Record<string, unknown>,
   deps: TaskDeps,
 ): Promise<TaskResult> {
+  // Pre-check: skip entire task if search API key is not configured
+  if (!process.env.TAVILY_API_KEY) {
+    logger.debug('InterestSearch: TAVILY_API_KEY 未配置，跳过兴趣搜索')
+    return { success: true, message: '兴趣搜索: 搜索 API 未配置，任务跳过' }
+  }
+
   const searchLlm = deps.llmRouter?.forCategory('search') ?? deps.llm
 
   // Step 1: Get active users with focus data
@@ -347,6 +353,24 @@ export async function executeInterestSearch(
           // Attach verdict to bubble metadata
           db.prepare('UPDATE bubbles SET metadata = json_set(COALESCE(metadata, "{}"), "$.causalVerdict", ?), updated_at = ? WHERE id = ?')
             .run(JSON.stringify(verdict), Date.now(), input.bubbleId)
+
+          // P1: Emit urgency event for high-impact findings — triggers reactive scheduling
+          if (verdict.urgency === 'high' && deps.eventBus) {
+            deps.eventBus.emitFireAndForget(
+              {
+                type: 'knowledge.urgency.detected',
+                payload: {
+                  bubbleId: input.bubbleId,
+                  dimension: verdict.dimension,
+                  urgency: verdict.urgency,
+                  impactType: verdict.impactType,
+                  causalChain: verdict.causalChain,
+                  spaceId: input.spaceId,
+                },
+              },
+              { actor: 'system', spaceId: input.spaceId },
+            )
+          }
 
           // Generate internalization proposal if applicable
           if (config?.features?.cognitionInternalization && internalizationEngine && verdict.impactType !== 'novel') {

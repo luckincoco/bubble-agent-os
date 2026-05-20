@@ -2,6 +2,7 @@ import { create } from 'zustand'
 import type { ChatMessage, ConnectionStatus, WSMessage } from '../types'
 import { WSManager, getWSUrl } from '../services/websocket'
 import { useAuthStore } from './authStore'
+import { fetchAssertionsByTurn } from '../services/api'
 
 interface ChatState {
   messages: ChatMessage[]
@@ -55,8 +56,26 @@ export const useChatStore = create<ChatState>((set, get) => ({
             const msgs = [...state.messages]
             const last = msgs[msgs.length - 1]
             if (last?.role === 'assistant') {
-              msgs[msgs.length - 1] = { ...last, content: msg.text || last.content, isStreaming: false, sources: msg.sources }
+              msgs[msgs.length - 1] = { ...last, content: msg.text || last.content, isStreaming: false, sources: msg.sources, turnId: msg.turnId }
               set({ messages: msgs, isStreaming: false })
+              // Fetch assertions after async identification completes (~3.5s)
+              if (msg.turnId) {
+                const turnId = msg.turnId
+                setTimeout(async () => {
+                  try {
+                    const assertions = await fetchAssertionsByTurn(turnId)
+                    if (assertions.length > 0) {
+                      const currentMsgs = get().messages
+                      const idx = currentMsgs.findIndex(m => m.turnId === turnId)
+                      if (idx >= 0) {
+                        const updated = [...currentMsgs]
+                        updated[idx] = { ...updated[idx], assertions }
+                        set({ messages: updated })
+                      }
+                    }
+                  } catch { /* non-critical, silent */ }
+                }, 3500)
+              }
             }
             break
           }

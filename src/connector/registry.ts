@@ -1,10 +1,15 @@
 import type { UserContext } from '../shared/types.js'
 import { logger } from '../shared/logger.js'
+import { checkBoundary, declareReversible } from './boundary-checker.js'
 
 export interface ToolDefinition {
   name: string
   description: string
   parameters: Record<string, { type: string; description: string; required?: boolean }>
+  /** 自定义超时（毫秒），不设则使用 ToolLoop 默认值 */
+  timeout?: number
+  /** 声明此工具为可逆操作，默认不可逆（零信任） */
+  reversible?: boolean
   execute: (args: Record<string, unknown>, ctx?: UserContext) => Promise<string>
 }
 
@@ -13,7 +18,10 @@ export class ToolRegistry {
 
   register(tool: ToolDefinition) {
     this.tools.set(tool.name, tool)
-    logger.info(`Tool registered: ${tool.name}`)
+    if (tool.reversible) {
+      declareReversible(tool.name)
+    }
+    logger.info(`Tool registered: ${tool.name}${tool.reversible ? ' [reversible]' : ''}`)
   }
 
   get(name: string): ToolDefinition | undefined {
@@ -42,6 +50,18 @@ export class ToolRegistry {
   async execute(name: string, args: Record<string, unknown>, ctx?: UserContext): Promise<string> {
     const tool = this.tools.get(name)
     if (!tool) return `Error: unknown tool "${name}"`
+
+    // ── Gate Layer: boundary check before execution ──────────────
+    const gate = checkBoundary(name, args)
+    if (gate.decision === 'deny') {
+      logger.warn(`Gate Layer DENIED: ${name} — ${gate.reason} (rule: ${gate.triggeredRule})`)
+      return `操作被拒绝: ${gate.reason}${gate.suggestion ? `\n建议: ${gate.suggestion}` : ''}`
+    }
+    if (gate.decision === 'confirm') {
+      logger.info(`Gate Layer CONFIRM: ${name} — ${gate.reason}`)
+      return `需要确认: ${gate.reason}\n请回复"确认"以继续执行此操作。`
+    }
+
     try {
       return await tool.execute(args, ctx)
     } catch (err) {

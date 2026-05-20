@@ -1,0 +1,5 @@
+export { ResonanceTracker, generateSignatureHash, ensureResonanceTables } from './resonance-tracker.js'
+export type { ActivationPath, EmissionRecord, StructureType } from './resonance-tracker.js'
+export { ResonanceIntegration } from './resonance-integration.js'
+export { MetricsCollector, ensureMetricsTables } from './metrics-collector.js'
+export type { SignalType, ConversationSignal } from './metrics-collector.js'

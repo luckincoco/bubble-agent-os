@@ -29,12 +29,14 @@ import {
 
 // ========== excelDateToISO ==========
 describe('excelDateToISO', () => {
-  it('converts Excel serial 46087 to 2026-03-05', () => {
-    expect(excelDateToISO(46087)).toBe('2026-03-05')
+  it('converts Excel serial 46087 to 2026-03-06', () => {
+    // Excel 1900 date system + Lotus 1-2-3 bug: Dec 30, 1899 + 46087 days = 2026-03-06
+    // Verified against openpyxl, xlrd, SheetJS — all agree on this mapping
+    expect(excelDateToISO(46087)).toBe('2026-03-06')
   })
 
-  it('converts serial 45658 to 2024-12-31', () => {
-    expect(excelDateToISO(45658)).toBe('2024-12-31')
+  it('converts serial 45658 to 2025-01-01', () => {
+    expect(excelDateToISO(45658)).toBe('2025-01-01')
   })
 
   it('passes through ISO date strings', () => {
@@ -46,7 +48,7 @@ describe('excelDateToISO', () => {
   })
 
   it('handles string-encoded serial numbers', () => {
-    expect(excelDateToISO('46087')).toBe('2026-03-05')
+    expect(excelDateToISO('46087')).toBe('2026-03-06')
   })
 
   it('returns original string for non-date values', () => {
@@ -166,7 +168,7 @@ describe('translatePurchaseRow', () => {
 
   it('translates a full purchase row with all fields', () => {
     const result = translatePurchaseRow(fullRow)
-    expect(result.content).toContain('2026-03-05')
+    expect(result.content).toContain('2026-03-06')
     expect(result.content).toContain('示例公司通过供应商A采购品牌A牌螺纹钢')
     expect(result.content).toContain('规格Φ25×12m')
     expect(result.content).toContain('入库单号RK-2026-001')
@@ -386,7 +388,7 @@ describe('translateGenericRow', () => {
   it('converts date serials in date-named columns', () => {
     const row = { '入库日期': 46087, '数量': 10 }
     const result = translateGenericRow(row, '库存表')
-    expect(result.content).toContain('入库日期: 2026-03-05')
+    expect(result.content).toContain('入库日期: 2026-03-06')
   })
 })
 

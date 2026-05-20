@@ -2,14 +2,23 @@ import type { LLMProvider, LLMMessage, UserContext, ThinkResult, CustomAgent, So
 import { isExternalContext } from '../shared/types.js'
 import type { MemoryManager } from '../memory/manager.js'
 import type { ConversationInsightEvaluator } from '../memory/conversation-insight-evaluator.js'
+import type { ObservationRecorder } from '../memory/observation-recorder.js'
+import type { AssertionIdentifier } from '../memory/assertion-identifier.js'
+import type { ResonanceIntegration } from '../memory/resonance/index.js'
+import type { MetricsCollector } from '../memory/resonance/index.js'
+import { getDatabase } from '../storage/database.js'
+import { ulid } from 'ulid'
 import type { ToolRegistry } from '../connector/registry.js'
 import type { WorkingMemory } from '../memory/working-memory.js'
 import type { ContextBudget } from '../memory/context-budget.js'
+import type { Tracer, TraceContext } from '../observability/tracer.js'
 import { runToolLoop } from './tool-loop.js'
 import { estimateTokens, truncateToTokenBudget, TOKEN_LIMITS } from '../shared/tokens.js'
 import { getSpaceProfile } from '../connector/biz/space-profile.js'
 import { buildExternalSystemPrompt } from './external-prompts.js'
 import { EXT_TOOL_NAMES } from '../connector/tools/ext-query-tools.js'
+import { countDrafts } from '../memory/draft-observations.js'
+import { getConfig } from '../shared/config.js'
 import { logger } from '../shared/logger.js'
 
 const BASE_SYSTEM_PROMPT = `你是泡泡Agent（Bubble Agent），一个专属的个人AI助手。
@@ -32,7 +41,17 @@ const BASE_SYSTEM_PROMPT = `你是泡泡Agent（Bubble Agent），一个专属�
 - 反思框架适用性：当你把一个领域的模型套用到另一个领域时，主动说明这个类比在哪里成立、在哪里可能失效
 - 承认边界：如果你对某个问题的理解确实不够，直接说"这超出了我目前的理解"，而不是生成一个看似合理的回答
 
-你已经具备记忆能力和工具调用能力。`
+你已经具备记忆能力和工具调用能力。
+
+你的知识来源：
+- 对话记忆：与用户的历史对话中提取的洞察和事实
+- Obsidian笔记：用户主动同步到你的笔记（source='obsidian-ingest'，type='document'），这些是用户在Obsidian vault中写的思考和文档，定期同步给你阅读。当用户问你"读到了哪些笔记"时，使用memory_list_notes工具列出所有已摄入的笔记。
+
+你的状态判断纪律：
+- 当需要判断"某模块是否存在/某功能是否已实施"时，必须参照 _system/module-state.md 锚点文件（source='obsidian-ingest'）
+- 不要基于历史笔记推测系统当前状态——笔记有时间差，锚点文件是部署后自动生成的真实快照
+- 如果锚点文件中没有提到某模块，且没有其他确切信息，应该转为提问（"X 模块目前是否已实施？"）而非断言（"X 从未实施"）
+- 当你输出关于系统状态的判断时，标注信息来源（"基于锚点文件"或"基于 N月N日 笔记，可能已过时"）`
 
 const CRITIQUE_PROMPT = `你是一个严格的批判性审查者，负责审查一段AI回复的质量。逐项检查：
 
@@ -40,6 +59,7 @@ const CRITIQUE_PROMPT = `你是一个严格的批判性审查者，负责审查�
 2. 伪精确：是否存在看起来精确但缺乏数据支撑的数字、公式或比率？比喻是否被包装成了数学公式？
 3. 事实错误：是否把线性说成指数、把相关说成因果、把比喻说成等价？
 4. 讨好模式：是否以赞美、恭维或"您做得很对"结尾，而非提供独立判断？
+5. 状态断言：是否存在关于系统模块"是否存在/是否已实施/是否在线"的二进制判断？如果有，判断依据是否来自 _system/module-state.md 锚点？仅基于过时笔记推测的状态断言必须标记为可疑。
 
 如果发现任何问题，用2-4句话指出最关键的问题，以"⚠️ 自我审视："开头。语气诚恳、具体，不要泛泛而谈。
 如果回复质量良好、没有明显问题，只输出"PASS"。`
@@ -86,12 +106,18 @@ function trimHistoryByTokens(history: LLMMessage[], budget: number): LLMMessage[
 export class Brain {
   private llm: LLMProvider
   private historyMap: Map<string, LLMMessage[]> = new Map()
+  private lastActivityMap: Map<string, number> = new Map()
   private memory: MemoryManager | null = null
   private tools: ToolRegistry | null = null
   private agentConfigs: Map<string, CustomAgent> = new Map()
   private insightEvaluator: ConversationInsightEvaluator | null = null
+  private observationRecorder: ObservationRecorder | null = null
+  private assertionIdentifier: AssertionIdentifier | null = null
+  private resonance: ResonanceIntegration | null = null
+  private metricsCollector: MetricsCollector | null = null
   private workingMemory: WorkingMemory | null = null
   private contextBudget: ContextBudget | null = null
+  private tracer: Tracer | null = null
 
   constructor(llm: LLMProvider) {
     this.llm = llm
@@ -112,10 +138,39 @@ export class Brain {
     logger.info('Brain: conversation insight evaluator connected')
   }
 
+  setObservationRecorder(recorder: ObservationRecorder) {
+    this.observationRecorder = recorder
+    logger.info('Brain: observation recorder connected')
+  }
+
+  setAssertionIdentifier(identifier: AssertionIdentifier) {
+    this.assertionIdentifier = identifier
+    logger.info('Brain: assertion identifier connected')
+  }
+
+  getAssertionIdentifier(): AssertionIdentifier | null {
+    return this.assertionIdentifier
+  }
+
+  setResonance(resonance: ResonanceIntegration) {
+    this.resonance = resonance
+    logger.info('Brain: resonance layer connected (anti-double-emit active)')
+  }
+
+  setMetricsCollector(collector: MetricsCollector) {
+    this.metricsCollector = collector
+    logger.info('Brain: metrics collector connected (5 signal detection)')
+  }
+
   setWorkingMemory(wm: WorkingMemory, budget: ContextBudget) {
     this.workingMemory = wm
     this.contextBudget = budget
     logger.info('Brain: working memory connected')
+  }
+
+  setTracer(tracer: Tracer) {
+    this.tracer = tracer
+    logger.info('Brain: observability tracer connected')
   }
 
   /** Set or clear the active agent for a user */
@@ -141,11 +196,34 @@ export class Brain {
   /** Clear conversation history for a user */
   clearHistory(userId: string) {
     this.historyMap.delete(userId)
+    this.lastActivityMap.delete(userId)
     logger.info(`Brain: history cleared for user ${userId}`)
+  }
+
+  /**
+   * Drain sessions that have been idle for at least `maxIdleMs`.
+   * Returns the history of idle sessions and clears them from memory.
+   * Used by session-compression task to persist structured summaries.
+   */
+  drainStaleSessions(maxIdleMs: number): Array<{ userId: string; messages: LLMMessage[] }> {
+    const now = Date.now()
+    const results: Array<{ userId: string; messages: LLMMessage[] }> = []
+
+    for (const [userId, lastActive] of this.lastActivityMap) {
+      if (now - lastActive < maxIdleMs) continue
+      const messages = this.historyMap.get(userId)
+      if (messages && messages.length >= 4) {
+        results.push({ userId, messages: [...messages] })
+        this.historyMap.delete(userId)
+        this.lastActivityMap.delete(userId)
+      }
+    }
+    return results
   }
 
   async think(userInput: string, ctx?: UserContext, onChunk?: (text: string) => void): Promise<ThinkResult> {
     const userId = ctx?.userId ?? '_default'
+    this.lastActivityMap.set(userId, Date.now())
 
     // Handle "clear conversation" command
     if (/^(清空对话|清空历史|重新开始|reset)$/i.test(userInput.trim())) {
@@ -184,6 +262,21 @@ export class Brain {
     const toolFilter = isExt
       ? EXT_TOOL_NAMES
       : activeAgent?.tools?.length ? activeAgent.tools : undefined
+
+    // Metrics: detect conversation signals from user input
+    if (!isExt && this.metricsCollector) {
+      const lastAssistant = history.length >= 2 ? history[history.length - 2]?.content : null
+      try {
+        this.metricsCollector.analyzeUserMessage(
+          effectiveInput,
+          lastAssistant && history[history.length - 2]?.role === 'assistant' ? lastAssistant : null,
+          userId,
+          ctx?.activeSpaceId,
+        )
+      } catch (err) {
+        logger.debug('Metrics analysis error:', err instanceof Error ? err.message : String(err))
+      }
+    }
 
     // --- Token budget management ---
     const maxPrompt = TOKEN_LIMITS.MAX_PROMPT_TOKENS
@@ -249,6 +342,25 @@ export class Brain {
       }
     }
 
+    // Inject Obsidian notes index for self-awareness
+    if (!isExt) {
+      const notesSummary = this.getObsidianNotesSummary()
+      if (notesSummary) {
+        systemContent += `\n\n${notesSummary}`
+      }
+    }
+
+    // Inject draft observations reminder
+    if (!isExt) {
+      const config = getConfig()
+      if (config.features.draftObservations) {
+        const draftCount = countDrafts(ctx?.activeSpaceId)
+        if (draftCount > 0) {
+          systemContent += `\n\n[待审草稿提醒]\n你有 ${draftCount} 条自主思考草稿等待审核。在对话自然时机提醒用户，可以说"我最近有 ${draftCount} 条新想法等你审阅，要看看吗？"`
+        }
+      }
+    }
+
     if (toolDesc) systemContent += toolDesc
 
     const systemMessage: LLMMessage = { role: 'system', content: systemContent }
@@ -269,6 +381,9 @@ export class Brain {
     const totalEst = estimateMessages(messages)
     logger.debug(`Prompt budget: ~${totalEst} tokens (system ~${systemTokens}, history ${trimmedHistory.length} msgs, limit ${maxPrompt})`)
 
+    // Start observability trace
+    const trace = this.tracer?.startTrace('think', { userId, spaceId: ctx?.activeSpaceId })
+
     try {
       let response: string
 
@@ -279,6 +394,7 @@ export class Brain {
           tools: this.tools,
           ctx,
           onChunk,
+          traceContext: trace ?? undefined,
         })
         response = loopResult.response
 
@@ -288,6 +404,23 @@ export class Brain {
           for (const tc of loopResult.toolCalls) {
             storedHistory.push({ role: 'assistant', content: `[TOOL_CALL: ${tc.name}] ${JSON.stringify(tc.args)}` })
             storedHistory.push({ role: 'user', content: `[TOOL_RESULT: ${tc.name}] ${tc.result}` })
+          }
+
+          // Auto-observation: record significant tool results as observation bubbles
+          if (!isExt && this.observationRecorder) {
+            try {
+              this.observationRecorder.recordBatch(
+                loopResult.toolCalls.map(tc => ({
+                  action: tc.name,
+                  args: tc.args,
+                  result: tc.result,
+                  userId,
+                  spaceId: ctx?.activeSpaceId,
+                }))
+              )
+            } catch (err) {
+              logger.debug('Observation recording error:', err instanceof Error ? err.message : String(err))
+            }
           }
         }
       } else {
@@ -313,9 +446,26 @@ export class Brain {
 
       storedHistory.push({ role: 'assistant', content: response })
 
+      // Generate turnId and store conversation turn for assertion identification
+      const turnId = ulid()
+      if (!isExt) {
+        try {
+          const db = getDatabase()
+          db.prepare(`
+            INSERT INTO conversation_turns (id, user_id, space_id, user_input, assistant_response, created_at)
+            VALUES (?, ?, ?, ?, ?, ?)
+          `).run(
+            turnId, userId, ctx?.activeSpaceId ?? null,
+            effectiveInput.slice(0, 500), response.slice(0, 1000), Date.now(),
+          )
+        } catch (err) {
+          logger.debug(`Brain: turn storage error: ${err instanceof Error ? err.message : String(err)}`)
+        }
+      }
+
       // Skip memory extraction for external users
       if (!isExt && this.memory) {
-        this.memory.extractAndStore(userInput, response, ctx?.activeSpaceId).catch((err) => {
+        this.memory.extractAndStore(userInput, response, ctx?.activeSpaceId, turnId).catch((err) => {
           logger.debug('Memory extraction error:', err instanceof Error ? err.message : String(err))
         })
       }
@@ -327,7 +477,17 @@ export class Brain {
         })
       }
 
-      return { response, sources }
+      // Assertion identification: classify claims in the response (async, non-blocking)
+      if (!isExt && this.assertionIdentifier) {
+        this.assertionIdentifier.identify(
+          effectiveInput, response, turnId, userId, ctx?.activeSpaceId,
+        ).catch((err) => {
+          logger.debug('Assertion identification error:', err instanceof Error ? err.message : String(err))
+        })
+      }
+
+      trace?.end('ok', { inputTokenEst: totalEst, outputTokenEst: estimateTokens(response) })
+      return { response, sources, turnId: isExt ? undefined : turnId }
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err)
       logger.error('Brain think error:', msg)
@@ -337,18 +497,21 @@ export class Brain {
       const isTokenLimit = /token|context.*(length|limit|window|exceed)|max.*length/i.test(msg)
 
       if (isTimeout) {
+        trace?.end('timeout', { error: msg })
         const fallback = '抱歉，处理时间过长（超过2分钟），请尝试缩短你的消息或分段发送。'
         const storedHistory = this.getHistory(userId)
         storedHistory.push({ role: 'assistant', content: fallback })
         return { response: fallback, sources: [] }
       }
       if (isTokenLimit) {
+        trace?.end('error', { error: msg })
         const fallback = '抱歉，对话上下文太长了，我消化不了。请尝试：\n1. 将长文章分段发送\n2. 发一条"清空对话"让我重新开始'
         const storedHistory = this.getHistory(userId)
         storedHistory.push({ role: 'assistant', content: fallback })
         return { response: fallback, sources: [] }
       }
 
+      trace?.end('error', { error: msg })
       throw err
     }
   }
@@ -399,6 +562,35 @@ export class Brain {
       return text
     } catch (err) {
       logger.debug('Self-critique error:', err instanceof Error ? err.message : String(err))
+      return null
+    }
+  }
+
+  /**
+   * Get a compact summary of all ingested Obsidian notes.
+   * Injected into system context so Bubble knows what notes she has read.
+   */
+  private getObsidianNotesSummary(): string | null {
+    try {
+      const db = getDatabase()
+      const rows = db.prepare(`
+        SELECT b.title, oi.file_path
+        FROM bubbles b
+        JOIN obsidian_ingest oi ON oi.bubble_id = b.id
+        WHERE b.deleted_at IS NULL AND oi.stale = 0
+        ORDER BY oi.file_path
+      `).all() as Array<{ title: string; file_path: string }>
+
+      if (rows.length === 0) return null
+
+      const lines = ['[已读取的Obsidian笔记]']
+      for (const row of rows) {
+        lines.push(`- ${row.title} (${row.file_path})`)
+      }
+      lines.push(`共${rows.length}篇。用户问"读到了哪些笔记"时，列出以上全部。要查看某篇笔记的具体内容，搜索对应标题即可。`)
+
+      return lines.join('\n')
+    } catch {
       return null
     }
   }

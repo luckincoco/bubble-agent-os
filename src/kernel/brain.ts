@@ -1,4 +1,4 @@
-import type { LLMProvider, LLMMessage, UserContext, ThinkResult, CustomAgent, SourceRef } from '../shared/types.js'
+import type { LLMProvider, LLMMessage, UserContext, ThinkResult, CustomAgent } from '../shared/types.js'
 import { isExternalContext } from '../shared/types.js'
 import type { MemoryManager } from '../memory/manager.js'
 import type { ConversationInsightEvaluator } from '../memory/conversation-insight-evaluator.js'
@@ -7,55 +7,17 @@ import type { WorkingMemory } from '../memory/working-memory.js'
 import type { ContextBudget } from '../memory/context-budget.js'
 import { runToolLoop } from './tool-loop.js'
 import { estimateTokens, truncateToTokenBudget, TOKEN_LIMITS } from '../shared/tokens.js'
-import { getSpaceProfile } from '../connector/biz/space-profile.js'
-import { buildExternalSystemPrompt } from './external-prompts.js'
 import { EXT_TOOL_NAMES } from '../connector/tools/ext-query-tools.js'
 import { logger } from '../shared/logger.js'
-
-const BASE_SYSTEM_PROMPT = `你是泡泡Agent（Bubble Agent），一个专属的个人AI助手。
-
-你的核心特质：
-- 你了解用户的语言风格，用简洁、自然的方式回复
-- 你记住用户告诉你的一切（偏好、习惯、信息）
-- 你主动帮助用户完成任务，而不是被动等待指令
-- 你用中文和用户交流，除非用户用其他语言
-
-你的认知底色——「问」：
-- 问题 = 现状与期望之间的落差。在回应之前，先审视：谁的问题？基于什么期望？现状的感知是否真实？
-- 先问再答：当需求模糊时，先帮用户澄清问题本身，而非急于给出答案
-- 拓展再收敛：先展开可能性（向上追问前提、向下追问根基、横向追问不同视角），再收敛到行动
-- 保护困惑：当用户表达困惑或不确定时，不要急于消解它——困惑本身是信号
-
-你的认知纪律——「自我质疑」：
-- 区分来源：你说的每个事实和数字，是来自用户提供的数据、你检索到的信息、还是你自己的推测？如果是推测，必须明确标注
-- 警惕伪精确：不要用精确的数字包装模糊的判断。"大约""可能在…范围""我没有足够数据判断"比一个编造的精确数字更诚实
-- 反思框架适用性：当你把一个领域的模型套用到另一个领域时，主动说明这个类比在哪里成立、在哪里可能失效
-- 承认边界：如果你对某个问题的理解确实不够，直接说"这超出了我目前的理解"，而不是生成一个看似合理的回答
-
-你已经具备记忆能力和工具调用能力。`
-
-const CRITIQUE_PROMPT = `你是一个严格的批判性审查者，负责审查一段AI回复的质量。逐项检查：
-
-1. 跨域类比：回复是否把一个领域的概念映射到另一个领域？如果有，这个类比在哪里可能失效或误导？
-2. 伪精确：是否存在看起来精确但缺乏数据支撑的数字、公式或比率？比喻是否被包装成了数学公式？
-3. 事实错误：是否把线性说成指数、把相关说成因果、把比喻说成等价？
-4. 讨好模式：是否以赞美、恭维或"您做得很对"结尾，而非提供独立判断？
-
-如果发现任何问题，用2-4句话指出最关键的问题，以"⚠️ 自我审视："开头。语气诚恳、具体，不要泛泛而谈。
-如果回复质量良好、没有明显问题，只输出"PASS"。`
-
-const CRITIQUE_MIN_LENGTH = 300
-
-const COMPACTION_THRESHOLD = 24  // Trigger compaction when history exceeds this many messages
-const COMPACTION_KEEP_RECENT = 6 // Always keep last N messages intact
-
-const COMPACTION_PROMPT = `你是一个对话摘要助手。请将以下对话历史压缩为一段简洁的摘要，保留：
-1. 用户提到的关键实体（人名、公司名、项目名、数字）
-2. 重要的决策和结论
-3. 用户的偏好和习惯
-4. 未解决的问题或待办事项
-
-不要保留闲聊、重复内容和过渡性语句。用中文输出，控制在 500 字以内。`
+import {
+  BASE_SYSTEM_PROMPT,
+  CRITIQUE_PROMPT,
+  CRITIQUE_MIN_LENGTH,
+  COMPACTION_THRESHOLD,
+  COMPACTION_KEEP_RECENT,
+  COMPACTION_PROMPT,
+  buildSystemPrompt,
+} from './prompts.js'
 
 /** Estimate total tokens for an array of LLM messages */
 function estimateMessages(messages: LLMMessage[]): number {
@@ -189,70 +151,32 @@ export class Brain {
     const maxPrompt = TOKEN_LIMITS.MAX_PROMPT_TOKENS
     const now = new Date().toLocaleString('zh-CN', { timeZone: 'Asia/Shanghai', year: 'numeric', month: '2-digit', day: '2-digit', weekday: 'long', hour: '2-digit', minute: '2-digit' })
 
-    let systemContent: string
-    if (isExt && isExternalContext(ctx!)) {
-      // External user: use dedicated external prompt, no space profile, no memory
-      systemContent = buildExternalSystemPrompt(ctx)
-    } else {
-      systemContent = activeAgent?.systemPrompt
-        ? `${activeAgent.systemPrompt}\n\n当前时间：${now}\n\n你已经具备记忆能力和工具调用能力。`
-        : `${BASE_SYSTEM_PROMPT}\n\n当前时间：${now}`
-
-      // Inject space profile (SPACE.md equivalent) for business context
-      if (ctx?.activeSpaceId) {
-        const spaceProfile = getSpaceProfile(ctx.activeSpaceId)
-        if (spaceProfile) systemContent += spaceProfile
-      }
-    }
-
-    let fixedTokens = estimateTokens(systemContent)
-
-    // Tool descriptions (fixed cost, add first)
-    let toolDesc = ''
-    if (this.tools) {
-      toolDesc = this.tools.getToolDescriptions(toolFilter)
-      fixedTokens += estimateTokens(toolDesc)
-    }
-
-    // Memory context gets a budget = total - fixed - reserved for history
+    const toolDesc = this.tools ? this.tools.getToolDescriptions(toolFilter) : ''
+    const basePrompt = activeAgent?.systemPrompt ?? BASE_SYSTEM_PROMPT
     const memoryBudget = Math.min(
       TOKEN_LIMITS.MEMORY_BUDGET,
-      maxPrompt - fixedTokens - TOKEN_LIMITS.COMPLETION_RESERVE - 4000, // 4000 = minimum history room
+      maxPrompt - estimateTokens(basePrompt) - estimateTokens(toolDesc) - TOKEN_LIMITS.COMPLETION_RESERVE - 4000,
     )
-
-    // If agent has spaceIds, narrow the search scope
     const searchSpaceIds = activeAgent?.spaceIds?.length ? activeAgent.spaceIds : ctx?.spaceIds
 
-    let sources: SourceRef[] = []
-    // Skip memory retrieval for external users
-    if (!isExt && this.memory && memoryBudget > 1000) {
-      const memResult = await this.memory.getContextForQuery(userInput, searchSpaceIds, userId, memoryBudget)
-      if (memResult.context) {
-        systemContent += memResult.context
-        sources = memResult.sources
-      }
-    }
+    const promptResult = await buildSystemPrompt({
+      isExt,
+      ctx,
+      activeAgent,
+      toolDesc,
+      memory: this.memory,
+      userInput,
+      userId,
+      memoryBudget,
+      workingMemory: this.workingMemory,
+      contextBudget: this.contextBudget,
+      now,
+      searchSpaceIds,
+    })
+    const sources = promptResult.sources
 
-    // Inject Working Memory status for agent self-awareness
-    if (!isExt && this.workingMemory && this.contextBudget) {
-      const sessionId = userId
-      this.workingMemory.demoteStaleItems(sessionId)
-      const hotItems = this.workingMemory.getHotItems(sessionId)
-      if (hotItems.length > 0) {
-        const itemSummaries = hotItems.map(item => ({
-          title: item.bubbleId,
-          relevance: item.priorityScore,
-          pinned: item.pinned,
-        }))
-        const wmStatus = this.contextBudget.formatForSystemPrompt(sessionId, itemSummaries)
-        systemContent += `\n\n${wmStatus}`
-      }
-    }
-
-    if (toolDesc) systemContent += toolDesc
-
-    const systemMessage: LLMMessage = { role: 'system', content: systemContent }
-    const systemTokens = estimateTokens(systemContent) + 4
+    const systemMessage: LLMMessage = { role: 'system', content: promptResult.systemContent }
+    const systemTokens = estimateTokens(promptResult.systemContent) + 4
 
     // History gets whatever remains
     const historyBudget = maxPrompt - systemTokens - TOKEN_LIMITS.COMPLETION_RESERVE
@@ -303,29 +227,8 @@ export class Brain {
 
       const storedHistory = this.getHistory(userId)
 
-      // Self-critique: skip for external users (unnecessary overhead)
-      if (!isExt) {
-        const critique = await this.selfCritique(userInput, response)
-        if (critique) {
-          response = `${response}\n\n${critique}`
-        }
-      }
-
-      storedHistory.push({ role: 'assistant', content: response })
-
-      // Skip memory extraction for external users
-      if (!isExt && this.memory) {
-        this.memory.extractAndStore(userInput, response, ctx?.activeSpaceId).catch((err) => {
-          logger.debug('Memory extraction error:', err instanceof Error ? err.message : String(err))
-        })
-      }
-
-      // Query feedback loop: evaluate conversation for novel insights (async, non-blocking)
-      if (!isExt && this.insightEvaluator) {
-        this.insightEvaluator.evaluate(userInput, response, ctx?.activeSpaceId).catch((err) => {
-          logger.debug('Insight evaluation error:', err instanceof Error ? err.message : String(err))
-        })
-      }
+      // Post-process: self-critique, history, memory extraction, insight evaluation
+      response = await this.postProcessResponse(userInput, response, storedHistory, ctx, isExt)
 
       return { response, sources }
     } catch (err) {
@@ -381,6 +284,47 @@ export class Brain {
     } catch (err) {
       logger.debug(`Brain: compaction failed: ${err instanceof Error ? err.message : String(err)}`)
     }
+  }
+
+  /**
+   * Post-process a response: self-critique, persist to history, async memory extraction,
+   * and insight evaluation. Returns the (possibly modified) response text.
+   */
+  private async postProcessResponse(
+    userInput: string,
+    response: string,
+    storedHistory: LLMMessage[],
+    ctx?: UserContext,
+    isExt = false,
+  ): Promise<string> {
+    let finalResponse = response
+
+    // Self-critique (internal users only)
+    if (!isExt) {
+      const critique = await this.selfCritique(userInput, finalResponse)
+      if (critique) {
+        finalResponse = `${finalResponse}\n\n${critique}`
+      }
+    }
+
+    storedHistory.push({ role: 'assistant', content: finalResponse })
+
+    // Async post-processing — fire-and-forget, never blocks the response
+    const spaceId = ctx?.activeSpaceId
+
+    if (!isExt && this.memory) {
+      this.memory.extractAndStore(userInput, finalResponse, spaceId).catch((err) => {
+        logger.debug('Memory extraction error:', err instanceof Error ? err.message : String(err))
+      })
+    }
+
+    if (!isExt && this.insightEvaluator) {
+      this.insightEvaluator.evaluate(userInput, finalResponse, spaceId).catch((err) => {
+        logger.debug('Insight evaluation error:', err instanceof Error ? err.message : String(err))
+      })
+    }
+
+    return finalResponse
   }
 
   /** Run a self-critique pass on a response. Returns critique text or null if PASS. */

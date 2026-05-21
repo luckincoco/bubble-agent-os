@@ -157,7 +157,7 @@ export function getLedger(id: string): TaskLedger | null {
 export function getActiveLedger(spaceId: string, actorId: string): TaskLedger | null {
   const db = getDatabase()
   const row = db.prepare(
-    `SELECT * FROM task_ledgers WHERE space_id = ? AND actor_id = ? AND status = 'active' ORDER BY updated_at DESC LIMIT 1`
+    `SELECT * FROM task_ledgers WHERE space_id = ? AND actor_id = ? AND status = 'active' ORDER BY updated_at DESC, id DESC LIMIT 1`
   ).get(spaceId, actorId) as LedgerRow | undefined
   if (!row) return null
 

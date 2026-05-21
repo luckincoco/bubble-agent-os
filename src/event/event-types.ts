@@ -195,7 +195,19 @@ export interface ConversationTurnCompleted {
   payload: {
     insightCount: number
     hasInsight: boolean
+    insightScore: number
     responseLength: number
+    spaceId?: string
+  }
+}
+
+export interface KnowledgeEventGated {
+  type: 'knowledge.event.gated'
+  payload: {
+    sourceEvent: string
+    insightCount: number
+    insightScore: number
+    action: 'route' | 'discard' | 'defer'
     spaceId?: string
   }
 }
@@ -246,6 +258,7 @@ export type BubbleEventData =
   | ConversationResponseSent
   | ConversationExternalMessage
   | ConversationTurnCompleted
+  | KnowledgeEventGated
   | SystemSchedulerTaskCompleted
   | SystemGenesisEvent
 

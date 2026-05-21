@@ -96,10 +96,15 @@ export class ConversationInsightEvaluator {
       const result = await this.extractInsights(userInput, assistantResponse)
       if (!result.hasInsight || result.candidates.length === 0) return 0
 
+      const weightMap = { synthesis: 1.0, observation: 0.7, question: 0.5 } as const
+
       let stored = 0
+      let insightScore = 0
       for (const candidate of result.candidates.slice(0, MAX_CANDIDATES_PER_TURN)) {
         const isDup = await this.isDuplicate(candidate, spaceId)
         if (isDup) continue
+
+        insightScore += weightMap[candidate.sourceType] ?? 0.5
 
         const bubble = createBubble({
           type: candidate.sourceType === 'question' ? 'question' : candidate.sourceType === 'observation' ? 'observation' : 'synthesis',
@@ -117,12 +122,12 @@ export class ConversationInsightEvaluator {
       }
 
       if (stored > 0) {
-        logger.info(`ConversationInsight: ${stored} new insights from conversation`)
+        logger.info(`ConversationInsight: ${stored} new insights from conversation (score: ${insightScore.toFixed(1)})`)
         if (this.eventBus) {
           this.eventBus.emitFireAndForget(
             {
               type: 'conversation.turn.completed',
-              payload: { insightCount: stored, hasInsight: true, responseLength: assistantResponse.length, spaceId },
+              payload: { insightCount: stored, hasInsight: true, insightScore, responseLength: assistantResponse.length, spaceId },
             },
             { actor: 'system', spaceId, metadata: {} },
           )

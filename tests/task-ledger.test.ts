@@ -70,9 +70,10 @@ describe('TaskLedger — 创建与查询', () => {
     expect(ledger.planSteps[1].dependsOn).toEqual(['s1'])
   })
 
-  it('获取活跃 ledger 返回最近更新的那条', () => {
+  it('获取活跃 ledger 返回最近更新的那条', async () => {
     createLedger({ spaceId, actorId: userId, goal: '旧任务' })
-    // 短暂延时确保时间戳不同
+    // 确保时间戳不同（避免同毫秒碰撞）
+    await new Promise(r => setTimeout(r, 5))
     const newer = createLedger({ spaceId, actorId: userId, goal: '新任务' })
     const active = getActiveLedger(spaceId, userId)
     expect(active).not.toBeNull()

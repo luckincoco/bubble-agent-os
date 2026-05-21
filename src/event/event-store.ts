@@ -10,6 +10,9 @@ import { logger } from '../shared/logger.js'
 import type { BubbleEventData, EventType, StoredEvent, EventMetadata } from './event-types.js'
 import type { EventBus, EmitOptions } from './event-bus.js'
 
+/** Column aliases to map DB snake_case → TypeScript camelCase. */
+const EVENT_COLUMNS = 'id, type, timestamp, actor, space_id AS spaceId, payload, metadata, hash, prev_hash AS prevHash, version'
+
 export interface AppendEventInput {
   event: BubbleEventData
   actor: string
@@ -118,7 +121,7 @@ export class EventStore {
     const where = conditions.length > 0 ? `WHERE ${conditions.join(' AND ')}` : ''
     const limit = opts.limit ? `LIMIT ${opts.limit}` : ''
 
-    return db.prepare(`SELECT * FROM events ${where} ORDER BY timestamp DESC ${limit}`).all(...params) as StoredEvent[]
+    return db.prepare(`SELECT ${EVENT_COLUMNS} FROM events ${where} ORDER BY timestamp DESC ${limit}`).all(...params) as StoredEvent[]
   }
 
   /**
@@ -128,7 +131,7 @@ export class EventStore {
     const db = getDatabase()
     // ULID is time-ordered, so simple comparison works
     return db.prepare(
-      'SELECT * FROM events WHERE id > ? ORDER BY id ASC LIMIT ?'
+      `SELECT ${EVENT_COLUMNS} FROM events WHERE id > ? ORDER BY id ASC LIMIT ?`
     ).all(eventId, limit) as StoredEvent[]
   }
 
@@ -138,7 +141,7 @@ export class EventStore {
   getRecent(limit = 50): StoredEvent[] {
     const db = getDatabase()
     return db.prepare(
-      'SELECT * FROM events ORDER BY timestamp DESC LIMIT ?'
+      `SELECT ${EVENT_COLUMNS} FROM events ORDER BY timestamp DESC LIMIT ?`
     ).all(limit) as StoredEvent[]
   }
 
@@ -149,10 +152,11 @@ export class EventStore {
     const db = getDatabase()
     const limit = opts.limit || 1000
 
-    let query = 'SELECT * FROM events ORDER BY rowid ASC LIMIT ?'
+    const col = EVENT_COLUMNS
+    let query = `SELECT ${col} FROM events ORDER BY rowid ASC LIMIT ?`
     const params: unknown[] = [limit]
     if (opts.since) {
-      query = 'SELECT * FROM events WHERE id >= ? ORDER BY rowid ASC LIMIT ?'
+      query = `SELECT ${col} FROM events WHERE id >= ? ORDER BY rowid ASC LIMIT ?`
       params.unshift(opts.since)
     }
 

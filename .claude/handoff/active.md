@@ -1,83 +1,53 @@
-# Handoff: B-1 Phase 2 — EventGate 认知路由激活
+# Handoff: EventBus 单元测试
 
 ## Handoff-ID
-event-gate-phase2-20260521
+eventbus-tests-20260521
 
 ## 分支
-main (3e9aa7d, working tree clean)
+main (aa5e1f4, working tree clean)
 
 ## 状态
-✅ Build 通过（tsup 263ms + DTS 8.9s）
+✅ Build 通过（tsup + DTS）
 ✅ TypeScript 类型检查通过（tsc --noEmit 0 errors）
-✅ 测试通过（299 passed, 15/16 files, 1 api-smoke EPERM 是沙箱问题）
+✅ 测试通过（319 passed, 16/17 files, 1 api-smoke EPERM 是沙箱问题）
 
 ---
 
 ## 变更内容
 
-### 1. 事件类型扩展 — `src/event/event-types.ts`
+### `tests/event-bus.test.ts` — 新建，20 tests
 
-**`conversation.turn.completed` payload 增加 `insightScore`**：
-```
-insightCount, hasInsight, insightScore: number (新增), responseLength, spaceId?
-```
+覆盖 EventBus 全部 7 个公开方法：
 
-**新增 `knowledge.event.gated` 事件**（审计跟踪）：
-```typescript
-interface KnowledgeEventGated {
-  type: 'knowledge.event.gated'
-  payload: {
-    sourceEvent: string    // eg. 'conversation.turn.completed'
-    insightCount: number
-    insightScore: number
-    action: 'route' | 'discard' | 'defer'
-    spaceId?: string
-  }
-}
-```
-已加入 `BubbleEventData` 联合类型。
+| describe | tests | 覆盖内容 |
+|----------|-------|---------|
+| on / emit | 4 | 基本订阅、EmitOptions 透传、多监听器、未订阅不触发 |
+| unsubscribe | 2 | 取消后不收到、重复取消不报错 |
+| 数组类型订阅 | 2 | 一次订阅多个类型、取消移除所有 |
+| onPrefix 通配符 | 3 | `memory` 匹配、`biz` 不匹配、取消订阅 |
+| onAll 全局监听 | 3 | 收所有类型、取消停止、类型+全局都收到 |
+| 错误隔离 | 1 | 一个抛错不影响其他 |
+| listenerCount | 2 | 类型/全局计数、取消后减少 |
+| clear | 1 | 全部清除、计数归零 |
+| emitFireAndForget | 2 | 异步调用不阻塞、错误被捕获 |
 
-### 2. Evaluator 计算 insightScore — `src/memory/conversation-insight-evaluator.ts`
-
-按 sourceType 加权聚合：
-- `synthesis` = 1.0（综合洞察，最高价值）
-- `observation` = 0.7（观察发现）
-- `question` = 0.5（问题/疑问）
-
-在 emit `conversation.turn.completed` 时传入 insightScore。
-
-### 3. EventGate 路由激活 — `src/cognition/event-gate.ts`
-
-Phase 1 空壳（仅日志）→ Phase 2 激活：
-
-| insightScore | 行为 |
-|-------------|------|
-| 0 | skip（不处理） |
-| < 2.0 | defer（低价值，仅审计日志） |
-| >= 2.0 | route（高价值，info 日志 + 路由标记） |
-
-始终发射 `knowledge.event.gated` 审计事件。
-
-### 4. 新增测试文件
-
-| 文件 | 测试数 | 覆盖内容 |
-|------|--------|---------|
-| `tests/event-gate.test.ts` | 4 tests | 低分 defer、高分 route、count=0 跳过、边界值 2.0 恰过 |
-| `tests/conversation-insight-evaluator.test.ts` | 3 tests | 短回复跳过、无 insight=0、3 候选正确计算 score |
+设计特点：
+- 纯逻辑，0 DB 依赖
+- 遵循 `event-gate.test.ts` 的 `vi.waitFor` 异步模式
+- 使用 `collectEmitted` 辅助函数统一事件捕获
 
 ---
 
 ## 部署步骤
 
-1. `rsync -avz --delete -e "ssh -p 22622" src/ root@101.34.243.245:/opt/bubble-agent-os/src/`
-2. `rsync -avz --delete -e "ssh -p 22622" tests/ root@101.34.243.245:/opt/bubble-agent-os/tests/`
-3. `ssh -p 22622 root@101.34.243.245 "cd /opt/bubble-agent-os && pnpm build && pm2 restart bubble"`
+1. `rsync -avz --delete -e "ssh -p 22622" tests/ root@101.34.243.245:/opt/bubble-agent-os/tests/`
+2. `ssh -p 22622 root@101.34.243.245 "cd /opt/bubble-agent-os && pnpm test"`（跳过 api-smoke）
 
-## 约束
-- 重启 bubble only (id=0)，not bobi (id=1) ✅
-- 无需 pnpm install（无 package.json 变更）✅
-- 无需数据库迁移（无 schema 变更）✅
+无需重启 bubble（仅测试文件变更，无 src/ 修改）。
 
 ## 验证方式
-1. 健康检查：`curl -s http://localhost:3000/api/health` → `{"status":"ok","version":"1.1.1"}`
-2. 服务器测试：`cd /opt/bubble-agent-os && pnpm test`（跳过 api-smoke）
+```bash
+pnpm build       # 通过
+pnpm tsc --noEmit # 通过
+pnpm test         # 319 passed, 16/17 files
+```

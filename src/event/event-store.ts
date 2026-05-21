@@ -129,9 +129,10 @@ export class EventStore {
    */
   getEventsSince(eventId: string, limit = 100): StoredEvent[] {
     const db = getDatabase()
-    // ULID is time-ordered, so simple comparison works
+    // Use rowid (monotonically increasing) for ordering — ULID string comparison is unreliable
+    // for events created in the same millisecond (random suffix may not sort lexicographically)
     return db.prepare(
-      `SELECT ${EVENT_COLUMNS} FROM events WHERE id > ? ORDER BY id ASC LIMIT ?`
+      `SELECT ${EVENT_COLUMNS} FROM events WHERE rowid > (SELECT rowid FROM events WHERE id = ?) ORDER BY rowid ASC LIMIT ?`
     ).all(eventId, limit) as StoredEvent[]
   }
 

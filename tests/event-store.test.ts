@@ -106,11 +106,9 @@ describe('EventStore — 查询', () => {
     expect(results.length).toBe(1)
   })
 
-  it('getEventsSince 返回指定 ID 之后的事件', async () => {
+  it('getEventsSince 返回指定 ID 之后的事件', () => {
     const store = new EventStore()
     const e1 = store.append({ event: testEvent, actor: 'tester' })
-    // 5ms delay ensures ULID timestamp ordering (same-millisecond ULID random suffix may not sort lexicographically)
-    await new Promise(r => setTimeout(r, 5))
     store.append({ event: anotherEvent, actor: 'tester' })
     const results = store.getEventsSince(e1.id)
     expect(results.length).toBe(1)

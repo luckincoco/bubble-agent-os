@@ -8,8 +8,8 @@ import { MemoryManager } from './memory/manager.js'
 import { SemanticBridge } from './memory/semantic-bridge.js'
 import { SurpriseDetector } from './memory/surprise-detector.js'
 import { ConversationInsightEvaluator } from './memory/conversation-insight-evaluator.js'
-import { AssertionIdentifier } from './memory/assertion-identifier.js'
 import { ObservationRecorder } from './memory/observation-recorder.js'
+import { AssertionIdentifier } from './memory/assertion-identifier.js'
 import { ToolRegistry } from './connector/registry.js'
 import { createWeatherTool } from './connector/tools/weather.js'
 import { createTimeTool } from './connector/tools/time.js'
@@ -126,7 +126,8 @@ async function main() {
   brain.setMemory(memory)
   brain.setTools(tools)
   brain.setInsightEvaluator(new ConversationInsightEvaluator(llmRouter.forCategory('memory')))
-  brain.setObservationRecorder(new ObservationRecorder())
+  const observationRecorder = new ObservationRecorder()
+  brain.setObservationRecorder(observationRecorder)
 
   if (config.features.assertionIdentification) {
     brain.setAssertionIdentifier(new AssertionIdentifier(llmRouter.forCategory('memory')))
@@ -162,6 +163,17 @@ async function main() {
 
     // Wire up ActionFeedback listeners for the State-Action loop
     registerActionFeedbackListeners(eventBus)
+
+    // Bridge action.step.completed → ObservationRecorder for auto-capture
+    eventBus.on('action.step.completed', (event) => {
+      const p = (event as import('./event/event-types.js').ActionStepCompleted).payload
+      observationRecorder.record({
+        action: `plan_step:${p.stepId}`,
+        args: { goal: p.goal, description: p.description },
+        result: p.success ? p.output : `FAILED: ${p.output}`,
+        spaceId: p.spaceId,
+      })
+    })
     logger.info('Module: ActionFeedback wiring enabled')
   }
 

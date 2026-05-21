@@ -17,6 +17,7 @@
  */
 
 import type { EventBus } from '../event/event-bus.js'
+import type { ActionStepCompleted, ActionPlanFinished, KnowledgeTensionDetected } from '../event/event-types.js'
 import { logger } from '../shared/logger.js'
 
 // ── PlanStep / StepResult interface stubs ─────────────────────────
@@ -148,9 +149,9 @@ export function registerActionFeedbackListeners(
 
   // Listener 1: step completed → log (observation side handled by the emit source)
   const unsub1 = eventBus.on('action.step.completed', async (event) => {
-    const { goal, description, success } = event.payload
-    if (success) {
-      logger.debug(`ActionFeedback: step completed — "${description}" (goal: ${goal.slice(0, 40)})`)
+    const payload = (event as ActionStepCompleted).payload
+    if (payload.success) {
+      logger.debug(`ActionFeedback: step completed — "${payload.description}" (goal: ${payload.goal.slice(0, 40)})`)
     }
   })
   unsubscribers.push(unsub1)
@@ -158,28 +159,28 @@ export function registerActionFeedbackListeners(
   // Listener 2: plan finished → log completion signal
   // Reflector will pick up related observations on its next validate cycle
   const unsub2 = eventBus.on('action.plan.finished', async (event) => {
-    const { goal, status, completedSteps, totalSteps } = event.payload
-    if (status === 'completed') {
-      logger.info(`ActionFeedback: plan completed — "${goal}" (${completedSteps}/${totalSteps})`)
+    const payload = (event as ActionPlanFinished).payload
+    if (payload.status === 'completed') {
+      logger.info(`ActionFeedback: plan completed — "${payload.goal}" (${payload.completedSteps}/${payload.totalSteps})`)
     }
   })
   unsubscribers.push(unsub2)
 
   // Listener 3: tension detected → log (Phase B will add plan generation here)
   const unsub3 = eventBus.on('knowledge.tension.detected', async (event) => {
-    const { spaceId, tensionCount, highPriorityTensions, frontierGaps } = event.payload
+    const payload = (event as KnowledgeTensionDetected).payload
 
-    const significantTensions = highPriorityTensions.length >= minTension
-    const significantGaps = frontierGaps.some(g => g.gapScore >= minGap)
+    const significantTensions = payload.highPriorityTensions.length >= minTension
+    const significantGaps = payload.frontierGaps.some(g => g.gapScore >= minGap)
 
     if (!significantTensions && !significantGaps) {
-      logger.debug(`ActionFeedback: tensions below threshold in ${spaceId}, skipping`)
+      logger.debug(`ActionFeedback: tensions below threshold in ${payload.spaceId}, skipping`)
       return
     }
 
     logger.info(
-      `ActionFeedback: ${tensionCount} tensions detected in ${spaceId}` +
-        (significantTensions ? ` (${highPriorityTensions.length} high-priority)` : '') +
+      `ActionFeedback: ${payload.tensionCount} tensions detected in ${payload.spaceId}` +
+        (significantTensions ? ` (${payload.highPriorityTensions.length} high-priority)` : '') +
         (significantGaps ? ' + frontier gaps' : ''),
     )
 

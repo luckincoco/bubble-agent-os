@@ -24,7 +24,9 @@ beforeAll(() => {
   initDatabase(tmpDir, 'test-password-123')
 })
 
-beforeEach(() => {
+beforeEach(async () => {
+  // 等待上一个测试的异步操作（如 emitFireAndForget）落地，再清空
+  await new Promise(r => setTimeout(r, 20))
   // 每个测试前清空 events 表，避免跨测试状态污染
   const db = getDatabase()
   db.prepare('DELETE FROM events').run()

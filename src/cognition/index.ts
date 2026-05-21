@@ -21,3 +21,5 @@ export type { CandidatePair, ForgedConcept } from './concept-forge.js'
 
 export { ObsidianIngest } from './obsidian-ingest.js'
 export type { IngestResult } from './obsidian-ingest.js'
+
+export { EventGate } from './event-gate.js'

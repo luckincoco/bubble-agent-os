@@ -190,6 +190,16 @@ export interface ConversationExternalMessage {
   payload: { episodeId: string; platform: string; counterpartyId: string; actorId: string }
 }
 
+export interface ConversationTurnCompleted {
+  type: 'conversation.turn.completed'
+  payload: {
+    insightCount: number
+    hasInsight: boolean
+    responseLength: number
+    spaceId?: string
+  }
+}
+
 // ── System Events ───────────────────────────────────────────────
 
 export interface SystemSchedulerTaskCompleted {
@@ -235,6 +245,7 @@ export type BubbleEventData =
   | ConversationEpisodeCreated
   | ConversationResponseSent
   | ConversationExternalMessage
+  | ConversationTurnCompleted
   | SystemSchedulerTaskCompleted
   | SystemGenesisEvent
 

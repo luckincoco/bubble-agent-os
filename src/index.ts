@@ -55,6 +55,8 @@ import { ObsidianIngest } from './cognition/obsidian-ingest.js'
 import { initObservability, type ObservabilityModule } from './observability/index.js'
 // v1.1: Resonance Layer — activation path recording + anti-double-emit + signal detection
 import { ResonanceIntegration, MetricsCollector, ensureMetricsTables } from './memory/resonance/index.js'
+// v1.1.1: Event Gate — conversation → cognition bridge
+import { EventGate } from './cognition/event-gate.js'
 
 async function main() {
   const config = getConfig()
@@ -125,7 +127,8 @@ async function main() {
   const brain = new Brain(llmRouter.forCategory('chat'))
   brain.setMemory(memory)
   brain.setTools(tools)
-  brain.setInsightEvaluator(new ConversationInsightEvaluator(llmRouter.forCategory('memory')))
+  const insightEvaluator = new ConversationInsightEvaluator(llmRouter.forCategory('memory'))
+  brain.setInsightEvaluator(insightEvaluator)
   const observationRecorder = new ObservationRecorder()
   brain.setObservationRecorder(observationRecorder)
 
@@ -160,6 +163,9 @@ async function main() {
     materializer.subscribeTo(eventBus)
 
     logger.info(`Module: EventSourcing enabled (${eventStore.count()} events in log)`)
+
+    // Wire up insight evaluator to EventBus for conversation.turn.completed events
+    insightEvaluator.setEventBus(eventBus)
 
     // Wire up ActionFeedback listeners for the State-Action loop
     registerActionFeedbackListeners(eventBus)
@@ -234,6 +240,12 @@ async function main() {
     logger.info('Module: ConceptForge enabled')
   }
 
+  // v1.1.1: Event Gate — conversation → cognition bridge
+  if (eventBus && config.features.cognitionOrientation) {
+    const eventGate = new EventGate(eventBus, { orientationGraph })
+    logger.info('Module: EventGate enabled')
+  }
+
   // Obsidian Ingest — safe read-only ingestion from whitelisted directory
   const obsidianIngestDir = resolve(config.storage.dataDir, '..', 'obsidian-ingest')
   const obsidianIngest = new ObsidianIngest(obsidianIngestDir)
@@ -259,7 +271,7 @@ async function main() {
   const skillsDir = resolve(config.storage.dataDir, '..', 'skills')
   const skillLoader = new SkillLoader(skillsDir)
   const skillRouter = new SkillRouter(skillLoader, bizHandler, teachHandler)
-  const router = new MessageRouter({ brain, tools, surpriseDetector, bizHandler, skillRouter, eventBus })
+  const router = new MessageRouter({ brain, tools, surpriseDetector, bizHandler, skillRouter, eventBus, llmProvider: llm })
   logger.info('Module: SkillRouter + MessageRouter enabled')
 
   // Start Feishu connector if configured (lifted to outer scope for scheduler access)

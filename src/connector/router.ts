@@ -4,12 +4,16 @@ import type { SurpriseDetector } from '../memory/surprise-detector.js'
 import type { BizEntryHandler } from './biz/handler.js'
 import type { SkillRouter as SkillRouterType } from './skills/skill-router.js'
 import type { EventBus } from '../event/event-bus.js'
-import type { UserContext, ThinkResult } from '../shared/types.js'
+import type { UserContext, ThinkResult, LLMProvider } from '../shared/types.js'
 import { isExternalContext } from '../shared/types.js'
 import { createEpisode, type EpisodeSource } from '../temporal/episode-store.js'
-import { getActiveLedger, buildLedgerContext, detectResumption, updateEpisodeWindow } from '../temporal/task-ledger.js'
+import { getActiveLedger, buildLedgerContext, detectResumption, updateEpisodeWindow, setPendingAction } from '../temporal/task-ledger.js'
 import { findRecentBySource, getBubble, updateBubble } from '../bubble/model.js'
 import { logger } from '../shared/logger.js'
+import { shouldUsePlanMode, generatePlan, startPlan } from '../workflow/planner.js'
+import type { ExecutionPlan } from '../workflow/planner.js'
+import { executePlan, formatExecutorReport } from '../workflow/executor.js'
+import { createStepObserver, emitPlanFinished } from '../wiring/action-feedback.js'
 
 /**
  * MessageRouter — Layer 0 (Reflex) + Layer 1 (Deliberation) unified entry point.
@@ -68,6 +72,7 @@ export class MessageRouter {
   private bizHandler: BizEntryHandler | null
   private skillRouter: SkillRouterType | null
   private eventBus: EventBus | null
+  private llmProvider: LLMProvider | null
 
   constructor(deps: {
     brain: Brain
@@ -76,6 +81,7 @@ export class MessageRouter {
     bizHandler?: BizEntryHandler
     skillRouter?: SkillRouterType
     eventBus?: EventBus
+    llmProvider?: LLMProvider
   }) {
     this.brain = deps.brain
     this.tools = deps.tools ?? null
@@ -83,6 +89,7 @@ export class MessageRouter {
     this.bizHandler = deps.bizHandler ?? null
     this.skillRouter = deps.skillRouter ?? null
     this.eventBus = deps.eventBus ?? null
+    this.llmProvider = deps.llmProvider ?? null
   }
 
   /**
@@ -154,6 +161,64 @@ export class MessageRouter {
         }
       } catch (err) {
         logger.debug('Router: TaskLedger lookup failed:', err instanceof Error ? err.message : String(err))
+      }
+    }
+
+    // ── Plan Mode: user confirms pending plan → execute ──────────
+    if (ctx && !isExternalContext(ctx) && this.tools && this.llmProvider && this.eventBus) {
+      const pendingLedger = getActiveLedger(ctx.activeSpaceId, ctx.userId)
+      if (pendingLedger?.pendingAction?.requiresConfirmation && /^(好|嗯|行|可|ok|OK|yes|Yes|搞)$|^确认|^确定|^开始|^可以|^是的|^好的|^嗯嗯|^好啊|^行啊|^可以啊|^没问题|^来吧/.test(text.trim())) {
+        logger.info(`Router: user confirmed plan "${pendingLedger.goal}", starting execution`)
+        const stepObserver = createStepObserver(this.eventBus, pendingLedger.id, pendingLedger.goal, ctx.activeSpaceId)
+        const plan: ExecutionPlan = {
+          goal: pendingLedger.goal,
+          steps: pendingLedger.planSteps,
+          execution: 'sequential',
+        }
+        const result = await executePlan({
+          ledgerId: pendingLedger.id,
+          plan,
+          tools: this.tools,
+          llm: this.llmProvider,
+          ctx,
+          onStepComplete: stepObserver.onStepComplete,
+        })
+        emitPlanFinished(this.eventBus, pendingLedger.id, pendingLedger.goal,
+          result.completed ? 'completed' : 'paused',
+          result.stepsExecuted, plan.steps.length, ctx.activeSpaceId)
+        return {
+          response: formatExecutorReport(result, plan),
+          sources: [],
+        }
+      }
+    }
+
+    // ── Plan Mode: detect multi-step requests → generate plan → ask confirmation ──
+    if (ctx && !isExternalContext(ctx) && this.llmProvider && shouldUsePlanMode(text)) {
+      try {
+        const plan = await generatePlan(text, this.llmProvider)
+        const { ledgerId } = await startPlan(plan, ctx)
+        const stepsSummary = plan.steps.map((s, i) => `  ${i + 1}. ${s.description}`).join('\n')
+        logger.info(`Router: generated plan for "${plan.goal}" (${plan.steps.length} steps), awaiting confirmation`)
+        setPendingAction(ledgerId, {
+          stepId: '__confirm_plan__',
+          description: '执行完整计划',
+          requiresConfirmation: true,
+          createdAt: Date.now(),
+        })
+        if (this.eventBus) {
+          this.eventBus.emitFireAndForget(
+            { type: 'conversation.response.sent', payload: { episodeId: episodeId!, toolsUsed: [], tokenUsage: undefined } },
+            { actor: 'system', spaceId: ctx.activeSpaceId, metadata: { episodeId } },
+          )
+        }
+        return {
+          response: `我计划分 ${plan.steps.length} 步完成：\n${stepsSummary}\n\n确认开始吗？`,
+          sources: [],
+        }
+      } catch (err) {
+        logger.error('Router: plan generation failed, falling through to brain.think()')
+        // Fall through to brain.think()
       }
     }
 

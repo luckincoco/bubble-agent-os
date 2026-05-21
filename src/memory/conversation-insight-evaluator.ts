@@ -13,6 +13,7 @@
 import type { LLMProvider, LLMMessage } from '../shared/types.js'
 import { createBubble, searchBubbles } from '../bubble/model.js'
 import { addLink } from '../bubble/links.js'
+import type { EventBus } from '../event/event-bus.js'
 import { logger } from '../shared/logger.js'
 
 // ── Types ──────────────────────────────────────────────────────
@@ -66,9 +67,14 @@ candidates最多${MAX_CANDIDATES_PER_TURN}条。如果没有洞察，candidates�
 
 export class ConversationInsightEvaluator {
   private llm: LLMProvider
+  private eventBus: EventBus | null = null
 
   constructor(llm: LLMProvider) {
     this.llm = llm
+  }
+
+  setEventBus(bus: EventBus): void {
+    this.eventBus = bus
   }
 
   /**
@@ -112,6 +118,15 @@ export class ConversationInsightEvaluator {
 
       if (stored > 0) {
         logger.info(`ConversationInsight: ${stored} new insights from conversation`)
+        if (this.eventBus) {
+          this.eventBus.emitFireAndForget(
+            {
+              type: 'conversation.turn.completed',
+              payload: { insightCount: stored, hasInsight: true, responseLength: assistantResponse.length, spaceId },
+            },
+            { actor: 'system', spaceId, metadata: {} },
+          )
+        }
       }
       return stored
     } catch (err) {

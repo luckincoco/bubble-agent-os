@@ -43,6 +43,8 @@ import { EventStore } from './event/event-store.js'
 import { Materializer } from './event/materializer.js'
 import { WorkingMemory } from './memory/working-memory.js'
 import { ContextBudget } from './memory/context-budget.js'
+// v0.8.x: ActionFeedback wiring — closes the State-Action loop
+import { registerActionFeedbackListeners } from './wiring/action-feedback.js'
 // v0.8.0: Cognitive Evolution Layer
 import { OrientationGraph } from './cognition/orientation-graph.js'
 import { CausalEvaluator } from './cognition/causal-evaluator.js'
@@ -157,6 +159,10 @@ async function main() {
     materializer.subscribeTo(eventBus)
 
     logger.info(`Module: EventSourcing enabled (${eventStore.count()} events in log)`)
+
+    // Wire up ActionFeedback listeners for the State-Action loop
+    registerActionFeedbackListeners(eventBus)
+    logger.info('Module: ActionFeedback wiring enabled')
   }
 
   if (config.features.workingMemory) {

@@ -11,6 +11,12 @@ import type { OrientationNode, OrientationSnapshot } from '../../cognition/orien
  *
  * The wiki replaces cold-start exploration with a pre-compiled cognitive
  * context document, reducing per-session token usage by ~90%.
+ *
+ * One LLM call per space (~2K tokens) to classify domains and identify tensions.
+ * Feeds into interest-search for intelligent search guidance.
+ *
+ * Also emits knowledge.tension.detected for the ActionFeedback wiring,
+ * closing the loop between state perception and plan generation.
  */
 export async function executeOrientationSnapshot(
   _params: Record<string, unknown>,
@@ -29,6 +35,7 @@ export async function executeOrientationSnapshot(
   let totalFrontiers = 0
   let totalTensions = 0
   const allSnapshots: OrientationSnapshot[] = []
+  const allTensions: Array<{ spaceId: string; domainA: string; domainB: string; reason: string }> = []
 
   for (const row of spaceRows) {
     try {
@@ -37,6 +44,18 @@ export async function executeOrientationSnapshot(
       totalFrontiers += snapshot.frontiers.length
       totalTensions += snapshot.tensions.length
       allSnapshots.push(snapshot)
+
+      // Collect tension details for event emission
+      for (const t of snapshot.tensions) {
+        const nodeA = snapshot.nodes.find(n => n.observationId === t.a)
+        const nodeB = snapshot.nodes.find(n => n.observationId === t.b)
+        allTensions.push({
+          spaceId: row.space_id,
+          domainA: nodeA?.domain || t.a,
+          domainB: nodeB?.domain || t.b,
+          reason: t.reason,
+        })
+      }
     } catch (err) {
       logger.error(`OrientationSnapshot failed for space ${row.space_id}:`, err instanceof Error ? err.message : String(err))
     }
@@ -49,6 +68,17 @@ export async function executeOrientationSnapshot(
     totalFrontiers += snapshot.frontiers.length
     totalTensions += snapshot.tensions.length
     allSnapshots.push(snapshot)
+
+    for (const t of snapshot.tensions) {
+      const nodeA = snapshot.nodes.find(n => n.observationId === t.a)
+      const nodeB = snapshot.nodes.find(n => n.observationId === t.b)
+      allTensions.push({
+        spaceId: 'default',
+        domainA: nodeA?.domain || t.a,
+        domainB: nodeB?.domain || t.b,
+        reason: t.reason,
+      })
+    }
   } catch (err) {
     logger.debug(`OrientationSnapshot default space: ${err instanceof Error ? err.message : String(err)}`)
   }
@@ -78,6 +108,37 @@ export async function executeOrientationSnapshot(
       })
     }
     logger.info('OrientationSnapshot: cognitive wiki updated')
+  }
+
+  // Emit knowledge.tension.detected if significant tensions found
+  if (deps.eventBus && totalTensions > 0) {
+    // Group tensions by space for per-space events
+    const bySpace = new Map<string, typeof allTensions>()
+    for (const t of allTensions) {
+      const list = bySpace.get(t.spaceId) || []
+      list.push(t)
+      bySpace.set(t.spaceId, list)
+    }
+
+    for (const [spaceId, tensions] of bySpace) {
+      deps.eventBus.emitFireAndForget(
+        {
+          type: 'knowledge.tension.detected',
+          payload: {
+            spaceId,
+            tensionCount: tensions.length,
+            highPriorityTensions: tensions.slice(0, 5).map(t => ({
+              domainA: t.domainA,
+              domainB: t.domainB,
+              reason: t.reason,
+            })),
+            frontierGaps: [],
+          },
+        },
+        { actor: 'system', spaceId },
+      )
+      logger.debug(`OrientationSnapshot: emitted tension event for space ${spaceId} (${tensions.length} tensions)`)
+    }
   }
 
   const message = `认知快照: ${totalNodes} 节点, ${totalFrontiers} 前沿, ${totalTensions} 张力, wiki已更新`

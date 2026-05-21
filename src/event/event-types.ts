@@ -129,6 +129,50 @@ export interface KnowledgeObsidianIngested {
   payload: { created: number; updated: number; staled: number; skipped: number; denied: number }
 }
 
+export interface KnowledgeTensionDetected {
+  type: 'knowledge.tension.detected'
+  payload: {
+    spaceId: string
+    tensionCount: number
+    highPriorityTensions: Array<{
+      domainA: string
+      domainB: string
+      reason: string
+    }>
+    frontierGaps: Array<{
+      domain: string
+      gapScore: number
+    }>
+  }
+}
+
+// ── Action / Plan Events ─────────────────────────────────────────
+
+export interface ActionStepCompleted {
+  type: 'action.step.completed'
+  payload: {
+    ledgerId: string
+    stepId: string
+    goal: string
+    description: string
+    success: boolean
+    output: string
+    spaceId?: string
+  }
+}
+
+export interface ActionPlanFinished {
+  type: 'action.plan.finished'
+  payload: {
+    ledgerId: string
+    goal: string
+    status: 'completed' | 'cancelled' | 'paused'
+    completedSteps: number
+    totalSteps: number
+    spaceId?: string
+  }
+}
+
 // ── Conversation Events ─────────────────────────────────────────
 
 export interface ConversationEpisodeCreated {
@@ -185,6 +229,9 @@ export type BubbleEventData =
   | KnowledgeFeedbackApplied
   | KnowledgeConceptForged
   | KnowledgeObsidianIngested
+  | KnowledgeTensionDetected
+  | ActionStepCompleted
+  | ActionPlanFinished
   | ConversationEpisodeCreated
   | ConversationResponseSent
   | ConversationExternalMessage

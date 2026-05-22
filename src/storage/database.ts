@@ -1165,7 +1165,7 @@ function seedData(database: Database.Database, defaultPassword: string) {
   logger.info(`Seed: 1 space, 1 admin user created. ${migrated.changes} bubbles migrated`)
 }
 
-export function initDatabase(dataDir: string, defaultPassword = process.env.DEFAULT_PASSWORD || 'bubble123'): Database.Database {
+export function initDatabase(dataDir: string, defaultPassword = process.env.DEFAULT_PASSWORD || 'changeme'): Database.Database {
   if (db) return db
 
   if (!existsSync(dataDir)) {

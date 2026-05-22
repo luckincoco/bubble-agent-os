@@ -87,15 +87,100 @@ handoff 目录: .claude/handoff/
 - 精确执行命令（绝对路径，不用相对路径）
 - 约束项（哪个进程不能重启、是否需要 pnpm install 等）
 
+### active.md rsync 命令注意
+
+rsync 命令**必须**包含 `-e "ssh -p $SSH_PORT"`（服务器 SSH 端口非默认 22），且 web/ 目录同步应加 `--delete` 以清理服务器端已删除的文件。正确模板：
+
+```bash
+rsync -avz --delete -e "ssh -p $SSH_PORT" --exclude='node_modules' --exclude='.env' --exclude='.git' --exclude='dist' --exclude='.claude' web/ $DEPLOY_USER@$DEPLOY_HOST:/opt/bubble-agent-os/web/
+```
+
+### result.md 编写规范
+
+result.md 由 **Qoder 执行后写入**，Claude 不要预写执行结果。Claude 只需在 result.md 中填写自己能验证的部分：
+
+**Claude 应写的：**
+- 变更内容（与 active.md 一致）
+- 本地 build + test 结果（Claude 自己跑的）
+- 架构决策和技术说明
+- 代码审查发现
+
+**Claude 不应写的（Qoder 的职责）：**
+- 服务器端 build 时间、远程测试数字 — Qoder 会用实际执行数据覆盖
+- PM2 状态、健康检查结果 — Qoder 执行后才知道
+- 任何未经验证的"✅" — 如果 Claude 没有跑过服务器命令，不要声称它通过
+
+**为什么这样做：** 此前每个 handoff 都出现 Claude 预写的数字与实际执行不符（build 时间偏差、测试计数过时），Qoder 每次都要纠正。让 Claude 只写自己验证过的内容，Qoder 补充部署结果，避免信息污染。
+
+**关于测试覆盖的价值评估：** result.md 中涉及测试覆盖时，除了报告数量（X tests / Y files），还应评估测试的实际保护范围。纯 mock 单元测试和真实 DB 集成测试提供的信心等级不同，不应等同呈现。
+
 ### 版本归档
 
 项目**不走 GitHub PR 工作流**，版本演化归档到 Obsidian `30-Evolution/` 目录。
+
+## Web 端（`web/` 目录）
+
+### 技术栈
+
+| 层 | 选型 |
+|----|------|
+| 框架 | React 19 + Vite |
+| 语言 | TypeScript（严格模式，与后端一致） |
+| 样式 | **CSS Modules**（不引入 Tailwind / shadcn/ui，现有 variables.css token 体系已够用） |
+| 状态管理 | Zustand |
+| API 通信 | `fetch` + WebSocket（对话流式输出） |
+
+### 目录约定
+
+```
+web/
+  src/
+    components/
+      layout/       # AppShell、Header、Sidebar 等布局组件
+      chat/         # 对话流主区域（ConversationView、MessageBubble、InputBar）
+      sidebar/      # 认知状态面板（CognitiveSidebar）
+      auth/         # 登录页
+      settings/     # 设置面板
+    stores/         # Zustand stores
+    hooks/          # 自定义 hooks
+    services/       # API client、WebSocket 管理器
+    types/          # 前端类型定义
+    styles/         # 全局样式（reset.css、variables.css、animations.css）
+  index.html
+  vite.config.ts
+```
+
+### 设计规范（Claude 写 UI 必须遵守）
+
+1. **深色优先** — 默认深色主题，CSS Variables（`variables.css`）定义设计 token，不硬编码
+2. **认知层标签** — Bubble 回复可携带 `cognitionLayer`，但**默认隐藏**，用户在设置中开启后显示（蓝/紫/绿 10px 标签）
+3. **活跃记忆列表** — 左面板记忆用纯文字列表展示（标题 + 模糊时间），**无置信度条、无百分比、无卡片容器**
+4. **压实通知** — 对话流中插入纯文字 inline 通知（`── 记忆已更新：xxx ──`），禁止弹窗
+5. **左侧面板角色** — 展示 Bubble 的认知状态（非工具箱），Space 切换器固定顶部，其余元素纯展示不可点击
+6. **输入区** — 仅 textarea + 发送按钮，无快捷标签、无 OCR 按钮
+7. **状态指示器** — 仅 3 种：○ 空闲 / ● 思考中 / ● 回复完成，不细分更多状态
+
+### 构建命令
+
+```bash
+pnpm --filter bubble-web dev        # 启动前端开发服务器（默认 5173）
+pnpm --filter bubble-web build      # 构建前端（输出到 web/dist/）
+pnpm build:all               # 后端 + 前端一起构建
+```
+
+### API 对接约定
+
+- 后端 base URL：`http://localhost:3000/api`（开发，Vite proxy 自动转发）
+- 对话接口：`POST /api/chat`（当前走 WebSocket，未来可 SSE）
+- Bubble 列表：`GET /api/bubbles?spaceId=xxx`
+- 工具调用记录：`GET /api/tools/history?spaceId=xxx`
+- **spaceId 必须透传**，每个请求都带，不可遗漏
 
 ## 部署配置（只读，不修改）
 
 | 项目 | 值 |
 |------|----|
-| SSH | `ssh -p 22622 root@101.34.243.245` |
+| SSH | `ssh -p $SSH_PORT $DEPLOY_USER@$DEPLOY_HOST` |
 | 项目路径（服务器） | `/opt/bubble-agent-os/` |
 | 健康检查 | `http://localhost:3000/api/health` |
 | PM2 进程 | `bubble` (id=0)，`bobi` (id=1) 不动 |

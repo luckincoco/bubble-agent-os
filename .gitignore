@@ -33,3 +33,9 @@ Thumbs.db
 # Test fixtures (recorded LLM responses - may contain sensitive data)
 # Keep tracked intentionally for reproducible tests, but review before committing
 # tests/fixtures/
+
+# Claude Code worktree & handoff (contains credentials)
+.claude/
+
+# pnpm store (build artifacts)
+.pnpm-store/

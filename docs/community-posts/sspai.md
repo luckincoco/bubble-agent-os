@@ -58,7 +58,7 @@ pnpm install
 cp .env.example .env  # 填入 DeepSeek API Key（或用 Ollama 完全本地）
 pnpm build:all
 pnpm start --serve
-# 打开 http://localhost:3000，默认账号 bobi / bubble123
+# 打开 http://localhost:3000，默认账号 bobi / changeme（通过 .env 配置）
 ```
 
 整个项目只依赖 Node.js 和 SQLite，不需要 Docker、不需要 Postgres、不需要 Redis。一个端口搞定 API + WebSocket + 前端。

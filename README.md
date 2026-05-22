@@ -235,9 +235,9 @@ pnpm build:all
 pnpm start --serve
 ```
 
-Open http://localhost:3000 in your browser. Default login: `bobi` / `bubble123`
+Open http://localhost:3000 in your browser. Default login: `bobi` / `changeme` (set via DEFAULT_PASSWORD in .env)
 
-打开 http://localhost:3000，默认账号：`bobi` / `bubble123`
+打开 http://localhost:3000，默认账号：`bobi` / `changeme`（通过 .env 中的 DEFAULT_PASSWORD 配置）
 
 ### Development / 开发
 

@@ -8,7 +8,7 @@ const __dirname = dirname(fileURLToPath(import.meta.url))
 
 export function registerForgeRoutes(app: FastifyInstance, deps: RouteDeps) {
   const { requireAdmin, modules } = deps
-  const forgeProjectRoot = resolve(__dirname, '..', '..', '..')
+  const forgeProjectRoot = resolve(__dirname, '..')
   const forgeLoader = new DynamicLoader(forgeProjectRoot)
 
   app.post('/api/forge/generate', async (req: FastifyRequest, reply: FastifyReply) => {

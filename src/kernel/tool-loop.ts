@@ -96,14 +96,14 @@ export async function runToolLoop(
             tools.execute(call.name, call.args, ctx),
             timeoutMs,
           )
-          const durationMs = Date.now() - stepStart
+          const durationMs = Math.max(1, Date.now() - stepStart)
           traceSteps.push({ tool: call.name, durationMs, resultLength: toolResult.length })
           toolSpan?.end('ok', { resultLength: toolResult.length })
           return { ...call, result: toolResult }
         } catch (err) {
           const msg = err instanceof Error ? err.message : String(err)
           logger.error(`ToolLoop: ${call.name} failed: ${msg}`)
-          traceSteps.push({ tool: call.name, durationMs: Date.now() - stepStart, resultLength: 0, error: msg })
+          traceSteps.push({ tool: call.name, durationMs: Math.max(1, Date.now() - stepStart), resultLength: 0, error: msg })
           toolSpan?.end('error', { error: msg })
           return { ...call, result: `Error: ${msg}` }
         }

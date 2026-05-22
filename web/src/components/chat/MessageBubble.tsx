@@ -1,7 +1,10 @@
 import { useState } from 'react'
 import ReactMarkdown from 'react-markdown'
 import remarkGfm from 'remark-gfm'
-import type { AssertionType, ChatMessage } from '../../types'
+import type { AssertionType, ChatMessage, CognitionLayer } from '../../types'
+import { useAuthStore } from '../../stores/authStore'
+import { CognitivePanel } from './CognitivePanel'
+import { markInaccurate } from '../../services/api'
 import s from './MessageBubble.module.css'
 
 const assertionLabels: Record<AssertionType, string> = {
@@ -11,73 +14,105 @@ const assertionLabels: Record<AssertionType, string> = {
   reference: '引用',
 }
 
-function ThumbUp({ active }: { active: boolean }) {
-  return (
-    <svg viewBox="0 0 24 24" fill="none" stroke={active ? '#14B8A6' : 'currentColor'} strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">
-      <path d="M7 22H4a2 2 0 01-2-2v-7a2 2 0 012-2h3m7-2V5a3 3 0 00-3-3l-4 9v11h11.28a2 2 0 002-1.7l1.38-9a2 2 0 00-2-2.3H14" />
-    </svg>
-  )
+const layerLabels: Record<CognitionLayer, string> = {
+  observation: '观察',
+  reflection: '反思',
+  consolidation: '压实',
 }
 
-function ThumbDown({ active }: { active: boolean }) {
-  return (
-    <svg viewBox="0 0 24 24" fill="none" stroke={active ? '#F87171' : 'currentColor'} strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">
-      <path d="M17 2H20a2 2 0 012 2v7a2 2 0 01-2 2h-3m-7 2v4a3 3 0 003 3l4-9V2H6.72a2 2 0 00-2 1.7l-1.38 9a2 2 0 002 2.3H10" />
-    </svg>
-  )
+const layerColors: Record<CognitionLayer, string> = {
+  observation: 'var(--cog-obs)',
+  reflection: 'var(--cog-ref)',
+  consolidation: 'var(--cog-con)',
 }
 
 export function MessageBubble({ message }: { message: ChatMessage }) {
-  const [feedback, setFeedback] = useState<'up' | 'down' | null>(null)
+  const layer = message.cognitionLayer
+  const layerColor = layer ? layerColors[layer] : undefined
+  const userDisplayName = useAuthStore((s) => s.user?.displayName ?? '?')
+  const userInitial = userDisplayName.charAt(0)
+  const spaceId = useAuthStore((s) => s.currentSpaceId ?? '')
+  const [feedbackSent, setFeedbackSent] = useState(message.markedInaccurate ?? false)
 
-  const handleFeedback = (type: 'up' | 'down') => {
-    setFeedback(feedback === type ? null : type)
+  const handleMarkInaccurate = async () => {
+    if (feedbackSent) return
+    if (!message.turnId) return
+    try {
+      await markInaccurate(message.turnId)
+      setFeedbackSent(true)
+    } catch { /* non-critical */ }
   }
 
   return (
-    <div className={s.wrapper}>
-      <div className={`${s.bubble} ${s[message.role]}`}>
-        {message.role === 'assistant' ? (
-          <div className={s.markdown}>
-            <ReactMarkdown remarkPlugins={[remarkGfm]}>
-              {message.content}
-            </ReactMarkdown>
+    <div className={`${s.row} ${s[`row${message.role === 'assistant' ? 'Left' : 'Right'}`]}`}>
+      {message.role === 'assistant' && (
+        <div className={s.avatar}>{'B'}</div>
+      )}
+      <div className={s.wrapper}>
+        <div
+          className={`${s.bubble} ${s[message.role]} ${layer === 'reflection' ? s.reflection : ''}`}
+          style={layer && message.role === 'assistant' ? { borderLeftColor: layerColor } : undefined}
+        >
+          {message.role === 'assistant' ? (
+            <div className={s.markdown}>
+              <ReactMarkdown remarkPlugins={[remarkGfm]}>
+                {message.content}
+              </ReactMarkdown>
+            </div>
+          ) : (
+            message.content
+          )}
+          {message.assertions && message.assertions.length > 0 && !message.isStreaming && (
+            <div className={s.assertions}>
+              {message.assertions.map(a => (
+                <span
+                  key={a.id}
+                  className={`${s.assertionTag} ${s[a.assertionType]}`}
+                  title={a.textSnippet}
+                >
+                  {assertionLabels[a.assertionType]}
+                </span>
+              ))}
+            </div>
+          )}
+          {message.panel && message.role === 'assistant' && !message.isStreaming && (
+            <CognitivePanel
+              moduleId={message.panel.moduleId}
+              cognitionLayer={layer || 'observation'}
+              data={message.panel.data}
+              spaceId={spaceId}
+            />
+          )}
+        </div>
+        {layer && message.role === 'assistant' && !message.isStreaming && (
+          <div className={s.meta}>
+            <span className={s.metaDot} style={{ background: layerColor }} />
+            <span className={s.metaLabel}>{layerLabels[layer]}</span>
+            <span className={s.metaTime}>{formatTime(message.timestamp)}</span>
           </div>
-        ) : (
-          message.content
         )}
-        {message.assertions && message.assertions.length > 0 && !message.isStreaming && (
-          <div className={s.assertions}>
-            {message.assertions.map(a => (
-              <span
-                key={a.id}
-                className={`${s.assertionTag} ${s[a.assertionType]}`}
-                title={a.textSnippet}
-              >
-                {assertionLabels[a.assertionType]}
-              </span>
-            ))}
+        {message.role === 'assistant' && !message.isStreaming && (
+          <div className={s.feedbackRow}>
+            {feedbackSent ? (
+              <span className={s.feedbackDone}>已记录</span>
+            ) : (
+              <button className={s.feedbackBtn} onClick={handleMarkInaccurate} title="标记为不准确">
+                这个不对
+              </button>
+            )}
           </div>
         )}
       </div>
-      {message.role === 'assistant' && !message.isStreaming && (
-        <div className={s.feedbackRow}>
-          <button
-            className={`${s.fbBtn} ${feedback === 'up' ? s.fbUp : ''}`}
-            onClick={() => handleFeedback('up')}
-            title="有帮助"
-          >
-            <ThumbUp active={feedback === 'up'} />
-          </button>
-          <button
-            className={`${s.fbBtn} ${feedback === 'down' ? s.fbDown : ''}`}
-            onClick={() => handleFeedback('down')}
-            title="没帮助"
-          >
-            <ThumbDown active={feedback === 'down'} />
-          </button>
-        </div>
+      {message.role === 'user' && (
+        <div className={`${s.avatar} ${s.userAvatar}`}>{userInitial}</div>
       )}
     </div>
   )
+}
+
+function formatTime(ts: number): string {
+  const d = new Date(ts)
+  const hh = d.getHours().toString().padStart(2, '0')
+  const mm = d.getMinutes().toString().padStart(2, '0')
+  return `${hh}:${mm}`
 }

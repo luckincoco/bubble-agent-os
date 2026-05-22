@@ -31,6 +31,7 @@ import { EventNotifier } from './connector/event-notifier.js'
 import { TeachHandler } from './connector/teach/handler.js'
 import { SkillLoader } from './connector/skills/loader.js'
 import { SkillRouter } from './connector/skills/skill-router.js'
+import { OnboardingManager } from './connector/onboarding/manager.js'
 import { TaskScheduler } from './scheduler/scheduler.js'
 import { initDatabase, closeDatabase } from './storage/database.js'
 import { startServer, type ServerModules } from './server/api.js'
@@ -271,7 +272,8 @@ async function main() {
   const skillsDir = resolve(config.storage.dataDir, '..', 'skills')
   const skillLoader = new SkillLoader(skillsDir)
   const skillRouter = new SkillRouter(skillLoader, bizHandler, teachHandler)
-  const router = new MessageRouter({ brain, tools, surpriseDetector, bizHandler, skillRouter, eventBus, llmProvider: llm })
+  const onboardingManager = new OnboardingManager()
+  const router = new MessageRouter({ brain, tools, surpriseDetector, bizHandler, skillRouter, eventBus, llmProvider: llm, onboardingManager })
   logger.info('Module: SkillRouter + MessageRouter enabled')
 
   // Start Feishu connector if configured (lifted to outer scope for scheduler access)

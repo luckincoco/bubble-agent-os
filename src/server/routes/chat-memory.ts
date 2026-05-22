@@ -14,10 +14,10 @@ export function registerChatMemoryRoutes(app: FastifyInstance, deps: RouteDeps) 
     const ctx = getUserCtx(req, spaceId)
     if (router) {
       const result = await router.handle(message, ctx)
-      return { response: result.response, sources: result.sources, turnId: result.turnId }
+      return { response: result.response, sources: result.sources, turnId: result.turnId, cognitionLayer: result.cognitionLayer, panel: result.panel, toolCalls: result.toolCalls, contextSummary: result.contextSummary }
     }
-    const { response, sources, turnId } = await brain.think(message, ctx)
-    return { response, sources, turnId }
+    const { response, sources, turnId, cognitionLayer, panel, toolCalls, contextSummary } = await brain.think(message, ctx)
+    return { response, sources, turnId, cognitionLayer, panel, toolCalls, contextSummary }
   })
 
   app.get('/api/memories', async (req: FastifyRequest) => {
@@ -60,20 +60,32 @@ export function registerChatMemoryRoutes(app: FastifyInstance, deps: RouteDeps) 
         let response: string
         let sources: any[]
         let turnId: string | undefined
+        let cognitionLayer: string | undefined
+        let panel: unknown
+        let toolCalls: import('../../shared/types.js').ToolCallInfo[] | undefined
+        let contextSummary: string | undefined
 
         if (router) {
           const result = await router.handle(message, ctx, { onChunk })
           response = result.response
           sources = result.sources
           turnId = result.turnId
+          cognitionLayer = result.cognitionLayer
+          panel = result.panel
+          toolCalls = result.toolCalls
+          contextSummary = result.contextSummary
         } else {
           const result = await brain.think(message, ctx, onChunk)
           response = result.response
           sources = result.sources
           turnId = result.turnId
+          cognitionLayer = result.cognitionLayer
+          panel = result.panel
+          toolCalls = result.toolCalls
+          contextSummary = result.contextSummary
         }
 
-        socket.send(JSON.stringify({ type: 'done', text: response, sources, turnId }))
+        socket.send(JSON.stringify({ type: 'done', text: response, sources, turnId, cognitionLayer, panel, toolCalls, contextSummary }))
       } catch (err) {
         const msg = err instanceof Error ? err.message : String(err)
         socket.send(JSON.stringify({ type: 'error', text: msg }))

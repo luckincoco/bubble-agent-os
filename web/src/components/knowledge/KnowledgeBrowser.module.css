@@ -20,7 +20,7 @@
 
 .searchBox {
   flex: 1;
-  min-width: 200px;
+  min-width: 0;
   display: flex;
   align-items: center;
   background: var(--bg-glass);
@@ -90,8 +90,14 @@
 
 .statsRow {
   display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(120px, 1fr));
-  gap: var(--space-3);
+  grid-template-columns: repeat(2, 1fr);
+  gap: var(--space-2);
+}
+
+@container (min-width: 360px) {
+  .statsRow {
+    grid-template-columns: repeat(4, 1fr);
+  }
 }
 
 .statCard {
@@ -125,12 +131,9 @@
   gap: var(--space-3);
 }
 
-@media (min-width: 640px) {
+/* When drawer is wide enough, show 2 columns */
+@container (min-width: 440px) {
   .list { grid-template-columns: 1fr 1fr; }
-}
-
-@media (min-width: 1024px) {
-  .list { grid-template-columns: 1fr 1fr 1fr; }
 }
 
 .card {

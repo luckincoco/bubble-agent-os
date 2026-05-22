@@ -1,30 +1,45 @@
 import { useEffect, useState, useCallback } from 'react'
-import { useUIStore } from '../../stores/uiStore'
 import { useAuthStore } from '../../stores/authStore'
 import { useChatStore } from '../../stores/chatStore'
 import { useBizStore } from '../../stores/bizStore'
-import { useModuleStore, useVisibleModules } from '../../stores/moduleStore'
-import { getModuleById } from '../../modules/registry'
+import { useMemoryStore } from '../../stores/memoryStore'
+import { useModuleStore } from '../../stores/moduleStore'
 import { fetchMemories } from '../../services/api'
-import { Header } from './Header'
-import { NavTabs } from './NavTabs'
+import { CognitiveSidebar } from '../sidebar/CognitiveSidebar'
+import { RightDrawer } from '../sidebar/RightDrawer'
+import { ChatView } from '../chat/ChatView'
 import { InputBar } from '../chat/InputBar'
 import { OnboardingFlow } from '../onboarding/OnboardingFlow'
+import { BusinessFlow } from '../biz/BusinessFlow'
+import { KnowledgeBrowser } from '../knowledge/KnowledgeBrowser'
+import { ForgeManager } from '../forge/ForgeManager'
+import { UserSettings } from '../settings/UserSettings'
 import s from './AppShell.module.css'
 
 type OnboardingState = 'checking' | 'needed' | 'done'
 
+const MODULE_TITLES: Record<string, string> = {
+  biz: '业务管理',
+  'biz-purchase': '采购管理',
+  'biz-sale': '销售管理',
+  'biz-logistics': '物流管理',
+  'biz-finance': '收付款管理',
+  memory: '知识浏览',
+  forge: '自编码',
+  settings: '设置',
+}
+
 export function AppShell() {
-  const tab = useUIStore((s) => s.activeTab)
-  const setTab = useUIStore((s) => s.setTab)
   const currentSpaceId = useAuthStore((s) => s.currentSpaceId)
   const token = useAuthStore((s) => s.token)
   const connect = useChatStore((s) => s.connect)
   const disconnect = useChatStore((s) => s.disconnect)
   const loadMasterData = useBizStore((s) => s.loadMasterData)
   const enabledModuleIds = useModuleStore((s) => s.enabledModuleIds)
-  const visibleModules = useVisibleModules()
+  const loadMemories = useMemoryStore((s) => s.load)
   const [onboarding, setOnboarding] = useState<OnboardingState>('checking')
+  const [activeDrawer, setActiveDrawer] = useState<string | null>(null)
+  const [showSettings, setShowSettings] = useState(false)
 
   // Connect WebSocket — reconnect when user (token) changes
   useEffect(() => {
@@ -33,12 +48,20 @@ export function AppShell() {
     return () => disconnect()
   }, [token, connect, disconnect])
 
-  // Load biz master data when biz module is enabled or space changes
+  // Load biz master data when any biz module is enabled or space changes
   useEffect(() => {
-    if (enabledModuleIds.includes('biz') && currentSpaceId) {
+    const hasBiz = enabledModuleIds.some(id => id === 'biz' || id.startsWith('biz-'))
+    if (hasBiz && currentSpaceId) {
       loadMasterData()
     }
   }, [enabledModuleIds, loadMasterData, currentSpaceId])
+
+  // Load memories on space change
+  useEffect(() => {
+    if (currentSpaceId) {
+      loadMemories()
+    }
+  }, [currentSpaceId, loadMemories])
 
   // Check if onboarding is needed
   useEffect(() => {
@@ -46,13 +69,11 @@ export function AppShell() {
       setOnboarding('done')
       return
     }
-    // Fetch memories to check if user is new
     fetchMemories(currentSpaceId || undefined)
       .then((data) => {
         setOnboarding(data.memories?.length > 0 ? 'done' : 'needed')
       })
       .catch(() => {
-        // On error, skip onboarding to avoid blocking
         setOnboarding('done')
       })
   }, [currentSpaceId])
@@ -61,17 +82,26 @@ export function AppShell() {
     setOnboarding('done')
   }, [])
 
-  // If active tab is not in visible modules, redirect to first available
-  useEffect(() => {
-    const isVisible = visibleModules.some(m => m.tab.key === tab)
-    if (!isVisible && visibleModules.length > 0) {
-      setTab(visibleModules[0].tab.key)
+  const handleOpenModule = useCallback((moduleId: string) => {
+    if (moduleId === 'settings') {
+      setShowSettings(true)
+      return
     }
-  }, [tab, visibleModules, setTab])
+    // Toggle drawer: open if closed or different module, close if same
+    setActiveDrawer((prev) => prev === moduleId ? null : moduleId)
+  }, [])
+
+  const handleCloseDrawer = useCallback(() => {
+    setActiveDrawer(null)
+  }, [])
+
+  const handleCloseSettings = useCallback(() => {
+    setShowSettings(false)
+  }, [])
 
   if (onboarding === 'checking') {
     return (
-      <div className={s.shell} style={{ display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+      <div className={s.loading}>
         <div style={{
           width: '40px', height: '40px', borderRadius: '50%',
           border: '3px solid rgba(255,255,255,0.08)',
@@ -86,18 +116,37 @@ export function AppShell() {
     return <OnboardingFlow onComplete={handleOnboardingDone} />
   }
 
-  // Find the active module's component
-  const activeModule = visibleModules.find(m => m.tab.key === tab)
-  const ActiveComponent = activeModule?.component
+  const renderDrawerContent = () => {
+    switch (activeDrawer) {
+      case 'biz': return <BusinessFlow />
+      case 'biz-purchase': return <BusinessFlow initialTab="purchase" />
+      case 'biz-sale': return <BusinessFlow initialTab="sale" />
+      case 'biz-logistics': return <BusinessFlow initialTab="logistics" />
+      case 'biz-finance': return <BusinessFlow initialTab="payment" />
+      case 'memory': return <KnowledgeBrowser />
+      case 'forge': return <ForgeManager />
+      default: return null
+    }
+  }
 
   return (
     <div className={s.shell}>
-      <Header />
-      <div className={s.main}>
-        {ActiveComponent ? <ActiveComponent /> : null}
+      <CognitiveSidebar
+        onOpenModule={handleOpenModule}
+        activeOverlay={activeDrawer}
+      />
+      <div className={s.mainArea}>
+        <ChatView />
+        <InputBar />
       </div>
-      {tab === 'chat' && <InputBar />}
-      <NavTabs />
+      <RightDrawer
+        title={activeDrawer ? (MODULE_TITLES[activeDrawer] || activeDrawer) : ''}
+        onClose={handleCloseDrawer}
+        open={activeDrawer !== null}
+      >
+        {renderDrawerContent()}
+      </RightDrawer>
+      {showSettings && <UserSettings onClose={handleCloseSettings} />}
     </div>
   )
 }

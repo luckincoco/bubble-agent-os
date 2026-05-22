@@ -1,39 +1,136 @@
+/* ── Avatar + Bubble row ────────────────────────── */
+.row {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  width: 100%;
+}
+
+.rowLeft {
+  justify-content: flex-start;
+}
+
+.rowRight {
+  justify-content: flex-end;
+}
+
+.avatar {
+  width: 28px;
+  height: 28px;
+  border-radius: 6px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 13px;
+  font-weight: 600;
+  flex-shrink: 0;
+  background: var(--purple, #7C3AED);
+  color: #fff;
+}
+
+.userAvatar {
+  background: var(--bg-glass, rgba(255,255,255,0.08));
+  color: var(--text-secondary);
+}
+
+/* ── Bubble styles ─────────────────────────────── */
 .bubble {
   max-width: 85%;
+  min-width: 0;
   padding: 12px 16px;
   font-size: 15px;
   line-height: 1.55;
   white-space: pre-wrap;
   word-break: break-word;
+  flex-shrink: 1;
+  flex-grow: 0;
   animation: bubbleIn var(--duration-normal) var(--ease-bubble);
 }
 
 .user {
   align-self: flex-end;
-  background: var(--gradient-primary);
+  max-width: 70%;
+  min-width: 0;
+  background: var(--bg-user);
   color: #fff;
-  border-radius: 20px 20px 4px 20px;
-  box-shadow: 0 2px 12px var(--glow-purple);
+  border-radius: 18px 18px 4px 18px;
+  box-shadow: 0 1px 4px rgba(0, 0, 0, 0.15);
 }
 
 .assistant {
   align-self: flex-start;
-  background: var(--bg-glass);
-  backdrop-filter: blur(12px);
-  -webkit-backdrop-filter: blur(12px);
+  background: var(--bg-assistant);
   color: var(--text-primary);
-  border-radius: 20px 20px 20px 4px;
-  border: 1px solid rgba(255, 255, 255, 0.06);
-  box-shadow: inset 0 0 20px rgba(255, 255, 255, 0.03);
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  border-radius: 4px 18px 18px 18px;
+  border-left: 2px solid transparent;
+  box-shadow: 0 1px 4px rgba(0, 0, 0, 0.06);
 }
 
 .error {
   align-self: flex-start;
-  background: rgba(248, 113, 113, 0.12);
+  background: rgba(248, 113, 113, 0.1);
   color: var(--text-error);
-  border-radius: 20px 20px 20px 4px;
-  border: 1px solid rgba(248, 113, 113, 0.2);
+  border-radius: 4px 18px 18px 18px;
+  border-left: 2px solid rgba(248, 113, 113, 0.4);
   font-size: 13px;
+}
+
+/* ── Bubble wrapper ────────────────────────── */
+.wrapper {
+  display: flex;
+  flex-direction: column;
+  flex: 1;
+  min-width: 0;
+  max-width: 100%;
+}
+
+/* ── Reflection layer: left border (thicker) + darker bg ── */
+.reflection {
+  border-left-width: 3px;
+  background: var(--color-surface-elevated, rgba(255,255,255,0.08));
+}
+
+/* ── Cognition layer meta (dot always visible, label+time on hover) ── */
+.meta {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  margin-top: 4px;
+  margin-left: 4px;
+}
+
+.metaDot {
+  width: 4px;
+  height: 4px;
+  border-radius: 50%;
+  flex-shrink: 0;
+}
+
+.metaLabel,
+.metaTime {
+  opacity: 0;
+  transition: opacity 150ms var(--ease-smooth);
+}
+
+.bubble:hover ~ .meta .metaLabel,
+.bubble:hover ~ .meta .metaTime,
+.meta:hover .metaLabel,
+.meta:hover .metaTime {
+  opacity: 1;
+}
+
+.metaLabel {
+  font-size: 10px;
+  color: var(--text-secondary);
+  line-height: 1;
+}
+
+.metaTime {
+  font-size: 10px;
+  color: var(--text-dim);
+  margin-left: 2px;
+  line-height: 1;
 }
 
 .sources {
@@ -168,93 +265,81 @@
   margin-top: 0;
 }
 
-/* ── Feedback buttons ────────────────────── */
-.wrapper {
-  display: flex;
-  flex-direction: column;
-}
-
-.feedbackRow {
-  display: flex;
-  align-items: center;
-  gap: 6px;
-  padding: 4px 0 0 4px;
-  animation: fadeIn var(--duration-fast) var(--ease-smooth);
-}
-
-.fbBtn {
-  width: 26px;
-  height: 26px;
-  border-radius: 50%;
-  border: 1px solid rgba(255, 255, 255, 0.06);
-  background: transparent;
-  color: var(--text-dim);
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  cursor: pointer;
-  transition: all var(--duration-fast);
-  padding: 0;
-}
-
-.fbBtn svg {
-  width: 14px;
-  height: 14px;
-}
-
-.fbBtn:hover {
-  background: rgba(255, 255, 255, 0.06);
-  border-color: rgba(255, 255, 255, 0.12);
-}
-
-.fbUp {
-  background: rgba(20, 184, 166, 0.12);
-  border-color: rgba(20, 184, 166, 0.3);
-}
-
-.fbDown {
-  background: rgba(248, 113, 113, 0.12);
-  border-color: rgba(248, 113, 113, 0.3);
-}
-
-/* ── Assertion tags (断言自识别) ────────────────────── */
+/* ── Assertion tags (muted, Claude-style) ──── */
 .assertions {
-  margin-top: 10px;
-  padding-top: 8px;
-  border-top: 1px solid rgba(255, 255, 255, 0.08);
+  margin-top: 8px;
+  padding-top: 6px;
+  border-top: 1px solid rgba(255, 255, 255, 0.06);
   display: flex;
   flex-wrap: wrap;
-  gap: 6px;
-  animation: fadeIn var(--duration-normal) var(--ease-smooth);
+  gap: 4px;
 }
 
 .assertionTag {
-  font-size: 11px;
-  padding: 2px 8px;
-  border-radius: 8px;
+  font-size: 10px;
+  padding: 1px 6px;
+  border-radius: 4px;
   cursor: default;
+  opacity: 0.7;
+}
+
+.assertionTag:hover {
+  opacity: 1;
 }
 
 .fact {
-  background: rgba(20, 184, 166, 0.12);
-  color: #14B8A6;
-  border: 1px solid rgba(20, 184, 166, 0.2);
+  background: rgba(20, 184, 166, 0.08);
+  color: #5EEAD4;
 }
 
 .judgment {
-  background: rgba(245, 158, 11, 0.12);
-  color: #F59E0B;
-  border: 1px solid rgba(245, 158, 11, 0.2);
+  background: rgba(245, 158, 11, 0.08);
+  color: #FCD34D;
 }
 
 .speculation {
-  background: rgba(124, 58, 237, 0.12);
-  color: #A78BFA;
-  border: 1px solid rgba(124, 58, 237, 0.2);
+  background: rgba(124, 58, 237, 0.08);
+  color: #C4B5FD;
 }
 
 .reference {
-  background: rgba(37, 99, 235, 0.12);
-  color: #60A5FA;
-  border: 1px solid rgba(37, 99, 235, 0.2);
+  background: rgba(37, 99, 235, 0.08);
+  color: #93C5FD;
+}
+
+/* ── Handoff 1: user feedback "这个不对" button ── */
+.feedbackRow {
+  margin-top: 4px;
+  margin-left: 4px;
+  min-height: 20px;
+}
+
+.feedbackBtn {
+  background: none;
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  color: var(--text-secondary);
+  font-size: 11px;
+  padding: 1px 8px;
+  border-radius: 8px;
+  cursor: pointer;
+  opacity: 0;
+  transition: opacity 150ms var(--ease-smooth), background 150ms;
+  line-height: 1.6;
+}
+
+.wrapper:hover .feedbackBtn {
+  opacity: 1;
+}
+
+.feedbackBtn:hover {
+  background: rgba(248, 113, 113, 0.1);
+  border-color: rgba(248, 113, 113, 0.3);
+  color: #FCA5A5;
+}
+
+.feedbackDone {
+  font-size: 11px;
+  color: var(--text-dim);
+  line-height: 1.8;
+  opacity: 0.7;
 }

@@ -1,6 +1,9 @@
 // Bubble types
 export type BubbleType = 'memory' | 'entity' | 'api' | 'workflow' | 'document' | 'event' | 'synthesis' | 'portrait' | 'question' | 'observation'
 
+// Cognition layer — maps to Agent's cognitive state for UI rendering
+export type CognitionLayer = 'observation' | 'reflection' | 'consolidation'
+
 export interface BubbleLink {
   targetId: string
   relation: string
@@ -89,10 +92,49 @@ export interface SourceRef {
   snippet: string
 }
 
+/** Phase 4: tool call info for sidebar visualization */
+export interface ToolCallInfo {
+  name: string
+  status: 'success' | 'error'
+  durationMs: number
+  error?: string
+}
+
+/**
+ * Handoff 1: SelfState –跨 session 的自我状态持久化。
+ * unresolvedTensions 是当前未解决的认知矛盾列表，
+ * 由 brain.think() 完成后写入文件，下次 session 加载时读入。
+ */
+export interface Tension {
+  concepts: [string, string]
+  evidenceRatio: number
+  lastReevaluated: number
+  resolutionStatus: 'open' | 'resolved' | 'abandoned'
+}
+
+export interface SelfState {
+  userId: string
+  sessionId: string
+  unresolvedTensions: Tension[]
+  lastActiveAt: number
+}
+
 export interface ThinkResult {
   response: string
   sources: SourceRef[]
   turnId?: string
+  /** Phase 2: cognitive layer classification for UI rendering */
+  cognitionLayer?: CognitionLayer
+  /** Phase 2: structured panel data for inline cognitive panels */
+  panel?: {
+    moduleId: string
+    component: string
+    data: unknown
+  }
+  /** Phase 4: tool call execution records for sidebar visualization */
+  toolCalls?: ToolCallInfo[]
+  /** Phase 4: human-readable summary of what the agent did */
+  contextSummary?: string
 }
 
 // Assertion self-identification types

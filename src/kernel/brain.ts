@@ -1,4 +1,6 @@
-import type { LLMProvider, LLMMessage, UserContext, ThinkResult, CustomAgent } from '../shared/types.js'
+import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs'
+import { resolve } from 'node:path'
+import type { LLMProvider, LLMMessage, UserContext, ThinkResult, CustomAgent, SelfState } from '../shared/types.js'
 import { isExternalContext } from '../shared/types.js'
 import type { MemoryManager } from '../memory/manager.js'
 import type { ConversationInsightEvaluator } from '../memory/conversation-insight-evaluator.js'
@@ -13,6 +15,7 @@ import type { WorkingMemory } from '../memory/working-memory.js'
 import type { ContextBudget } from '../memory/context-budget.js'
 import type { Tracer } from '../observability/tracer.js'
 import { runToolLoop } from './tool-loop.js'
+import { AnswerCache } from './answer-cache.js'
 import { estimateTokens, truncateToTokenBudget, TOKEN_LIMITS } from '../shared/tokens.js'
 import { EXT_TOOL_NAMES } from '../connector/tools/ext-query-tools.js'
 import { countDrafts } from '../memory/draft-observations.js'
@@ -69,6 +72,12 @@ export class Brain {
   private workingMemory: WorkingMemory | null = null
   private contextBudget: ContextBudget | null = null
   private tracer: Tracer | null = null
+
+  /** Handoff 1: loaded cross-session self-state */
+  private currentSelfState: SelfState | null = null
+
+  /** Handoff 3: in-memory answer cache for similar queries */
+  private answerCache = new AnswerCache()
 
   constructor(llm: LLMProvider) {
     this.llm = llm
@@ -140,6 +149,8 @@ export class Brain {
     if (!h) {
       h = []
       this.historyMap.set(userId, h)
+      // 首次访问：尝试加载跨 session SelfState
+      this.loadSelfState(userId)
     }
     return h
   }
@@ -148,7 +159,52 @@ export class Brain {
   clearHistory(userId: string) {
     this.historyMap.delete(userId)
     this.lastActivityMap.delete(userId)
+    this.currentSelfState = null
     logger.info(`Brain: history cleared for user ${userId}`)
+  }
+
+  /** Handoff 1: load SelfState from disk for cross-session continuity */
+  private loadSelfState(userId: string) {
+    try {
+      const config = getConfig()
+      const path = resolve(config.storage.dataDir, 'self-state', `${userId}.json`)
+      if (!existsSync(path)) {
+        this.currentSelfState = null
+        return
+      }
+      const raw = readFileSync(path, 'utf-8')
+      this.currentSelfState = JSON.parse(raw) as SelfState
+      const count = this.currentSelfState.unresolvedTensions?.length ?? 0
+      if (count > 0) {
+        logger.info(`Brain: loaded SelfState for ${userId} (${count} unresolved tensions)`)
+      }
+    } catch {
+      this.currentSelfState = null
+    }
+  }
+
+  /** Handoff 2: public accessor for router to read SelfState and detect tensions */
+  getSelfState(userId: string): SelfState | null {
+    if (!this.currentSelfState) {
+      this.loadSelfState(userId)
+    }
+    return this.currentSelfState
+  }
+
+  /** Handoff 1: persist SelfState to disk after each think() completes */
+  private writeSelfState(userId: string) {
+    try {
+      const state: SelfState = {
+        userId,
+        sessionId: ulid(),
+        unresolvedTensions: [],
+        lastActiveAt: Date.now(),
+      }
+      const config = getConfig()
+      const dir = resolve(config.storage.dataDir, 'self-state')
+      mkdirSync(dir, { recursive: true })
+      writeFileSync(resolve(dir, `${userId}.json`), JSON.stringify(state, null, 2), 'utf-8')
+    } catch { /* best-effort */ }
   }
 
   /**
@@ -264,6 +320,18 @@ export class Brain {
       }
     }
 
+    // Inject SelfState context for cross-session awareness (Handoff 1)
+    if (!isExt && this.currentSelfState && this.currentSelfState.unresolvedTensions.length > 0) {
+      const openTensions = this.currentSelfState.unresolvedTensions
+        .filter(t => t.resolutionStatus === 'open')
+      if (openTensions.length > 0) {
+        const lines = openTensions.map(t =>
+          `  - ${t.concepts[0]} ↔ ${t.concepts[1]}（证据比 ${t.evidenceRatio.toFixed(2)}）`
+        )
+        systemContent += `\n\n[上次会话遗留]\n上次结束时有 ${openTensions.length} 个未解决的认知张力：\n${lines.join('\n')}`
+      }
+    }
+
     const systemMessage: LLMMessage = { role: 'system', content: systemContent }
     const systemTokens = estimateTokens(systemContent) + 4
 
@@ -284,6 +352,31 @@ export class Brain {
 
     try {
       let response: string
+      let cognitionLayer: CognitionLayer | undefined
+      let panel: ThinkResult['panel'] | undefined
+      let toolCalls: ThinkResult['toolCalls']
+      let contextSummary: string | undefined
+
+      // ── Handoff 3: answer cache check — skip LLM + tool loop on hit ──
+      if (!isExt && !onChunk) {
+        const cached = this.answerCache.get(effectiveInput, ctx?.activeSpaceId)
+        if (cached) {
+          logger.info(`Brain: answer cache HIT for "${effectiveInput.slice(0, 60)}"`)
+          const cachedTurnId = ulid()
+          const cachedHistory = this.getHistory(userId)
+          let cachedResponse = cached.response
+          cachedResponse = await this.postProcessResponse(userInput, effectiveInput, cachedResponse, cachedHistory, cachedTurnId, ctx, isExt, userId)
+          return {
+            response: cachedResponse,
+            sources: cached.sources,
+            turnId: cachedTurnId,
+            cognitionLayer: cached.cognitionLayer,
+            panel: cached.panel,
+            toolCalls: cached.toolCalls,
+            contextSummary: cached.contextSummary,
+          }
+        }
+      }
 
       if (this.tools) {
         // Multi-step tool calling via ToolLoop
@@ -294,6 +387,50 @@ export class Brain {
           onChunk,
         })
         response = loopResult.response
+
+        // Phase 2: classify cognition layer based on tool calls
+        const toolNames = loopResult.toolCalls.map(tc => tc.name)
+        if (toolNames.some(n => n.startsWith('biz_') || n === 'fetch_page' || n === 'web_search')) {
+          cognitionLayer = 'observation'
+        } else if (toolNames.some(n => n === 'cross_analyze')) {
+          cognitionLayer = 'reflection'
+        }
+
+        // Phase 3: construct inline panel data from biz tool calls
+        const bizToolCalls = loopResult.toolCalls.filter(tc => tc.name.startsWith('biz_'))
+        if (bizToolCalls.length > 0 && cognitionLayer === 'observation') {
+          panel = {
+            moduleId: 'biz',
+            component: 'observation',
+            data: {
+              actions: bizToolCalls.map(tc => ({
+                toolName: tc.name,
+                args: tc.args,
+                description: describeBizTool(tc.name, tc.args),
+              })),
+              summary: `查询了 ${bizToolCalls.length} 项业务数据`,
+            },
+          }
+        }
+
+        // Phase 4: construct tool call info from trace for sidebar visualization
+        toolCalls = loopResult.trace.steps.map(step => ({
+          name: step.tool,
+          status: step.error ? 'error' as const : 'success' as const,
+          durationMs: step.durationMs,
+          error: step.error,
+        }))
+
+        // Phase 4: build human-readable context summary from tool calls
+        if (loopResult.toolCalls.length > 0) {
+          const bizCount = loopResult.toolCalls.filter(tc => tc.name.startsWith('biz_')).length
+          const searchCount = loopResult.toolCalls.filter(tc => tc.name === 'web_search' || tc.name === 'fetch_page').length
+          const parts: string[] = []
+          if (bizCount > 0) parts.push(`查询了 ${bizCount} 项业务数据`)
+          if (searchCount > 0) parts.push(`搜索了 ${searchCount} 次`)
+          if (parts.length === 0) parts.push(`调用了 ${loopResult.toolCalls.length} 个工具`)
+          contextSummary = parts.join('，')
+        }
 
         // Sync tool call messages into stored history
         if (loopResult.toolCalls.length > 0) {
@@ -340,7 +477,23 @@ export class Brain {
         })
       }
 
-      return { response, sources }
+      // ── Handoff 3: write answer cache for future similar queries ──
+      if (!isExt && response && !onChunk) {
+        const toolNames = (toolCalls ?? []).map(t => t.name)
+        const hasRealTime = toolNames.some(n => n === 'fetch_page' || n === 'web_search')
+        const hasBiz = toolNames.some(n => n.startsWith('biz_'))
+        const ttl = hasRealTime ? 30_000 : hasBiz ? 120_000 : 60_000
+        this.answerCache.set(effectiveInput, ctx?.activeSpaceId, {
+          response,
+          sources,
+          toolCalls: toolCalls ?? [],
+          cognitionLayer,
+          panel,
+          contextSummary,
+        }, ttl)
+      }
+
+      return { response, sources, cognitionLayer, panel, toolCalls, contextSummary }
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err)
       logger.error('Brain think error:', msg)
@@ -474,6 +627,11 @@ export class Brain {
       })
     }
 
+    // Handoff 1: persist SelfState after each think() completes
+    if (!isExt && userId) {
+      this.writeSelfState(userId)
+    }
+
     return finalResponse
   }
 
@@ -499,4 +657,33 @@ export class Brain {
       return null
     }
   }
+}
+
+// ── Helper: map biz tool names to human-readable descriptions ──────────
+
+/** Map biz tool name + args to a human-readable one-liner */
+function describeBizTool(name: string, args: Record<string, unknown>): string {
+  const toolLabels: Record<string, string> = {
+    biz_dashboard: '业务概览',
+    biz_inventory: '库存查询',
+    biz_receivables: '应收款查询',
+    biz_payables: '应付款查询',
+    biz_profit_report: '利润报表',
+    biz_profit_by_order: '按单利润',
+    biz_counterparty_statement: '往来对账',
+    biz_monthly_overview: '月度总览',
+    biz_project_reconciliation: '项目结算',
+    biz_uninvoiced: '未开票查询',
+    biz_silence_alerts: '沉默预警',
+    biz_exposure: '财务敞口',
+    biz_concentration: '集中度分析',
+    biz_relationships: '交易对手关系',
+    biz_excel_lookup: 'Excel原始数据查询',
+  }
+  const label = toolLabels[name] || name
+  const params = Object.entries(args)
+    .filter(([k]) => k !== '_raw')
+    .map(([k, v]) => `${k}=${v}`)
+    .join(', ')
+  return params ? `${label} (${params})` : label
 }

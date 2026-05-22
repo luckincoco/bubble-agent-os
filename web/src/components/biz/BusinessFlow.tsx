@@ -66,8 +66,12 @@ const CONTENT_MAP: Partial<Record<BubbleId, () => ReactNode>> = {
 
 type SubTab = 'entry' | 'records'
 
-export function BusinessFlow() {
-  const [active, setActive] = useState<BubbleId | null>(null)
+interface BusinessFlowProps {
+  initialTab?: BubbleId
+}
+
+export function BusinessFlow({ initialTab }: BusinessFlowProps) {
+  const [active, setActive] = useState<BubbleId | null>(initialTab ?? null)
   const [subTab, setSubTab] = useState<SubTab>('entry')
 
   const handleBack = () => {

@@ -1,11 +1,17 @@
 import { create } from 'zustand'
-import { getDefaultEnabledIds, getVisibleModules } from '../modules/registry'
+import { getDefaultEnabledIds, getVisibleModules, getAllModules } from '../modules/registry'
 import { updatePreferences } from '../services/api'
 import type { UserPreferences } from '../types'
+import type { ModuleDefinition } from '../modules/registry'
 
 interface ModuleState {
   enabledModuleIds: string[]
   isLoaded: boolean
+
+  // ── Phase 1: Module registry (backward-compatible) ──
+  registeredModules: ModuleDefinition[]
+  registerModule: (module: ModuleDefinition) => void
+  unregisterModule: (moduleId: string) => void
 
   initFromPreferences: (prefs?: UserPreferences) => void
   toggleModule: (moduleId: string) => void
@@ -27,6 +33,21 @@ function saveToServer(enabledModuleIds: string[]) {
 export const useModuleStore = create<ModuleState>((set, get) => ({
   enabledModuleIds: getDefaultEnabledIds(),
   isLoaded: false,
+
+  // Phase 1: registry initialized from built-in modules
+  registeredModules: getAllModules(),
+
+  registerModule: (module) => {
+    const { registeredModules } = get()
+    if (registeredModules.find((m) => m.id === module.id)) return // no dupes
+    set({ registeredModules: [...registeredModules, module] })
+  },
+
+  unregisterModule: (moduleId) => {
+    set((s) => ({
+      registeredModules: s.registeredModules.filter((m) => m.id !== moduleId),
+    }))
+  },
 
   initFromPreferences: (prefs) => {
     const defaultIds = getDefaultEnabledIds()

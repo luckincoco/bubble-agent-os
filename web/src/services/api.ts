@@ -41,6 +41,18 @@ export async function softDeleteBubbleApi(id: string, reason: string): Promise<v
   }
 }
 
+export async function markInaccurate(bubbleId: string): Promise<void> {
+  const res = await authFetch(`${BASE}/api/feedback/inaccurate`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ bubbleId }),
+  })
+  if (!res.ok) {
+    const data = await res.json().catch(() => ({}))
+    throw new Error(data.error || `HTTP ${res.status}`)
+  }
+}
+
 export async function fetchHealth() {
   const res = await fetch(`${BASE}/api/health`)
   if (!res.ok) throw new Error(`HTTP ${res.status}`)

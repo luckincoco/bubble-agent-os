@@ -21,6 +21,31 @@
   --blue: #2563EB;
   --teal: #14B8A6;
 
+  /* Bubble backgrounds (used in MessageBubble.module.css) */
+  --bg-user: #7C3AED;
+  --bg-assistant: rgba(255, 255, 255, 0.05);
+
+  /* Aliases for design-doc naming (web-ui-design.md) */
+  --color-bg: #0B0E17;
+  --color-surface: rgba(255, 255, 255, 0.05);
+  --color-surface-elevated: rgba(255, 255, 255, 0.08);
+  --color-text: #E2E8F0;
+  --color-text-muted: #94A3B8;
+  --color-accent: #7C3AED;
+  --color-border: rgba(255, 255, 255, 0.08);
+  --color-hover: rgba(255, 255, 255, 0.12);
+  --color-success: #10b981;
+  --color-warning: #f59e0b;
+
+  /* Cognition layer colors */
+  --cog-obs: #60a5fa;
+  --cog-obs-bg: rgba(59, 130, 246, 0.15);
+  --cog-ref: #c084fc;
+  --cog-ref-bg: rgba(168, 85, 247, 0.15);
+  --cog-ref-border: #c084fc;
+  --cog-con: #34d399;
+  --cog-con-bg: rgba(16, 185, 129, 0.15);
+
   --radius-bubble: 20px;
   --radius-card: 16px;
   --radius-button: 12px;

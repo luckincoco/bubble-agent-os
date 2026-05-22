@@ -1,51 +1,107 @@
-.bar {
-  display: flex;
-  align-items: flex-end;
-  gap: 8px;
-  padding: 12px 16px;
-  padding-bottom: calc(12px + var(--safe-bottom));
-  border-top: 1px solid rgba(255, 255, 255, 0.06);
+.container {
   flex-shrink: 0;
 }
 
-.input {
-  flex: 1;
-  max-height: 120px;
-  padding: 10px 16px;
+.bar {
+  padding: 12px 20px 20px;
+  flex-shrink: 0;
+}
+
+/* ── Input area (inputRow + file chip) ── */
+.inputArea {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+/* ── Single-row: [📎 | textarea | send] ── */
+.inputRow {
+  display: flex;
+  align-items: flex-end;
+  gap: 0;
   background: var(--bg-glass);
   border: 1px solid rgba(255, 255, 255, 0.08);
-  border-radius: var(--radius-input);
+  border-radius: 12px;
+  transition: border-color var(--duration-fast);
+}
+
+.inputRow:focus-within {
+  border-color: rgba(124, 58, 237, 0.4);
+}
+
+/* ── Attach button (inside input row, left) ── */
+.attachWrapper {
+  position: relative;
+  flex-shrink: 0;
+}
+
+.attachBtn {
+  width: 38px;
+  height: 38px;
+  border-radius: 10px 0 0 10px;
+  border: none;
+  background: transparent;
+  color: var(--text-dim);
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+  transition: background var(--duration-fast), color var(--duration-fast);
+}
+
+.attachBtn:hover {
+  background: rgba(255, 255, 255, 0.06);
+  color: var(--text-primary);
+}
+
+.attachBtn:disabled {
+  opacity: 0.4;
+  cursor: default;
+}
+
+/* ── Textarea (center, no own border) ── */
+.input {
+  flex: 1;
+  min-width: 0;
+  max-height: 120px;
+  padding: 9px 12px;
+  background: transparent;
+  border: none;
+  border-left: 1px solid rgba(255, 255, 255, 0.06);
+  border-right: 1px solid rgba(255, 255, 255, 0.06);
+  border-radius: 0;
   color: var(--text-primary);
   font-size: 15px;
   line-height: 1.4;
   resize: none;
   outline: none;
-  transition: border-color var(--duration-fast);
+  box-sizing: border-box;
 }
 
 .input::placeholder {
   color: var(--text-dim);
 }
 
-.input:focus {
-  border-color: rgba(124, 58, 237, 0.4);
-}
-
+/* ── Send button (inside input row, right) ── */
 .send {
-  width: 40px;
-  height: 40px;
-  border-radius: 50%;
+  width: 38px;
+  height: 38px;
+  border-radius: 0 10px 10px 0;
   border: none;
-  background: var(--gradient-primary);
-  color: #fff;
-  font-size: 18px;
+  background: transparent;
+  color: var(--text-dim);
   cursor: pointer;
   display: flex;
   align-items: center;
   justify-content: center;
   flex-shrink: 0;
-  transition: opacity var(--duration-fast), transform var(--duration-fast);
-  box-shadow: 0 2px 10px var(--glow-purple);
+  transition: background var(--duration-fast), color var(--duration-fast);
+}
+
+.send:not(:disabled):hover {
+  background: rgba(124, 58, 237, 0.15);
+  color: var(--purple);
 }
 
 .send:active {
@@ -53,7 +109,7 @@
 }
 
 .send:disabled {
-  opacity: 0.4;
+  opacity: 0.35;
   cursor: default;
 }
 
@@ -61,36 +117,163 @@
   transform: none;
 }
 
-.imageBtn {
-  width: 40px;
-  height: 40px;
-  border-radius: 50%;
-  border: 1px solid rgba(255, 255, 255, 0.1);
-  background: var(--bg-glass);
+/* ── Attachment popup menu ── */
+.menu {
+  position: absolute;
+  bottom: calc(100% + 4px);
+  left: 0;
+  min-width: 180px;
+  background: #151a28;
+  border: 1px solid rgba(124, 58, 237, 0.3);
+  border-radius: 10px;
+  padding: 6px;
+  box-shadow: 0 8px 32px rgba(0, 0, 0, 0.5), 0 0 20px rgba(124, 58, 237, 0.08);
+  z-index: 100;
+  animation: fadeSlideUp 150ms var(--ease-smooth);
+}
+
+.menuItem {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 8px;
+  border-radius: 6px;
+  border: none;
+  background: transparent;
+  color: var(--text-dim);
+  font-size: 13px;
+  width: 100%;
+  text-align: left;
+  transition: background var(--duration-fast), color var(--duration-fast);
+  cursor: default;
+}
+
+.menuItem:hover {
+  background: rgba(255, 255, 255, 0.04);
+}
+
+.menuItemActive {
+  cursor: pointer;
   color: var(--text-secondary);
-  font-size: 18px;
+}
+
+.menuItemActive:hover {
+  background: rgba(124, 58, 237, 0.12);
+  color: var(--text-primary);
+}
+
+.menuIcon {
+  font-size: 16px;
+  line-height: 1;
+  flex-shrink: 0;
+}
+
+.menuLabel {
+  flex: 1;
+}
+
+.menuBadge {
+  font-size: 10px;
+  color: #34d399;
+  background: rgba(52, 211, 153, 0.1);
+  padding: 1px 6px;
+  border-radius: 8px;
+  flex-shrink: 0;
+}
+
+.menuDivider {
+  height: 1px;
+  background: rgba(255, 255, 255, 0.06);
+  margin: 4px 8px;
+}
+
+.menuComingSoon {
+  text-align: center;
+  font-size: 10px;
+  color: var(--text-dim);
+  padding: 4px 0 2px;
+  opacity: 0.6;
+}
+
+/* ── Pending file chip ── */
+.fileChip {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 4px 8px;
+  background: rgba(255, 255, 255, 0.04);
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  border-radius: 6px;
+  font-size: 12px;
+  color: var(--text-secondary);
+  animation: fadeSlideUp 150ms var(--ease-smooth);
+}
+
+.fileChipIcon {
+  font-size: 14px;
+  line-height: 1;
+  flex-shrink: 0;
+}
+
+.fileChipName {
+  flex: 1;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  max-width: 200px;
+}
+
+.fileChipRemove {
+  width: 16px;
+  height: 16px;
+  border-radius: 3px;
+  border: none;
+  background: transparent;
+  color: var(--text-dim);
   cursor: pointer;
   display: flex;
   align-items: center;
   justify-content: center;
   flex-shrink: 0;
-  transition: border-color var(--duration-fast), color var(--duration-fast);
+  padding: 0;
+  transition: background var(--duration-fast), color var(--duration-fast);
 }
 
-.imageBtn:hover {
-  border-color: rgba(124, 58, 237, 0.4);
-  color: var(--text-primary);
+.fileChipRemove:hover {
+  background: rgba(248, 113, 113, 0.15);
+  color: #F87171;
 }
 
-.imageBtn:disabled {
+.fileChipRemove:disabled {
   opacity: 0.4;
   cursor: default;
 }
 
-.imageStatus {
+/* ── Upload error ── */
+.error {
   font-size: 12px;
-  color: var(--text-secondary);
-  padding: 0 4px;
-  align-self: center;
-  animation: fadeIn var(--duration-fast) var(--ease-smooth);
+  color: var(--text-error);
+  padding: 0 20px 10px;
+  animation: fadeIn 200ms var(--ease-smooth);
+}
+
+/* ── Animations ── */
+@keyframes fadeSlideUp {
+  from {
+    opacity: 0;
+    transform: translateY(8px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+@keyframes fadeIn {
+  from {
+    opacity: 0;
+  }
+  to {
+    opacity: 1;
+  }
 }

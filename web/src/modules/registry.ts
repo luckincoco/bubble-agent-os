@@ -1,8 +1,10 @@
 import type { ComponentType } from 'react'
+import type { CognitionLayer, ToolDescriptor } from '../types'
 import { ChatView } from '../components/chat/ChatView'
 import { KnowledgeBrowser } from '../components/knowledge/KnowledgeBrowser'
 import { BusinessFlow } from '../components/biz/BusinessFlow'
 import { ForgeManager } from '../components/forge/ForgeManager'
+import { ObservationCard } from '../components/biz/ObservationCard'
 
 export interface ModuleDefinition {
   id: string
@@ -19,6 +21,38 @@ export interface ModuleDefinition {
     description: string
   }
   component: ComponentType
+
+  // ── Phase 1: Module registration system (optional, backward-compatible) ──
+
+  /** Tools registered by this module that the Agent can call */
+  tools?: ToolDescriptor[]
+
+  /** Phase 2: cognitive panel renderers keyed by cognition layer */
+  cognitiveRenderers?: Partial<Record<CognitionLayer, ComponentType<CognitivePanelProps>>>
+
+  /** Context providers that inject space/business context into Agent */
+  contextProviders?: Array<{
+    key: string
+    provide: () => string
+  }>
+
+  /** MCP server connections (Phase 4) */
+  mcpServers?: Array<{
+    name: string
+    url: string
+  }>
+}
+
+/** Context passed to cognitive renderers */
+export interface RenderContext {
+  spaceId: string
+  onAgentCall?: (prompt: string) => void
+}
+
+/** Props for a cognitive panel renderer component */
+export interface CognitivePanelProps {
+  data: unknown
+  context: RenderContext
 }
 
 const MODULES: ModuleDefinition[] = [
@@ -33,10 +67,14 @@ const MODULES: ModuleDefinition[] = [
     locked: false,
     onboarding: {
       emoji: '\u{1F4CA}',
-      title: '业务管理',
-      description: '采购、销售、物流、收付款、发票、对账',
+      title: '\u{4E1A}\u{52A1}\u{7BA1}\u{7406}',
+      description: '\u{91C7}\u{8D2D}\u{3001}\u{9500}\u{552E}\u{3001}\u{7269}\u{6D41}\u{3001}\u{6536}\u{4ED8}\u{6B3E}\u{3001}\u{53D1}\u{7968}\u{3001}\u{5BF9}\u{8D26}',
     },
     component: BusinessFlow,
+    // Phase 2: cognitive panel renderer demo
+    cognitiveRenderers: {
+      observation: ObservationCard,
+    },
   },
   {
     id: 'chat',

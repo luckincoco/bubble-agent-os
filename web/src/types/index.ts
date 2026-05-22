@@ -21,6 +21,16 @@ export interface AssertionTag {
   userCalibrated: boolean
 }
 
+export type CognitionLayer = 'observation' | 'reflection' | 'consolidation'
+
+/** Phase 4: tool call execution info for sidebar visualization */
+export interface ToolCallInfo {
+  name: string
+  status: 'success' | 'error'
+  durationMs: number
+  error?: string
+}
+
 export interface ChatMessage {
   id: string
   role: 'user' | 'assistant' | 'error'
@@ -30,6 +40,19 @@ export interface ChatMessage {
   sources?: SourceRef[]
   turnId?: string
   assertions?: AssertionTag[]
+  cognitionLayer?: CognitionLayer
+  /** Phase 2: inline cognitive panel rendered by module */
+  panel?: {
+    moduleId: string
+    component: string
+    data: unknown
+  }
+  /** Phase 4: tool call records for this turn */
+  toolCalls?: ToolCallInfo[]
+  /** Phase 4: human-readable context summary for this turn */
+  contextSummary?: string
+  /** Handoff 1: user marked this message as inaccurate */
+  markedInaccurate?: boolean
 }
 
 export interface WSMessage {
@@ -37,6 +60,18 @@ export interface WSMessage {
   text?: string
   sources?: SourceRef[]
   turnId?: string
+  /** Phase 2: cognition layer from backend */
+  cognitionLayer?: CognitionLayer
+  /** Phase 2: inline panel data from backend */
+  panel?: {
+    moduleId: string
+    component: string
+    data: unknown
+  }
+  /** Phase 4: tool call execution records for sidebar visualization */
+  toolCalls?: ToolCallInfo[]
+  /** Phase 4: human-readable summary of what the agent did */
+  contextSummary?: string
 }
 
 export type ConnectionStatus = 'connecting' | 'connected' | 'disconnected' | 'error'
@@ -445,6 +480,41 @@ export interface MonthlyOverviewRow {
   paymentsOut: number
   invoicesIn: number
   invoicesOut: number
+}
+
+// ── Agent UI Architecture Types (Phase 1) ─────────────────────────
+
+/** Tool descriptor — what tools are available to the Agent */
+export interface ToolDescriptor {
+  id: string
+  name: string
+  description: string
+  inputSchema?: Record<string, unknown>
+}
+
+/** Agent's current cognitive state — visualized in sidebar */
+export interface AgentState {
+  cognitionLayer: CognitionLayer
+  thinkingChain: string | null
+  activeMemories: BubbleMemory[]
+  availableTools: ToolDescriptor[]
+  activeContext: {
+    spaceId: string
+    entities: string[]
+    recentTopics: string[]
+  }
+  /** Cognitive evolution trace (reserved, Phase 2+ drives UI) */
+  cognitionTrace?: CognitionEvent[]
+}
+
+/** Single event in the cognitive trace timeline */
+export interface CognitionEvent {
+  id: string
+  timestamp: number
+  layer: CognitionLayer
+  bubbleId?: string
+  summary: string
+  durationMs?: number
 }
 
 // ── Knowledge Browser Types ───────────────────────────────────────

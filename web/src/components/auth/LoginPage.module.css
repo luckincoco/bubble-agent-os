@@ -24,16 +24,9 @@
 }
 
 .logo {
-  width: 48px;
-  height: 48px;
-  border-radius: 50%;
-  background: var(--gradient-primary);
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  font-size: 22px;
-  font-weight: 700;
-  box-shadow: 0 0 20px var(--glow-purple);
+  width: 64px;
+  height: 64px;
+  filter: drop-shadow(0 0 20px rgba(124, 58, 237, 0.4));
 }
 
 .title {
@@ -99,6 +92,22 @@
 .btn:disabled {
   opacity: 0.5;
   cursor: not-allowed;
+}
+
+.registerHint {
+  font-size: 13px;
+  color: var(--text-dim);
+}
+
+.registerHint a {
+  color: var(--purple);
+  text-decoration: none;
+  transition: opacity 0.2s;
+}
+
+.registerHint a:hover {
+  opacity: 0.8;
+  text-decoration: underline;
 }
 
 .version {

@@ -3,8 +3,9 @@ import type { ToolRegistry } from './registry.js'
 import type { SurpriseDetector } from '../memory/surprise-detector.js'
 import type { BizEntryHandler } from './biz/handler.js'
 import type { SkillRouter as SkillRouterType } from './skills/skill-router.js'
+import type { OnboardingManager } from './onboarding/manager.js'
 import type { EventBus } from '../event/event-bus.js'
-import type { UserContext, ThinkResult, LLMProvider } from '../shared/types.js'
+import type { UserContext, ThinkResult, LLMProvider, ToolCallInfo } from '../shared/types.js'
 import { isExternalContext } from '../shared/types.js'
 import { createEpisode, type EpisodeSource } from '../temporal/episode-store.js'
 import { getActiveLedger, buildLedgerContext, detectResumption, updateEpisodeWindow, setPendingAction } from '../temporal/task-ledger.js'
@@ -55,12 +56,22 @@ interface ReflexResult {
   fullyHandled?: boolean
   /** Direct response to return when fullyHandled is true */
   directResponse?: string
+  /** Tool calls executed by Layer 0 (for sidebar visualization) */
+  toolCalls?: ToolCallInfo[]
 }
 
 export interface RouterResult {
   response: string
   sources: import('../shared/types.js').SourceRef[]
   turnId?: string
+  /** Phase 2: cognition layer classification */
+  cognitionLayer?: import('../shared/types.js').CognitionLayer
+  /** Phase 2: inline cognitive panel data */
+  panel?: import('../shared/types.js').ThinkResult['panel']
+  /** Phase 4: tool call execution records for sidebar visualization */
+  toolCalls?: import('../shared/types.js').ToolCallInfo[]
+  /** Phase 4: human-readable summary of agent activity */
+  contextSummary?: string
 }
 
 // ── MessageRouter ────────────────────────────────────────────────────
@@ -73,6 +84,7 @@ export class MessageRouter {
   private skillRouter: SkillRouterType | null
   private eventBus: EventBus | null
   private llmProvider: LLMProvider | null
+  private onboardingManager: OnboardingManager | null
 
   constructor(deps: {
     brain: Brain
@@ -82,6 +94,7 @@ export class MessageRouter {
     skillRouter?: SkillRouterType
     eventBus?: EventBus
     llmProvider?: LLMProvider
+    onboardingManager?: OnboardingManager
   }) {
     this.brain = deps.brain
     this.tools = deps.tools ?? null
@@ -90,6 +103,7 @@ export class MessageRouter {
     this.skillRouter = deps.skillRouter ?? null
     this.eventBus = deps.eventBus ?? null
     this.llmProvider = deps.llmProvider ?? null
+    this.onboardingManager = deps.onboardingManager ?? null
   }
 
   /**
@@ -143,7 +157,7 @@ export class MessageRouter {
           { actor: 'system', spaceId: ctx.activeSpaceId, metadata: { episodeId } },
         )
       }
-      return { response: reflex.directResponse, sources: [] }
+      return { response: reflex.directResponse, sources: [], toolCalls: reflex.toolCalls }
     }
 
     // ── Layer 1: Deliberation ──────────────────────────────────────
@@ -222,10 +236,27 @@ export class MessageRouter {
       }
     }
 
-    const finalInput = reflex.context
-      ? `${text}${reflex.context}${ledgerContext}`
-      : ledgerContext ? `${text}${ledgerContext}` : text
+    // ── SelfState context: connect current input to previous unresolved tensions ──
+    const selfState = ctx?.userId ? this.brain.getSelfState(ctx.userId) : null
+    let selfStateContext = ''
+    if (selfState?.unresolvedTensions?.length) {
+      const open = selfState.unresolvedTensions.filter(t => t.resolutionStatus === 'open')
+      for (const t of open) {
+        if (t.concepts.some(c => text.includes(c))) {
+          selfStateContext = `\n\n[会话衔接] 你上一个会话中有未解决的关注点（${t.concepts[0]} ↔ ${t.concepts[1]}），当前问题可能与之相关。`
+          break
+        }
+      }
+    }
+
+    const finalInput = `${text}${reflex.context}${selfStateContext}${ledgerContext}`
     const thinkResult = await this.brain.think(finalInput, ctx, options?.onChunk)
+
+    // Merge L0 tool calls (reflex layer) with L1 tool calls (brain tool loop)
+    const mergedToolCalls = [
+      ...(reflex.toolCalls ?? []),
+      ...(thinkResult.toolCalls ?? []),
+    ]
 
     // ── Layer 2: Anticipation (async, non-blocking) ────────────────
     this.runAnticipationLayer(text, ctx).catch(err =>
@@ -244,6 +275,10 @@ export class MessageRouter {
       response: thinkResult.response,
       sources: thinkResult.sources,
       turnId: thinkResult.turnId,
+      cognitionLayer: thinkResult.cognitionLayer,
+      panel: thinkResult.panel,
+      toolCalls: mergedToolCalls.length > 0 ? mergedToolCalls : undefined,
+      contextSummary: thinkResult.contextSummary,
     }
   }
 
@@ -265,7 +300,10 @@ export class MessageRouter {
         if (STEEL_PRICE_RE.test(text)) {
           // Steel price: fetch steelx2 directly (fastest path, domestic)
           logger.info('Router L0: steel price intent → fetch_page')
+          const l0Start = Date.now()
           let result = await this.tools.execute('fetch_page', { url: STEEL_PRICE_URL })
+          const durationMs = Math.max(1, Date.now() - l0Start)
+          const toolCalls: ToolCallInfo[] = [{ name: 'fetch_page', status: 'success', durationMs }]
           if (result && !result.startsWith('抓取失败') && !result.startsWith('抓取出错')) {
             // Strip navigation/contact noise — price table starts at "品名"
             const tableStart = result.indexOf('品名')
@@ -273,21 +311,53 @@ export class MessageRouter {
             return {
               handled: true,
               context: `\n\n[以下是西本新干线今日上海钢材价格数据，请基于这些数据回答用户]\n${result}\n`,
+              toolCalls,
             }
           }
         } else {
           // General search: Tavily web search
           logger.info('Router L0: search intent → web_search')
+          const l0Start = Date.now()
           const result = await this.tools.execute('web_search', { query: text })
+          const durationMs = Math.max(1, Date.now() - l0Start)
+          const toolCalls: ToolCallInfo[] = [{ name: 'web_search', status: 'success', durationMs }]
           if (result && !result.startsWith('Error') && !result.startsWith('未配置')) {
             return {
               handled: true,
               context: `\n\n[以下是实时网络搜索结果，请基于这些数据回答用户]\n${result}\n`,
+              toolCalls,
             }
           }
         }
       } catch (err) {
         logger.error('Router L0 search error:', err instanceof Error ? err.message : String(err))
+      }
+    }
+
+    // ── Onboarding: seed demo data on first business intent ──
+    const ONBOARDING_RE = /帮我管|开始用|演示|demo|试试|开始管理|管理采购|管采购|管业务/
+    if (this.onboardingManager && ctx?.activeSpaceId && ONBOARDING_RE.test(text) && !this.onboardingManager.isActive(ctx.activeSpaceId)) {
+      try {
+        const summary = this.onboardingManager.activate(ctx.activeSpaceId)
+        logger.info(`Router L0: onboarding activated for space ${ctx.activeSpaceId}`)
+        return {
+          handled: true,
+          context: '',
+          fullyHandled: true,
+          directResponse:
+            `已为你准备好了示例数据：\n\n` +
+            `- 📦 采购 ${summary.purchases} 笔\n` +
+            `- 📤 销售 ${summary.sales} 笔\n` +
+            `- 💰 付款 ${summary.payment} 笔\n` +
+            `- 📊 当前库存约 ${summary.totalStock} 吨\n` +
+            `- 💳 应收约 ${summary.totalReceivable.toLocaleString()} 元\n\n` +
+            `你可以试试：\n` +
+            `1. "查一下库存" — 查看当前库存\n` +
+            `2. "今天从宝钢进 50 吨螺纹" — 录入新采购\n` +
+            `3. "之前那笔单价不对" — 纠错练习`,
+        }
+      } catch (err) {
+        logger.error('Router L0 onboarding error:', err instanceof Error ? err.message : String(err))
       }
     }
 

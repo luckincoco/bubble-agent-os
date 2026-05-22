@@ -56,7 +56,17 @@ export const useChatStore = create<ChatState>((set, get) => ({
             const msgs = [...state.messages]
             const last = msgs[msgs.length - 1]
             if (last?.role === 'assistant') {
-              msgs[msgs.length - 1] = { ...last, content: msg.text || last.content, isStreaming: false, sources: msg.sources, turnId: msg.turnId }
+              msgs[msgs.length - 1] = {
+                ...last,
+                content: msg.text || last.content,
+                isStreaming: false,
+                sources: msg.sources,
+                turnId: msg.turnId,
+                cognitionLayer: msg.cognitionLayer,
+                panel: msg.panel,
+                toolCalls: msg.toolCalls,
+                contextSummary: msg.contextSummary,
+              }
               set({ messages: msgs, isStreaming: false })
               // Fetch assertions after async identification completes (~3.5s)
               if (msg.turnId) {

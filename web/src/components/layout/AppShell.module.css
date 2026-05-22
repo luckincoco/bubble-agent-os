@@ -1,15 +1,21 @@
 .shell {
   display: flex;
-  flex-direction: column;
-  height: 100%;
-  max-width: var(--content-lg);
-  margin: 0 auto;
+  height: 100vh;
+  overflow: hidden;
   position: relative;
 }
 
-.main {
+.mainArea {
   flex: 1;
-  overflow: hidden;
   display: flex;
   flex-direction: column;
+  min-width: 400px;
+  height: 100vh;
+}
+
+.loading {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  height: 100vh;
 }

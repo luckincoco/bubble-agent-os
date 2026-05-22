@@ -23,6 +23,7 @@ import { registerChatMemoryRoutes } from './routes/chat-memory.js'
 import { registerImportRoutes } from './routes/import-routes.js'
 import { registerForgeRoutes } from './routes/forge.js'
 import { registerAssertionRoutes } from './routes/assertions.js'
+import { registerFeedbackRoutes } from './routes/feedback.js'
 export type { ServerModules } from './route-types.js'
 import type { ServerModules, JwtPayload } from './route-types.js'
 import type { MessageRouter } from '../connector/router.js'
@@ -95,6 +96,7 @@ export async function startServer(brain: Brain, memory: MemoryManager, port = 30
   registerImportRoutes(app, deps)
   registerForgeRoutes(app, deps)
   registerAssertionRoutes(app, deps)
+  registerFeedbackRoutes(app, deps)
   registerKnowledgeRoutes(app, { memory, getUserCtx })
 
   if (modules?.wecom) modules.wecom.registerRoutes(app)

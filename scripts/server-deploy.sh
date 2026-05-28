@@ -8,8 +8,9 @@ set -e
 DIR="${1:-/opt/bubble-agent-os}"
 cd "$DIR"
 
-echo "  ➜ git pull..."
-git pull
+echo "  ➜ git fetch + reset --hard origin/main..."
+git fetch origin
+git reset --hard origin/main
 
 echo "  ➜ pnpm install..."
 pnpm install

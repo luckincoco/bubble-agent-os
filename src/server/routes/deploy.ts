@@ -26,11 +26,16 @@ export function registerDeployRoutes(app: FastifyInstance, deps: RouteDeps) {
     const start = Date.now()
 
     try {
-      // 1) git pull
-      steps.push('git pull...')
-      const git = run('git', ['pull'], 30000)
-      if (!git.ok) throw new Error(`git pull 失败: ${git.stderr}`)
-      steps.push('✓ git pull')
+      // 1) git fetch + reset --hard origin/main
+      steps.push('git fetch origin...')
+      const fetch = run('git', ['fetch', 'origin'], 30000)
+      if (!fetch.ok) throw new Error(`git fetch 失败: ${fetch.stderr}`)
+      steps.push('✓ git fetch origin')
+
+      steps.push('git reset --hard origin/main...')
+      const reset = run('git', ['reset', '--hard', 'origin/main'], 10000)
+      if (!reset.ok) throw new Error(`git reset 失败: ${reset.stderr}`)
+      steps.push('✓ git reset --hard origin/main')
 
       // 2) pnpm install
       steps.push('pnpm install...')

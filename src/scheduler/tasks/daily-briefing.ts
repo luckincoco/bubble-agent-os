@@ -12,6 +12,7 @@ import type { TaskDeps, TaskResult } from '../scheduler.js'
 import { getDatabase } from '../../storage/database.js'
 import { logger } from '../../shared/logger.js'
 import { recordDelivery } from '../../memory/feedback-store.js'
+import { recordDecisionTrace } from '../../memory/decision-trace.js'
 
 const WEATHER_URL = 'https://wttr.in/Shanghai?format=j1'
 
@@ -143,6 +144,19 @@ export async function executeDailyBriefing(
         // Phase 1: record delivery for feedback loop
         if (adminUserId) {
           recordDelivery(adminUserId, 'daily_briefing', { date: dateStr, hasWeather: !!weather, hasSteelPrice: !!steelPrice })
+        }
+
+        // Phase 2: record decision trace
+        const traceItems = []
+        if (weather) traceItems.push({ label: `天气 ${weather.temp}°C`, matchReason: '每日简报天气数据', confidence: 1.0 })
+        if (steelPrice) traceItems.push({ label: `钢价行情 ${steelPrice.date}`, matchReason: '每日简报钢价数据', confidence: 1.0 })
+        if (adminUserId) {
+          recordDecisionTrace({
+            sourceType: 'daily_briefing',
+            matchedItems: traceItems,
+            pushed: true,
+            executionMs: 0,
+          })
         }
       }
     }

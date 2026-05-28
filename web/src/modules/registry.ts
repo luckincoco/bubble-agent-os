@@ -4,6 +4,7 @@ import { ChatView } from '../components/chat/ChatView'
 import { KnowledgeBrowser } from '../components/knowledge/KnowledgeBrowser'
 import { BusinessFlow } from '../components/biz/BusinessFlow'
 import { ForgeManager } from '../components/forge/ForgeManager'
+import { FeedbackDashboard } from '../components/feedback/FeedbackDashboard'
 import { ObservationCard } from '../components/biz/ObservationCard'
 
 export interface ModuleDefinition {
@@ -88,7 +89,7 @@ const MODULES: ModuleDefinition[] = [
     component: ChatView,
   },
   {
-    id: 'memory',
+    id: 'knowledge',
     tab: {
       key: 'memory',
       label: '知识',
@@ -97,6 +98,17 @@ const MODULES: ModuleDefinition[] = [
     },
     locked: true,
     component: KnowledgeBrowser,
+  },
+  {
+    id: 'feedback',
+    tab: {
+      key: 'feedback',
+      label: '反馈',
+      icon: 'M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm-2 15l-5-5 1.41-1.41L10 14.17l7.59-7.59L19 8l-9 9z',
+      order: 45,
+    },
+    locked: false,
+    component: FeedbackDashboard,
   },
   {
     id: 'forge',

@@ -1182,6 +1182,21 @@ function runMigrations(database: Database.Database, defaultPassword: string) {
   database.prepare('CREATE INDEX IF NOT EXISTS idx_feedback_source ON feedback_events(source_type, source_id)').run()
   database.prepare('CREATE INDEX IF NOT EXISTS idx_feedback_user ON feedback_events(user_id, created_at)').run()
   logger.info('Migration v1.2: feedback_events table created')
+
+  // ── Migration v1.3: decision_traces for Phase 2 matching traceability ──
+  database.prepare(`
+    CREATE TABLE IF NOT EXISTS decision_traces (
+      id TEXT PRIMARY KEY,
+      source_type TEXT NOT NULL,
+      trigger_id TEXT NOT NULL DEFAULT '',
+      matched_items TEXT NOT NULL DEFAULT '[]',
+      pushed INTEGER NOT NULL DEFAULT 0,
+      execution_ms INTEGER NOT NULL DEFAULT 0,
+      created_at INTEGER NOT NULL
+    )
+  `).run()
+  database.prepare('CREATE INDEX IF NOT EXISTS idx_traces_source ON decision_traces(source_type, created_at)').run()
+  logger.info('Migration v1.3: decision_traces table created')
 }
 
 function seedData(database: Database.Database, defaultPassword: string) {

@@ -4,6 +4,7 @@ import { updateBubble } from '../../bubble/model.js'
 import { addLink } from '../../bubble/links.js'
 import { ulid } from 'ulid'
 import { recordFeedback, queryFeedback, getFeedbackStats } from '../../memory/feedback-store.js'
+import { getCombinedStats } from '../../memory/decision-trace.js'
 
 /**
  * Phase 1 feedback loop endpoints.
@@ -110,5 +111,16 @@ export function registerFeedbackRoutes(app: FastifyInstance, _deps: RouteDeps) {
 
     const stats = getFeedbackStats(query.sourceType, query.sourceId)
     return { stats }
+  })
+
+  // ── Combined stats (feedback + decision traces) ────────────────
+
+  app.get('/api/feedback/combined-stats', async (req: FastifyRequest) => {
+    const query = req.query as { sourceType?: string }
+    if (!query.sourceType) {
+      return { error: 'sourceType 为必填项' }
+    }
+
+    return getCombinedStats(query.sourceType)
   })
 }

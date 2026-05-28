@@ -4,6 +4,7 @@ import { getDatabase } from '../../storage/database.js'
 import { getInventory } from '../../connector/biz/structured-store.js'
 import { logger } from '../../shared/logger.js'
 import { recordDelivery } from '../../memory/feedback-store.js'
+import { recordDecisionTrace } from '../../memory/decision-trace.js'
 
 const STEEL_PRICE_URL = 'https://shanghai.steelx2.com/city/Quotation/quotation/1/index.html'
 
@@ -71,6 +72,7 @@ export async function executeSteelPrice(_params: Record<string, unknown>, deps: 
       priceChange: string
       stockTons: number
     }> = []
+    const matchStart = Date.now()
     try {
       const db = getDatabase()
       const adminUser = db.prepare("SELECT id FROM users WHERE username = 'admin'").get() as { id: string } | undefined
@@ -139,6 +141,19 @@ export async function executeSteelPrice(_params: Record<string, unknown>, deps: 
               matchedProducts: matchedProducts.length,
             })
           }
+
+          // Phase 2: record decision trace
+          recordDecisionTrace({
+            sourceType: 'steel_price',
+            triggerId: bubble.id,
+            matchedItems: matchedProducts.map(m => ({
+              label: `${m.brand} ${m.name} ${m.spec} ¥${m.price}/吨`,
+              matchReason: `用户库存 ${m.stockTons} 吨，品种 ${m.productCode} 与价格行情匹配`,
+              confidence: 0.9,
+            })),
+            pushed: true,
+            executionMs: Date.now() - matchStart,
+          })
         } catch (err) {
           logger.error('Steel price Feishu push failed:', err instanceof Error ? err.message : String(err))
         }

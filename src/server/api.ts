@@ -14,6 +14,8 @@ import type { UserContext, SpaceRole } from '../shared/types.js'
 import { getDatabase } from '../storage/database.js'
 import { logger } from '../shared/logger.js'
 import { registerKnowledgeRoutes } from './knowledge-routes.js'
+import { registerSemanticRoutes } from './semantic-routes.js'
+import { registerCalibrationRoutes } from './calibration-routes.js'
 import { registerAuthAdminRoutes } from './routes/auth-admin.js'
 import { registerBizRoutes } from './routes/biz.js'
 import { registerAgentRoutes } from './routes/agents.js'
@@ -24,6 +26,8 @@ import { registerImportRoutes } from './routes/import-routes.js'
 import { registerForgeRoutes } from './routes/forge.js'
 import { registerAssertionRoutes } from './routes/assertions.js'
 import { registerFeedbackRoutes } from './routes/feedback.js'
+import { registerIngestRoutes } from './routes/ingest.js'
+import { registerDeployRoutes } from './routes/deploy.js'
 export type { ServerModules } from './route-types.js'
 import type { ServerModules, JwtPayload } from './route-types.js'
 import type { MessageRouter } from '../connector/router.js'
@@ -99,7 +103,19 @@ export async function startServer(brain: Brain, memory: MemoryManager, port = 30
   registerFeedbackRoutes(app, deps)
   registerKnowledgeRoutes(app, { memory, getUserCtx })
 
+  if (modules?.roadNetwork) {
+    registerSemanticRoutes(app, { roadNetwork: modules.roadNetwork, getUserCtx })
+  }
+
+  registerCalibrationRoutes(app)
+
+  if (modules?.obsidianIngest) {
+    registerIngestRoutes(app, { obsidianIngest: modules.obsidianIngest })
+  }
+
   if (modules?.wecom) modules.wecom.registerRoutes(app)
+
+  registerDeployRoutes(app, deps)
 
   const webDist = [resolve(__dirname, '../../web/dist'), resolve(__dirname, '../web/dist'), resolve(process.cwd(), 'web/dist')].find(p => existsSync(p)) ?? resolve(process.cwd(), 'web/dist')
   if (existsSync(webDist)) {

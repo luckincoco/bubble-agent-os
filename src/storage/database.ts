@@ -22,7 +22,10 @@ CREATE TABLE IF NOT EXISTS bubbles (
   pinned INTEGER NOT NULL DEFAULT 0,
   created_at INTEGER NOT NULL,
   updated_at INTEGER NOT NULL,
-  accessed_at INTEGER NOT NULL
+  accessed_at INTEGER NOT NULL,
+  epistemic_status TEXT NOT NULL DEFAULT 'provisional',
+  retrieval_success_count INTEGER NOT NULL DEFAULT 0,
+  graduated_at INTEGER
 );
 
 CREATE TABLE IF NOT EXISTS bubble_links (
@@ -442,6 +445,16 @@ function runMigrations(database: Database.Database, defaultPassword: string) {
     database.exec('ALTER TABLE bubbles ADD COLUMN deleted_at INTEGER')
     database.exec('ALTER TABLE bubbles ADD COLUMN delete_reason TEXT')
     logger.info('Migration v0.7: added deleted_at/delete_reason to bubbles')
+  }
+
+  // v1.1.1: Epistemic status graduation + retrieval tracking
+  const bubbleColsEpistemic = database.pragma('table_info(bubbles)') as Array<{ name: string }>
+  const addEpistemicCol = !bubbleColsEpistemic.some(c => c.name === 'epistemic_status')
+  if (addEpistemicCol) {
+    database.exec("ALTER TABLE bubbles ADD COLUMN epistemic_status TEXT NOT NULL DEFAULT 'provisional'")
+    database.exec('ALTER TABLE bubbles ADD COLUMN retrieval_success_count INTEGER NOT NULL DEFAULT 0')
+    database.exec('ALTER TABLE bubbles ADD COLUMN graduated_at INTEGER')
+    logger.info('Migration v1.1.1: added epistemic_status/retrieval_success_count/graduated_at to bubbles')
   }
 
   // Purchases: new event fields
@@ -1144,6 +1157,31 @@ function runMigrations(database: Database.Database, defaultPassword: string) {
   `)
   database.exec('CREATE INDEX IF NOT EXISTS idx_focus_user ON focus_messages(user_id, updated_at)')
   logger.info('Migration: focus_messages table created for FocusTracker persistence')
+
+  // ── Anti-Duplication v1.1: UNIQUE constraints for bubble_links + bubble_entities ──
+  // Clean duplicate rows before adding UNIQUE index
+  database.exec('DELETE FROM bubble_links WHERE id NOT IN (SELECT MIN(id) FROM bubble_links GROUP BY source_id, target_id, relation)')
+  database.exec('DELETE FROM bubble_entities WHERE id NOT IN (SELECT MIN(id) FROM bubble_entities GROUP BY bubble_id, entity_text, entity_type)')
+  database.exec('CREATE UNIQUE INDEX IF NOT EXISTS idx_links_unique ON bubble_links(source_id, target_id, relation)')
+  database.exec('CREATE UNIQUE INDEX IF NOT EXISTS idx_entities_unique ON bubble_entities(bubble_id, entity_text, entity_type)')
+  logger.info('Migration v1.1: UNIQUE constraints added to bubble_links and bubble_entities')
+
+  // ── Feedback Loop: feedback_events table for user interaction tracking ──
+  database.prepare(`
+    CREATE TABLE IF NOT EXISTS feedback_events (
+      id TEXT PRIMARY KEY,
+      user_id TEXT NOT NULL,
+      space_id TEXT NOT NULL DEFAULT '',
+      source_type TEXT NOT NULL,
+      source_id TEXT NOT NULL DEFAULT '',
+      action TEXT NOT NULL,
+      context TEXT NOT NULL DEFAULT '{}',
+      created_at INTEGER NOT NULL
+    )
+  `).run()
+  database.prepare('CREATE INDEX IF NOT EXISTS idx_feedback_source ON feedback_events(source_type, source_id)').run()
+  database.prepare('CREATE INDEX IF NOT EXISTS idx_feedback_user ON feedback_events(user_id, created_at)').run()
+  logger.info('Migration v1.2: feedback_events table created')
 }
 
 function seedData(database: Database.Database, defaultPassword: string) {

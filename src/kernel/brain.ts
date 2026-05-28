@@ -1,13 +1,14 @@
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs'
 import { resolve } from 'node:path'
-import type { LLMProvider, LLMMessage, UserContext, ThinkResult, CustomAgent, SelfState } from '../shared/types.js'
+import type { LLMProvider, LLMMessage, UserContext, ThinkResult, CustomAgent, SelfState, Tension, FailedHypothesis, SurpriseEntry, ConfidenceGradient, SelfStateTransition, CognitionLayer } from '../shared/types.js'
 import { isExternalContext } from '../shared/types.js'
 import type { MemoryManager } from '../memory/manager.js'
 import type { ConversationInsightEvaluator } from '../memory/conversation-insight-evaluator.js'
 import type { ObservationRecorder } from '../memory/observation-recorder.js'
 import type { AssertionIdentifier } from '../memory/assertion-identifier.js'
 import type { ResonanceIntegration } from '../memory/resonance/index.js'
-import type { MetricsCollector } from '../memory/resonance/index.js'
+import type { MetricsCollector, ConversationSignal } from '../memory/resonance/index.js'
+import type { SelfCalibrator } from '../memory/calibration/self-calibrator.js'
 import { getDatabase } from '../storage/database.js'
 import { ulid } from 'ulid'
 import type { ToolRegistry } from '../connector/registry.js'
@@ -16,11 +17,19 @@ import type { ContextBudget } from '../memory/context-budget.js'
 import type { Tracer } from '../observability/tracer.js'
 import { runToolLoop } from './tool-loop.js'
 import { AnswerCache } from './answer-cache.js'
+import { ContinuousBuffer } from '../cognition/continuous-buffer.js'
+import { extractMathAbstraction } from '../math/abstraction.js'
+import { mergeAbstractions, detectContradictions } from '../math/merge.js'
+import type { MathAbstraction } from '../shared/types.js'
+import { createBubble, findBubblesByType } from '../bubble/model.js'
 import { estimateTokens, truncateToTokenBudget, TOKEN_LIMITS } from '../shared/tokens.js'
 import { EXT_TOOL_NAMES } from '../connector/tools/ext-query-tools.js'
 import { countDrafts } from '../memory/draft-observations.js'
 import { getConfig } from '../shared/config.js'
 import { logger } from '../shared/logger.js'
+import { verifyBizNumbers } from './number-verifier.js'
+import { buildNumericalContext } from './numerical-context.js'
+import { generateValuePropositions, buildValueStatement } from '../cognition/data-valuation.js'
 import {
   BASE_SYSTEM_PROMPT,
   CRITIQUE_PROMPT,
@@ -69,6 +78,7 @@ export class Brain {
   private assertionIdentifier: AssertionIdentifier | null = null
   private resonance: ResonanceIntegration | null = null
   private metricsCollector: MetricsCollector | null = null
+  private selfCalibrator: SelfCalibrator | null = null
   private workingMemory: WorkingMemory | null = null
   private contextBudget: ContextBudget | null = null
   private tracer: Tracer | null = null
@@ -78,6 +88,15 @@ export class Brain {
 
   /** Handoff 3: in-memory answer cache for similar queries */
   private answerCache = new AnswerCache()
+
+  /** ELF-inspired continuous cognition buffer (cross-turn continuous state) */
+  private continuousBuffer = new ContinuousBuffer()
+
+  /** P4: accumulated math state per user (cross-turn math model) */
+  private mathState = new Map<string, MathAbstraction>()
+
+  /** Phase 3: numerical context for multi-turn consistency */
+  private numericalContext = new Map<string, string>()
 
   constructor(llm: LLMProvider) {
     this.llm = llm
@@ -120,6 +139,10 @@ export class Brain {
   setMetricsCollector(collector: MetricsCollector) {
     this.metricsCollector = collector
     logger.info('Brain: metrics collector connected (5 signal detection)')
+  }
+
+  setSelfCalibrator(calibrator: SelfCalibrator): void {
+    this.selfCalibrator = calibrator
   }
 
   setWorkingMemory(wm: WorkingMemory, budget: ContextBudget) {
@@ -173,10 +196,24 @@ export class Brain {
         return
       }
       const raw = readFileSync(path, 'utf-8')
-      this.currentSelfState = JSON.parse(raw) as SelfState
-      const count = this.currentSelfState.unresolvedTensions?.length ?? 0
-      if (count > 0) {
-        logger.info(`Brain: loaded SelfState for ${userId} (${count} unresolved tensions)`)
+      const parsed = JSON.parse(raw)
+
+      // ── Normalize: fill in missing fields from older format ──
+      this.currentSelfState = {
+        userId: parsed.userId ?? userId,
+        sessionId: parsed.sessionId ?? ulid(),
+        unresolvedTensions: parsed.unresolvedTensions ?? [],
+        failedHypotheses: parsed.failedHypotheses ?? [],
+        surpriseLog: parsed.surpriseLog ?? [],
+        confidenceGradient: parsed.confidenceGradient ?? [],
+        recentTransitions: parsed.recentTransitions ?? [],
+        lastActiveAt: parsed.lastActiveAt ?? Date.now(),
+      }
+
+      const openTensions = this.currentSelfState.unresolvedTensions.filter(t => t.resolutionStatus === 'open').length
+      const openSurprises = this.currentSelfState.surpriseLog.filter(s => !s.resolved).length
+      if (openTensions > 0 || openSurprises > 0) {
+        logger.info(`Brain: loaded SelfState for ${userId} (${openTensions} tensions, ${openSurprises} surprises)`)
       }
     } catch {
       this.currentSelfState = null
@@ -192,17 +229,161 @@ export class Brain {
   }
 
   /** Handoff 1: persist SelfState to disk after each think() completes */
-  private writeSelfState(userId: string) {
+  private writeSelfState(userId: string, userInput?: string, response?: string) {
     try {
-      const state: SelfState = {
-        userId,
-        sessionId: ulid(),
-        unresolvedTensions: [],
-        lastActiveAt: Date.now(),
-      }
       const config = getConfig()
       const dir = resolve(config.storage.dataDir, 'self-state')
       mkdirSync(dir, { recursive: true })
+
+      // ── 1. Start from previous SelfState (carry forward what's still open) ──
+      const prev = this.currentSelfState
+      const tensions: Tension[] = []
+      const failed: FailedHypothesis[] = prev?.failedHypotheses ?? []
+      const surprises: SurpriseEntry[] = prev?.surpriseLog ?? []
+      const gradients: ConfidenceGradient[] = prev?.confidenceGradient ?? []
+      // Inject SelfCalibrator confidence gradients (overrides for overlapping domains)
+      if (this.selfCalibrator && getConfig().features.selfCalibration) {
+        const calGradients = this.selfCalibrator.getRecentGradients()
+        if (calGradients.length > 0) {
+          for (const cg of calGradients) {
+            const idx = gradients.findIndex(g => g.domain === cg.domain)
+            if (idx >= 0) gradients[idx] = cg
+            else gradients.push(cg)
+          }
+        }
+      }
+      const transitions: SelfStateTransition[] = prev?.recentTransitions ?? []
+
+      // Carry forward open tensions (not resolved, not abandoned)
+      if (prev) {
+        for (const t of prev.unresolvedTensions) {
+          if (t.resolutionStatus === 'open') {
+            tensions.push(t)
+          }
+        }
+      }
+
+      // ── 2. Scan current turn for new signals ──
+      if (userInput && response) {
+        // 2a. User correction signals → new tension
+        const correctionPattern = /不对|不是|错了|不是这样|你理解错了|我说的是|你搞错了|你误解了|你错了/i
+        if (correctionPattern.test(userInput)) {
+          tensions.push({
+            concepts: [userInput.slice(0, 30), response.slice(0, 30)],
+            evidenceRatio: 0.3,
+            lastReevaluated: Date.now(),
+            resolutionStatus: 'open',
+            label: '用户纠正',
+          })
+          // 2d. Same signal → also record as failed hypothesis
+          failed.push({
+            hypothesis: response.slice(0, 80),
+            contradictedBy: userInput.slice(0, 80),
+            contradictedAt: Date.now(),
+            confidence: 0.3,
+          })
+        }
+
+        // 2b. Assistant uncertainty signals → tension about own knowledge
+        const uncertaintyPattern = /也许|可能|不确定|不太确定|我猜|推测|没有足够信息|不太清楚|无法确认|存疑/i
+        if (uncertaintyPattern.test(response)) {
+          tensions.push({
+            concepts: ['已知信息', response.slice(0, 30)],
+            evidenceRatio: 0.5,
+            lastReevaluated: Date.now(),
+            resolutionStatus: 'open',
+            label: '认知不确定',
+          })
+        }
+
+        // 2c. Unanswered question → gap tension
+        if (/不知道|不清楚|无法回答|没有相关信息/.test(response)) {
+          tensions.push({
+            concepts: [userInput.slice(0, 30), '无法回答'],
+            evidenceRatio: 0.2,
+            lastReevaluated: Date.now(),
+            resolutionStatus: 'open',
+            label: '知识盲区',
+          })
+        }
+
+        // 2e. User expresses surprise → record as surprise entry
+        const userSurprisePattern = /惊讶|没想到|居然|竟然|出乎意料|奇怪|怪了|怎么会这样|真的假的|不可能吧|难以置信|太意外了/i
+        if (userSurprisePattern.test(userInput)) {
+          surprises.push({
+            expected: '预期未知',
+            actual: userInput.slice(0, 80),
+            resolved: false,
+            timestamp: Date.now(),
+          })
+        }
+
+        // 2f. Assistant discovers something surprising → record as self-surprise
+        const assistantDiscoveryPattern = /原来|发现|注意到|有意思|没想到|出乎意料|令我惊讶|奇怪的是|竟然|居然/i
+        if (assistantDiscoveryPattern.test(response)) {
+          surprises.push({
+            expected: '先前预期',
+            actual: response.slice(0, 80).replace(assistantDiscoveryPattern, '→发现←'),
+            resolved: false,
+            timestamp: Date.now(),
+          })
+        }
+      }
+
+      // ── 2g. System-detected contradictions in knowledge graph → tensions ──
+      // Query recent 'contradicts' links and surface as tensions
+      try {
+        const db = getDatabase()
+        const weekAgo = Date.now() - 7 * 24 * 60 * 60 * 1000
+        const contradictRows = db.prepare(`
+          SELECT bl.source_id, bl.target_id, b1.title AS src_title, b2.title AS tgt_title, bl.weight, bl.link_source
+          FROM bubble_links bl
+          JOIN bubbles b1 ON b1.id = bl.source_id
+          JOIN bubbles b2 ON b2.id = bl.target_id
+          WHERE bl.relation = 'contradicts'
+            AND bl.link_source IN ('causal-evaluator', 'difference-engine')
+            AND bl.created_at > ?
+          LIMIT 5
+        `).all(weekAgo) as Array<{ source_id: string; target_id: string; src_title: string; tgt_title: string; weight: number; link_source: string }>
+
+        for (const c of contradictRows) {
+          const label = c.link_source === 'difference-engine' ? '维度分歧' : '认知矛盾'
+          // Check if a similar tension already exists (avoid duplicates across writeSelfState calls)
+          const alreadyExists = tensions.some(t =>
+            t.label === label &&
+            (t.concepts[0].includes(c.src_title?.slice(0, 15) ?? '') ||
+             t.concepts[1].includes(c.tgt_title?.slice(0, 15) ?? ''))
+          )
+          if (!alreadyExists) {
+            // Use link weight as evidence ratio proxy (weight = difference magnitude)
+            const evidenceRatio = Math.min(0.8, Math.max(0.2, (c.weight ?? 0.5) / 3))
+            tensions.push({
+              concepts: [c.src_title?.slice(0, 30) || '未知', c.tgt_title?.slice(0, 30) || '未知'],
+              evidenceRatio,
+              lastReevaluated: Date.now(),
+              resolutionStatus: 'open',
+              label,
+            })
+          }
+        }
+      } catch { /* best-effort */ }
+
+      // ── 3. Limit to freshest 5 tensions ──
+      const finalTensions = tensions
+        .sort((a, b) => b.lastReevaluated - a.lastReevaluated)
+        .slice(0, 5)
+
+      const state: SelfState = {
+        userId,
+        sessionId: ulid(),
+        unresolvedTensions: finalTensions,
+        failedHypotheses: failed.slice(-3),
+        surpriseLog: surprises.slice(-3),
+        confidenceGradient: gradients.slice(-3),
+        recentTransitions: transitions.slice(-5),
+        lastActiveAt: Date.now(),
+      }
+      this.currentSelfState = state
       writeFileSync(resolve(dir, `${userId}.json`), JSON.stringify(state, null, 2), 'utf-8')
     } catch { /* best-effort */ }
   }
@@ -321,15 +502,83 @@ export class Brain {
     }
 
     // Inject SelfState context for cross-session awareness (Handoff 1)
-    if (!isExt && this.currentSelfState && this.currentSelfState.unresolvedTensions.length > 0) {
-      const openTensions = this.currentSelfState.unresolvedTensions
-        .filter(t => t.resolutionStatus === 'open')
+    if (!isExt && this.currentSelfState) {
+      const ss = this.currentSelfState
+
+      // ── Unresolved tensions ──
+      const openTensions = ss.unresolvedTensions?.filter(t => t.resolutionStatus === 'open') ?? []
       if (openTensions.length > 0) {
-        const lines = openTensions.map(t =>
-          `  - ${t.concepts[0]} ↔ ${t.concepts[1]}（证据比 ${t.evidenceRatio.toFixed(2)}）`
-        )
-        systemContent += `\n\n[上次会话遗留]\n上次结束时有 ${openTensions.length} 个未解决的认知张力：\n${lines.join('\n')}`
+        const lines = openTensions.map(t => {
+          const label = t.label ? `[${t.label}] ` : ''
+          return `  - ${label}${t.concepts[0]} ↔ ${t.concepts[1]}`
+        })
+        systemContent += `\n\n[上次会话遗留 — 未消化的认知张力]\n上次结束时有 ${openTensions.length} 个未解决的问题：\n${lines.join('\n')}\n如果用户提到相关话题，可以自然地衔接。`
       }
+
+      // ── Surprises ──
+      const openSurprises = ss.surpriseLog?.filter(s => !s.resolved) ?? []
+      if (openSurprises.length > 0) {
+        const lines = openSurprises.map(s =>
+          `  - 预期「${s.expected}」→ 实际「${s.actual}」`
+        )
+        systemContent += `\n\n[上次的意外发现]\n${lines.join('\n')}`
+      }
+
+      // ── Failed hypotheses ──
+      if (ss.failedHypotheses?.length > 0) {
+        const lines = ss.failedHypotheses.map(f =>
+          `  - 假设「${f.hypothesis}」被「${f.contradictedBy}」推翻`
+        )
+        systemContent += `\n\n[已被推翻的假设]\n${lines.join('\n')}`
+      }
+    }
+
+    // Inject continuous cognition buffer context (ELF-inspired)
+    if (!isExt && userId) {
+      const bufSummary = this.continuousBuffer.getContextSummary(userId)
+      if (bufSummary) {
+        systemContent += `\n\n${bufSummary}`
+      }
+    }
+
+    // Inject resonance patterns (feature: resonance-layer)
+    if (!isExt && this.resonance && getConfig().features.resonanceLayer) {
+      try {
+        const paths = this.resonance.findResonantPaths(userInput, ctx?.activeSpaceId)
+        if (paths.length > 0) {
+          const lines = paths.map(p =>
+            `  - [${p.structureType}] ${p.triggerContext} (${p.activationCount}次共激活)`
+          )
+          systemContent += `\n\n[共振模式]\n以下模式在当前上下文中被反复激活：\n${lines.join('\n')}`
+        }
+      } catch { /* best-effort */ }
+    }
+
+    // Inject high-confidence observations as discovered insights (正法眼藏)
+    if (!isExt) {
+      try {
+        const spaceIds = ctx?.activeSpaceId ? [ctx.activeSpaceId] : undefined
+        const observations = findBubblesByType('observation' as any, 10, spaceIds)
+          .filter(b => {
+            const meta = b.metadata as Record<string, unknown>
+            const trend = meta?.trend as string | undefined
+            return b.confidence >= 0.7 && trend !== 'stale' && trend !== 'weakening'
+          })
+          .sort((a, b) => b.confidence - a.confidence)
+          .slice(0, 3)
+        if (observations.length > 0) {
+          const lines = observations.map(o =>
+            `  - ${o.title}（置信度 ${(o.confidence * 100).toFixed(0)}%）`
+          )
+          systemContent += `\n\n[系统发现]\n最近对你对话的分析发现了一些规律：\n${lines.join('\n')}\n如果当前话题相关，可以自然地提及。`
+        }
+      } catch { /* best-effort */ }
+    }
+
+    // Phase 3: inject numerical context from previous tool calls (multi-turn accuracy)
+    if (!isExt && getConfig().features.bizStructuredData) {
+      const numCtx = this.numericalContext.get(userId)
+      if (numCtx) systemContent += numCtx
     }
 
     const systemMessage: LLMMessage = { role: 'system', content: systemContent }
@@ -356,6 +605,9 @@ export class Brain {
       let panel: ThinkResult['panel'] | undefined
       let toolCalls: ThinkResult['toolCalls']
       let contextSummary: string | undefined
+      let dataBlockResults: Array<{ name: string; result: string }> | null = null
+      let propositions: import('../shared/types.js').ValueProposition[] | undefined
+      let propositionCount: number | undefined
 
       // ── Handoff 3: answer cache check — skip LLM + tool loop on hit ──
       if (!isExt && !onChunk) {
@@ -366,6 +618,10 @@ export class Brain {
           const cachedHistory = this.getHistory(userId)
           let cachedResponse = cached.response
           cachedResponse = await this.postProcessResponse(userInput, effectiveInput, cachedResponse, cachedHistory, cachedTurnId, ctx, isExt, userId)
+          // Update continuous buffer even for cache hits
+          if (!isExt) {
+            this.continuousBuffer.update(userId, effectiveInput, cachedResponse)
+          }
           return {
             response: cachedResponse,
             sources: cached.sources,
@@ -387,6 +643,23 @@ export class Brain {
           onChunk,
         })
         response = loopResult.response
+
+        // Phase 2 (number-verifier): capture [DATA]-containing tool results for post-response number verification
+        dataBlockResults = loopResult.toolCalls.filter(
+          tc => tc.result && tc.result.includes('[DATA]'),
+        ).map(tc => ({ name: tc.name, result: tc.result }))
+
+        // Phase 5: generate value propositions from [DATA] blocks
+        if (dataBlockResults.length > 0 && getConfig().features.dataValuation) {
+          propositions = generateValuePropositions(dataBlockResults, effectiveInput)
+          propositionCount = propositions.length
+        }
+
+        // Phase 3: build & store numerical context for multi-turn consistency
+        if (dataBlockResults.length > 0) {
+          const numCtx = buildNumericalContext(dataBlockResults)
+          if (numCtx) this.numericalContext.set(userId, numCtx)
+        }
 
         // Phase 2: classify cognition layer based on tool calls
         const toolNames = loopResult.toolCalls.map(tc => tc.name)
@@ -470,6 +743,18 @@ export class Brain {
       const turnId = ulid()
       response = await this.postProcessResponse(userInput, effectiveInput, response, storedHistory, turnId, ctx, isExt, userId)
 
+      // Phase 2 (number-verifier): check response numbers against [DATA] blocks from tool results
+      if (dataBlockResults && dataBlockResults.length > 0 && getConfig().features.bizStructuredData) {
+        const correction = verifyBizNumbers(response, dataBlockResults)
+        if (correction) response = response + '\n\n' + correction
+      }
+
+      // Phase 5 (v2): append value proposition statement to response
+      if (propositions && propositions.length > 0 && getConfig().features.dataValuation) {
+        const statement = buildValueStatement(propositions)
+        if (statement) response = response + '\n\n' + statement
+      }
+
       // Assertion identification: classify claims in the response (async, non-blocking)
       if (!isExt && this.assertionIdentifier) {
         this.assertionIdentifier.identify(effectiveInput, response, turnId, userId, ctx?.activeSpaceId).catch((err) => {
@@ -477,12 +762,67 @@ export class Brain {
         })
       }
 
+      // Analyze conversation signals + self-calibration
+      const calibrationSignals: ConversationSignal[] = []
+      if (!isExt && this.metricsCollector && getConfig().features.resonanceLayer) {
+        try {
+          const signals = this.metricsCollector.analyzeUserMessage(effectiveInput, response, userId, ctx?.activeSpaceId)
+          calibrationSignals.push(...signals)
+        } catch { /* best-effort */ }
+      }
+      if (!isExt && this.selfCalibrator && getConfig().features.selfCalibration && calibrationSignals.length > 0) {
+        try {
+          this.selfCalibrator.calibrate(calibrationSignals, ctx?.activeSpaceId)
+        } catch { /* best-effort */ }
+      }
+
+      // ── Automatic Math Abstraction: extract math structure from conversation ──
+      if (!isExt) {
+        extractMathAbstraction(effectiveInput + '\n' + response, this.llm).then(result => {
+          if (result && ctx?.activeSpaceId) {
+            createBubble({
+              type: 'observation',
+              title: '数学抽象: ' + result.summary.slice(0, 30),
+              content: JSON.stringify(result, null, 2),
+              tags: ['auto-math', 'math-abstraction', `math-conf:${result.confidence.toFixed(2)}`],
+              source: 'math-abstraction',
+              confidence: Math.min(1, result.confidence),
+              decayRate: 0.15,
+              spaceId: ctx.activeSpaceId,
+              abstractionLevel: 2,
+            })
+
+            // Accumulate math state across turns (P4)
+            const prev = this.mathState.get(userId)
+            if (prev) {
+              const merged = mergeAbstractions([prev, result])
+              this.mathState.set(userId, merged)
+              const contradictions = detectContradictions(prev, result)
+              if (contradictions.length > 0) {
+                logger.info(`Math state contradiction for ${userId}: ${contradictions.map(c => c.description).join('; ')}`)
+              }
+            } else {
+              this.mathState.set(userId, result)
+            }
+          }
+        }).catch((err) => {
+          logger.debug(`Auto math abstraction error: ${err instanceof Error ? err.message : String(err)}`)
+        })
+      }
+
+      // ── Continuous Cognition Buffer: update + materialize ──
+      if (!isExt) {
+        this.continuousBuffer.update(userId, effectiveInput, response)
+        // Try materialize (no-op if divergence hasn't crossed threshold yet)
+        this.continuousBuffer.materialize(userId, ctx?.activeSpaceId)
+      }
+
       // ── Handoff 3: write answer cache for future similar queries ──
       if (!isExt && response && !onChunk) {
         const toolNames = (toolCalls ?? []).map(t => t.name)
         const hasRealTime = toolNames.some(n => n === 'fetch_page' || n === 'web_search')
         const hasBiz = toolNames.some(n => n.startsWith('biz_'))
-        const ttl = hasRealTime ? 30_000 : hasBiz ? 120_000 : 60_000
+        const ttl = hasRealTime ? 15_000 : hasBiz ? 15_000 : 60_000
         this.answerCache.set(effectiveInput, ctx?.activeSpaceId, {
           response,
           sources,
@@ -493,7 +833,7 @@ export class Brain {
         }, ttl)
       }
 
-      return { response, sources, cognitionLayer, panel, toolCalls, contextSummary }
+      return { response, sources, cognitionLayer, panel, toolCalls, contextSummary, propositions, propositionCount }
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err)
       logger.error('Brain think error:', msg)
@@ -584,14 +924,17 @@ export class Brain {
     isExt = false,
     userId?: string,
   ): Promise<string> {
-    let finalResponse = response
+    const finalResponse = response
 
-    // Self-critique (internal users only)
+    // Self-critique (internal users only) — fire-and-forget, never blocks the response
     if (!isExt) {
-      const critique = await this.selfCritique(userInput, finalResponse)
-      if (critique) {
-        finalResponse = `${finalResponse}\n\n${critique}`
-      }
+      this.selfCritique(userInput, finalResponse).then(critique => {
+        if (critique) {
+          logger.info(`Self-critique: ${critique.slice(0, 200)}`)
+        }
+      }).catch(err => {
+        logger.debug(`Self-critique error: ${err instanceof Error ? err.message : String(err)}`)
+      })
     }
 
     storedHistory.push({ role: 'assistant', content: finalResponse })
@@ -629,7 +972,7 @@ export class Brain {
 
     // Handoff 1: persist SelfState after each think() completes
     if (!isExt && userId) {
-      this.writeSelfState(userId)
+      this.writeSelfState(userId, effectiveInput, finalResponse)
     }
 
     return finalResponse

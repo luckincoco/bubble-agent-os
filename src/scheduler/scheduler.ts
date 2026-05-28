@@ -15,6 +15,7 @@ import { executeKeywordMonitor } from './tasks/keyword-monitor.js'
 import { executeMemoryDecay } from './tasks/memory-decay.js'
 import { executeBubbleCompaction } from './tasks/bubble-compaction.js'
 import { executeSteelPrice } from './tasks/steel-price.js'
+import { executeDailyBriefing } from './tasks/daily-briefing.js'
 import { executeQuestionGenerator } from './tasks/question-generator.js'
 import { executeReflection } from './tasks/reflection.js'
 import { executePressureSim } from './tasks/pressure-sim.js'
@@ -33,9 +34,12 @@ import { executeMetricsRollup } from './tasks/metrics-rollup.js'
 import { executeSessionCompression } from './tasks/session-compression.js'
 import { executeConceptForge } from './tasks/concept-forge.js'
 import { executeObsidianIngest } from './tasks/obsidian-ingest.js'
+import { executeDedupSweep } from './tasks/dedup-sweep.js'
+import { executeRoadPrune } from './tasks/road-prune.js'
+import { executeRoadTriggeredRetrieval } from './tasks/road-triggered-retrieval.js'
 import type { ModelRouter } from '../ai/model-router.js'
 
-export type ScheduledTaskType = 'daily_digest' | 'keyword_monitor' | 'memory_decay' | 'bubble_compaction' | 'steel_price' | 'question_generator' | 'reflection' | 'pressure_sim' | 'self_dialogue' | 'feed_watcher' | 'interest_search' | 'learning_digest' | 'silence_scan' | 'concentration_scan' | 'causal_eval' | 'self_evolution' | 'orientation_snapshot' | 'eval_observation' | 'eval_system_health' | 'metrics_rollup' | 'session_compression' | 'concept_forge' | 'obsidian_ingest'
+export type ScheduledTaskType = 'daily_digest' | 'keyword_monitor' | 'memory_decay' | 'bubble_compaction' | 'steel_price' | 'daily_briefing' | 'question_generator' | 'reflection' | 'pressure_sim' | 'self_dialogue' | 'feed_watcher' | 'interest_search' | 'learning_digest' | 'silence_scan' | 'concentration_scan' | 'causal_eval' | 'self_evolution' | 'orientation_snapshot' | 'eval_observation' | 'eval_system_health' | 'metrics_rollup' | 'session_compression' | 'concept_forge' | 'obsidian_ingest' | 'dedup_sweep' | 'road_prune' | 'road_triggered_retrieval'
 
 export interface TaskDeps {
   brain: Brain
@@ -80,6 +84,7 @@ const EXECUTORS: Record<ScheduledTaskType, TaskExecutor> = {
   memory_decay: executeMemoryDecay,
   bubble_compaction: executeBubbleCompaction,
   steel_price: executeSteelPrice,
+  daily_briefing: executeDailyBriefing,
   question_generator: executeQuestionGenerator,
   reflection: executeReflection,
   pressure_sim: executePressureSim,
@@ -98,6 +103,9 @@ const EXECUTORS: Record<ScheduledTaskType, TaskExecutor> = {
   session_compression: executeSessionCompression,
   concept_forge: executeConceptForge,
   obsidian_ingest: executeObsidianIngest,
+  dedup_sweep: executeDedupSweep,
+  road_prune: executeRoadPrune,
+  road_triggered_retrieval: executeRoadTriggeredRetrieval,
 }
 
 export class TaskScheduler {
@@ -151,6 +159,18 @@ export class TaskScheduler {
       const row = db.prepare("SELECT * FROM scheduled_tasks WHERE type = 'steel_price'").get() as ScheduledTaskRow
       this.scheduleJob(row)
       logger.info('Scheduler: seeded steel_price task (Mon-Fri 9:30)')
+    }
+
+    // Ensure daily_briefing task exists (daily 7:30 AM)
+    const hasDailyBriefing = db.prepare("SELECT id FROM scheduled_tasks WHERE type = 'daily_briefing'").get()
+    if (!hasDailyBriefing) {
+      const now = Date.now()
+      db.prepare(
+        'INSERT INTO scheduled_tasks (id, name, type, cron, params, enabled, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)',
+      ).run(ulid(), '每日早报', 'daily_briefing', '30 7 * * *', '{}', 1, now, now)
+      const row = db.prepare("SELECT * FROM scheduled_tasks WHERE type = 'daily_briefing'").get() as ScheduledTaskRow
+      this.scheduleJob(row)
+      logger.info('Scheduler: seeded daily_briefing task (daily 7:30)')
     }
 
     // Ensure question_generator task exists (daily 8:00 AM)
@@ -377,6 +397,46 @@ export class TaskScheduler {
       const row = db.prepare("SELECT * FROM scheduled_tasks WHERE type = 'session_compression'").get() as ScheduledTaskRow
       this.scheduleJob(row)
       logger.info('Scheduler: seeded session_compression task (every 10min)')
+    }
+
+    // Ensure dedup_sweep task exists (every 6 hours at :30)
+    const hasDedup = db.prepare("SELECT id FROM scheduled_tasks WHERE type = 'dedup_sweep'").get()
+    if (!hasDedup) {
+      const nowDedup = Date.now()
+      db.prepare(
+        'INSERT INTO scheduled_tasks (id, name, type, cron, params, enabled, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)',
+      ).run(ulid(), '防重复扫描', 'dedup_sweep', '30 */6 * * *', '{}', 1, nowDedup, nowDedup)
+      const row = db.prepare("SELECT * FROM scheduled_tasks WHERE type = 'dedup_sweep'").get() as ScheduledTaskRow
+      this.scheduleJob(row)
+      logger.info('Scheduler: seeded dedup_sweep task (every 6h at :30)')
+    }
+
+    // Ensure road_prune task exists (daily at 3:30am)
+    if (this.deps.config?.features.semanticNetwork) {
+      const hasPrune = db.prepare("SELECT id FROM scheduled_tasks WHERE type = 'road_prune'").get()
+      if (!hasPrune) {
+        const nowPrune = Date.now()
+        db.prepare(
+          'INSERT INTO scheduled_tasks (id, name, type, cron, params, enabled, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)',
+        ).run(ulid(), '语义路网裁剪', 'road_prune', '30 3 * * *', '{}', 1, nowPrune, nowPrune)
+        const row = db.prepare("SELECT * FROM scheduled_tasks WHERE type = 'road_prune'").get() as ScheduledTaskRow
+        this.scheduleJob(row)
+        logger.info('Scheduler: seeded road_prune task (daily at 3:30am)')
+      }
+    }
+
+    // Ensure road_triggered_retrieval task exists (every 6 hours at :15)
+    if (this.deps.config?.features.semanticNetwork) {
+      const hasTrigger = db.prepare("SELECT id FROM scheduled_tasks WHERE type = 'road_triggered_retrieval'").get()
+      if (!hasTrigger) {
+        const nowTrigger = Date.now()
+        db.prepare(
+          'INSERT INTO scheduled_tasks (id, name, type, cron, params, enabled, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)',
+        ).run(ulid(), '路网主动检索', 'road_triggered_retrieval', '15 */6 * * *', '{}', 1, nowTrigger, nowTrigger)
+        const row = db.prepare("SELECT * FROM scheduled_tasks WHERE type = 'road_triggered_retrieval'").get() as ScheduledTaskRow
+        this.scheduleJob(row)
+        logger.info('Scheduler: seeded road_triggered_retrieval task (every 6h at :15)')
+      }
     }
 
     logger.info(`Scheduler: ${this.jobs.size} active jobs loaded`)

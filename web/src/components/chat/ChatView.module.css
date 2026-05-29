@@ -11,10 +11,18 @@
   max-width: 680px;
   width: 100%;
   align-self: center;
-  padding: 24px 16px;
+  padding: var(--space-6) var(--space-4);
   display: flex;
   flex-direction: column;
-  gap: 20px;
+  gap: var(--space-5);
+}
+
+/* ── Mobile: < 768px ────────────────────────────── */
+@media (max-width: 767px) {
+  .messageList {
+    padding: 52px var(--space-3) var(--space-4);
+    gap: var(--space-4);
+  }
 }
 
 .empty {
@@ -35,8 +43,8 @@
 }
 
 .emptyText {
-  font-size: 15px;
-  font-weight: 500;
+  font-size: var(--text-lg);
+  font-weight: var(--fw-medium);
   background: var(--gradient-accent);
   background-clip: text;
   -webkit-background-clip: text;
@@ -45,7 +53,7 @@
 }
 
 .emptyHint {
-  font-size: 12px;
+  font-size: var(--text-sm);
   color: var(--text-dim);
   opacity: 0.5;
 }
@@ -65,7 +73,7 @@
 
 .demoTipChip {
   background: none;
-  border: 1px solid rgba(255, 255, 255, 0.15);
+  border: 1px solid var(--tint-border-strong);
   color: var(--text-secondary);
   font-size: 13px;
   padding: 4px 14px;
@@ -75,7 +83,7 @@
 }
 
 .demoTipChip:hover {
-  background: rgba(124, 58, 237, 0.1);
-  border-color: rgba(124, 58, 237, 0.3);
-  color: #C4B5FD;
+  background: var(--accent-soft);
+  border-color: var(--accent-strong);
+  color: var(--accent-text);
 }

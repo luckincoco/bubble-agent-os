@@ -2,7 +2,7 @@
 .row {
   display: flex;
   align-items: flex-start;
-  gap: 8px;
+  gap: var(--space-2);
   width: 100%;
 }
 
@@ -17,19 +17,19 @@
 .avatar {
   width: 28px;
   height: 28px;
-  border-radius: 6px;
+  border-radius: var(--radius-sm);
   display: flex;
   align-items: center;
   justify-content: center;
-  font-size: 13px;
-  font-weight: 600;
+  font-size: var(--text-sm);
+  font-weight: var(--fw-semibold);
   flex-shrink: 0;
-  background: var(--purple, #7C3AED);
-  color: #fff;
+  background: var(--accent);
+  color: var(--text-bold);
 }
 
 .userAvatar {
-  background: var(--bg-glass, rgba(255,255,255,0.08));
+  background: var(--glass-bg);
   color: var(--text-secondary);
 }
 
@@ -37,9 +37,9 @@
 .bubble {
   max-width: 85%;
   min-width: 0;
-  padding: 12px 16px;
-  font-size: 15px;
-  line-height: 1.55;
+  padding: var(--space-3) var(--space-4);
+  font-size: var(--text-lg);
+  line-height: var(--lh-relaxed);
   white-space: pre-wrap;
   word-break: break-word;
   flex-shrink: 1;
@@ -51,29 +51,32 @@
   align-self: flex-end;
   max-width: 70%;
   min-width: 0;
-  background: var(--bg-user);
-  color: #fff;
-  border-radius: 18px 18px 4px 18px;
-  box-shadow: 0 1px 4px rgba(0, 0, 0, 0.15);
+  background: var(--fill-user);
+  backdrop-filter: blur(var(--blur-sm));
+  -webkit-backdrop-filter: blur(var(--blur-sm));
+  color: var(--text-primary);
+  border-radius: var(--radius-xl) var(--radius-xl) var(--radius-sm) var(--radius-xl);
+  border: 1px solid var(--glass-border);
 }
 
 .assistant {
   align-self: flex-start;
-  background: var(--bg-assistant);
+  background: var(--fill-assistant);
+  backdrop-filter: blur(var(--blur-sm));
+  -webkit-backdrop-filter: blur(var(--blur-sm));
   color: var(--text-primary);
-  border: 1px solid rgba(255, 255, 255, 0.08);
-  border-radius: 4px 18px 18px 18px;
-  border-left: 2px solid transparent;
-  box-shadow: 0 1px 4px rgba(0, 0, 0, 0.06);
+  border: 1px solid var(--glass-border);
+  border-radius: var(--radius-sm) var(--radius-xl) var(--radius-xl) var(--radius-xl);
+  border-left: 2px solid var(--accent);
 }
 
 .error {
   align-self: flex-start;
-  background: rgba(248, 113, 113, 0.1);
+  background: rgba(197, 101, 101, 0.1);
   color: var(--text-error);
-  border-radius: 4px 18px 18px 18px;
-  border-left: 2px solid rgba(248, 113, 113, 0.4);
-  font-size: 13px;
+  border-radius: var(--radius-sm) var(--radius-xl) var(--radius-xl) var(--radius-xl);
+  border-left: 2px solid rgba(197, 101, 101, 0.4);
+  font-size: var(--text-sm);
 }
 
 /* ── Bubble wrapper ────────────────────────── */
@@ -136,7 +139,7 @@
 .sources {
   margin-top: 10px;
   padding-top: 8px;
-  border-top: 1px solid rgba(255, 255, 255, 0.08);
+  border-top: 1px solid var(--tint-glass);
   display: flex;
   flex-direction: column;
   gap: 4px;
@@ -154,19 +157,19 @@
   color: var(--text-secondary);
   line-height: 1.4;
   padding: 4px 8px;
-  background: rgba(255, 255, 255, 0.04);
+  background: var(--tint-hover);
   border-radius: 6px;
-  border: 1px solid rgba(255, 255, 255, 0.05);
+  border: 1px solid var(--tint-hover);
   transition: background var(--duration-fast);
 }
 
 .sourceItem:hover {
-  background: rgba(255, 255, 255, 0.07);
+  background: var(--tint-hover-strong);
 }
 
 .sourceIndex {
-  font-weight: 600;
-  color: #a78bfa;
+  font-weight: var(--fw-semibold);
+  color: var(--accent-text);
   margin-right: 4px;
 }
 
@@ -211,19 +214,19 @@
   text-align: left;
   padding: 6px 8px;
   font-weight: 600;
-  color: rgba(255, 255, 255, 0.6);
-  border-bottom: 1px solid rgba(255, 255, 255, 0.12);
+  color: var(--tint-table-header);
+  border-bottom: 1px solid var(--tint-border-strong);
   white-space: nowrap;
 }
 
 .markdown td {
   padding: 5px 8px;
-  border-bottom: 1px solid rgba(255, 255, 255, 0.04);
+  border-bottom: 1px solid var(--tint-hover);
   font-variant-numeric: tabular-nums;
 }
 
 .markdown tr:hover td {
-  background: rgba(255, 255, 255, 0.03);
+  background: var(--tint-hover);
 }
 
 .markdown th:nth-child(n+2),
@@ -242,11 +245,11 @@
 }
 
 .markdown strong {
-  color: #fff;
+  color: var(--text-bold);
 }
 
 .markdown code {
-  background: rgba(255, 255, 255, 0.08);
+  background: var(--tint-glass);
   padding: 1px 4px;
   border-radius: 3px;
   font-size: 12px;
@@ -257,7 +260,7 @@
   margin: 12px 0 6px;
   font-size: 14px;
   font-weight: 600;
-  color: rgba(255, 255, 255, 0.8);
+  color: var(--text-secondary);
 }
 
 .markdown h3:first-child,
@@ -269,7 +272,7 @@
 .assertions {
   margin-top: 8px;
   padding-top: 6px;
-  border-top: 1px solid rgba(255, 255, 255, 0.06);
+  border-top: 1px solid var(--tint-border);
   display: flex;
   flex-wrap: wrap;
   gap: 4px;
@@ -288,23 +291,23 @@
 }
 
 .fact {
-  background: rgba(20, 184, 166, 0.08);
-  color: #5EEAD4;
+  background: var(--cog-con-bg);
+  color: var(--cog-con);
 }
 
 .judgment {
-  background: rgba(245, 158, 11, 0.08);
-  color: #FCD34D;
+  background: var(--cog-ref-bg);
+  color: var(--cog-ref);
 }
 
 .speculation {
-  background: rgba(124, 58, 237, 0.08);
-  color: #C4B5FD;
+  background: rgba(139, 157, 195, 0.15);
+  color: #B0C4DE;
 }
 
 .reference {
-  background: rgba(37, 99, 235, 0.08);
-  color: #93C5FD;
+  background: var(--cog-obs-bg);
+  color: var(--cog-obs);
 }
 
 /* ── Handoff 1: user feedback "这个不对" button ── */
@@ -316,7 +319,7 @@
 
 .feedbackBtn {
   background: none;
-  border: 1px solid rgba(255, 255, 255, 0.12);
+  border: 1px solid var(--tint-border-strong);
   color: var(--text-secondary);
   font-size: 11px;
   padding: 1px 8px;
@@ -342,4 +345,17 @@
   color: var(--text-dim);
   line-height: 1.8;
   opacity: 0.7;
+}
+
+/* ── Number-verifier auto-correction banner ─────────────────── */
+.correctionBanner {
+  margin-top: var(--space-2);
+  padding: var(--space-1) var(--space-3);
+  font-size: var(--text-sm);
+  line-height: var(--lh-normal);
+  background: var(--cog-ref-bg);
+  border: 1px solid var(--accent-strong);
+  border-radius: var(--radius-sm);
+  color: var(--text-secondary);
+  white-space: pre-wrap;
 }

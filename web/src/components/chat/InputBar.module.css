@@ -3,8 +3,19 @@
 }
 
 .bar {
-  padding: 12px 20px 20px;
+  padding: var(--space-3) var(--space-5) var(--space-5);
   flex-shrink: 0;
+}
+
+/* ── Mobile: < 768px ────────────────────────────── */
+@media (max-width: 767px) {
+  .bar {
+    padding: 8px 12px calc(8px + env(safe-area-inset-bottom, 0px));
+  }
+
+  .input {
+    font-size: 16px; /* prevent iOS zoom on focus */
+  }
 }
 
 /* ── Input area (inputRow + file chip) ── */
@@ -19,14 +30,16 @@
   display: flex;
   align-items: flex-end;
   gap: 0;
-  background: var(--bg-glass);
-  border: 1px solid rgba(255, 255, 255, 0.08);
-  border-radius: 12px;
+  background: var(--glass-bg);
+  backdrop-filter: blur(var(--blur-md));
+  -webkit-backdrop-filter: blur(var(--blur-md));
+  border: 1px solid var(--glass-border);
+  border-radius: var(--radius-md);
   transition: border-color var(--duration-fast);
 }
 
 .inputRow:focus-within {
-  border-color: rgba(124, 58, 237, 0.4);
+  border-color: var(--accent-strong);
 }
 
 /* ── Attach button (inside input row, left) ── */
@@ -51,7 +64,7 @@
 }
 
 .attachBtn:hover {
-  background: rgba(255, 255, 255, 0.06);
+  background: var(--tint-hover);
   color: var(--text-primary);
 }
 
@@ -65,15 +78,15 @@
   flex: 1;
   min-width: 0;
   max-height: 120px;
-  padding: 9px 12px;
+  padding: 9px var(--space-3);
   background: transparent;
   border: none;
-  border-left: 1px solid rgba(255, 255, 255, 0.06);
-  border-right: 1px solid rgba(255, 255, 255, 0.06);
+  border-left: 1px solid var(--tint-border);
+  border-right: 1px solid var(--tint-border);
   border-radius: 0;
   color: var(--text-primary);
-  font-size: 15px;
-  line-height: 1.4;
+  font-size: var(--text-lg);
+  line-height: var(--lh-tight);
   resize: none;
   outline: none;
   box-sizing: border-box;
@@ -100,8 +113,8 @@
 }
 
 .send:not(:disabled):hover {
-  background: rgba(124, 58, 237, 0.15);
-  color: var(--purple);
+  background: var(--accent-soft);
+  color: var(--accent);
 }
 
 .send:active {
@@ -120,14 +133,14 @@
 /* ── Attachment popup menu ── */
 .menu {
   position: absolute;
-  bottom: calc(100% + 4px);
+  bottom: calc(100% + var(--space-1));
   left: 0;
   min-width: 180px;
-  background: #151a28;
-  border: 1px solid rgba(124, 58, 237, 0.3);
-  border-radius: 10px;
-  padding: 6px;
-  box-shadow: 0 8px 32px rgba(0, 0, 0, 0.5), 0 0 20px rgba(124, 58, 237, 0.08);
+  background: var(--bg-primary);
+  border: 1px solid var(--glass-border-strong);
+  border-radius: var(--radius-md);
+  padding: var(--space-1);
+  box-shadow: 0 8px 32px rgba(0, 0, 0, 0.5);
   z-index: 100;
   animation: fadeSlideUp 150ms var(--ease-smooth);
 }
@@ -158,7 +171,7 @@
 }
 
 .menuItemActive:hover {
-  background: rgba(124, 58, 237, 0.12);
+  background: var(--accent-soft);
   color: var(--text-primary);
 }
 
@@ -240,13 +253,55 @@
 }
 
 .fileChipRemove:hover {
-  background: rgba(248, 113, 113, 0.15);
-  color: #F87171;
+  background: rgba(197, 101, 101, 0.15);
+  color: var(--color-error);
 }
 
 .fileChipRemove:disabled {
   opacity: 0.4;
   cursor: default;
+}
+
+/* ── Connection status bar ── */
+.statusBar {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 4px 20px 0;
+  font-size: 11px;
+  color: var(--text-dim);
+  opacity: 1;
+  transition: opacity 300ms var(--ease-smooth);
+  pointer-events: auto;
+}
+
+.statusBarHidden {
+  opacity: 0;
+  pointer-events: none;
+}
+
+.statusDot {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: #F59E0B;
+  flex-shrink: 0;
+}
+
+.reconnectBtn {
+  margin-left: auto;
+  background: none;
+  border: 1px solid var(--glass-border);
+  border-radius: var(--radius-sm);
+  padding: var(--space-1) var(--space-2);
+  font-size: var(--text-xs);
+  color: var(--accent);
+  cursor: pointer;
+  transition: background var(--duration-fast);
+}
+
+.reconnectBtn:hover {
+  background: var(--accent-soft);
 }
 
 /* ── Upload error ── */

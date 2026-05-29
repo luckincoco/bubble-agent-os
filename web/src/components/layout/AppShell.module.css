@@ -1,6 +1,6 @@
 .shell {
   display: flex;
-  height: 100vh;
+  height: 100dvh;
   overflow: hidden;
   position: relative;
 }
@@ -10,12 +10,63 @@
   display: flex;
   flex-direction: column;
   min-width: 400px;
-  height: 100vh;
+  height: 100dvh;
 }
 
 .loading {
   display: flex;
   align-items: center;
   justify-content: center;
-  height: 100vh;
+  height: 100dvh;
+}
+
+/* ── Mobile menu button (hidden on desktop) ────── */
+.mobileBackdrop {
+  display: none;
+}
+
+.mobileMenuBtn {
+  display: none;
+}
+
+/* ── Mobile: < 768px ────────────────────────────── */
+@media (max-width: 767px) {
+  .mainArea {
+    min-width: 0;
+    width: 100%;
+  }
+
+  .mobileMenuBtn {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    position: fixed;
+    top: 12px;
+    left: 12px;
+    width: 36px;
+    height: 36px;
+    border-radius: var(--radius-md);
+    border: 1px solid var(--glass-border);
+    background: var(--glass-bg);
+    color: var(--text-primary);
+    cursor: pointer;
+    z-index: 30;
+    backdrop-filter: blur(var(--blur-md));
+    -webkit-backdrop-filter: blur(var(--blur-md));
+    box-shadow: 0 2px 8px rgba(0, 0, 0, 0.2);
+  }
+
+  .mobileBackdrop {
+    display: block;
+    position: fixed;
+    inset: 0;
+    background: rgba(0, 0, 0, 0.5);
+    z-index: 99;
+    animation: mobFadeIn 0.15s ease;
+  }
+}
+
+@keyframes mobFadeIn {
+  from { opacity: 0; }
+  to { opacity: 1; }
 }
